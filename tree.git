@@ -1,0 +1,93 @@
+.
+├── AI_Rules.md
+├── appfactory.settings.json
+├── apps
+│   ├── components
+│   │   ├── Col_Editor
+│   │   │   └── col_workshop.py
+│   │   └── unified_signal_handler.py
+│   ├── core
+│   │   ├── col_dialogs.py
+│   │   ├── col_display.py
+│   │   ├── col_gui_integration.py
+│   │   └── col_tab_css_theme.css
+│   ├── debug
+│   │   └── debug_functions.py
+│   ├── gui
+│   ├── locals
+│   │   └── locales
+│   ├── methods
+│   │   ├── col_3d_viewport.py
+│   │   ├── col_core_classes.py
+│   │   ├── col_dialogs.py
+│   │   ├── col_export_functions.py
+│   │   ├── col_functions.py
+│   │   ├── col_integration.py
+│   │   ├── col_integration.py.backup
+│   │   ├── col_loader.py
+│   │   ├── col_loader.py.backup
+│   │   ├── col_parsing_functions.py
+│   │   ├── col_parsing_functions.py.backup
+│   │   ├── col_parsing_helpers.py
+│   │   ├── col_preview_generator.py
+│   │   ├── col_structure_manager.py
+│   │   ├── col_validation.py
+│   │   ├── imgcol_exists.py
+│   │   ├── img_debug_functions.py
+│   │   ├── populate_col_table.py
+│   │   ├── progressbar_functions.py
+│   │   ├── refresh_table_functions.py
+│   │   ├── svg_icon_factory.py
+│   │   └── svg_shared_icons.py
+│   ├── support
+│   ├── templates
+│   │   └── new_templates.json
+│   ├── themes
+│   │   ├── amiga_mui_light.json
+│   │   ├── amiga_wb light.json
+│   │   ├── amiga_wb_light.json
+│   │   ├── app_factory.json
+│   │   ├── blue_panels_dark.json
+│   │   ├── blue_theme_light.json
+│   │   ├── bluish_light.json
+│   │   ├── classic_dark.json
+│   │   ├── cyberpunk_dark.json
+│   │   ├── garujaro_dark.json
+│   │   ├── green_shad_light.json
+│   │   ├── green_theme_light.json
+│   │   ├── gta_forums_dark.json
+│   │   ├── gta_forums_light.json
+│   │   ├── gta_liberty_city_dark.json
+│   │   ├── gta_san_andreas_dark.json
+│   │   ├── gta_vice_city_dark.json
+│   │   ├── img_factory_dark.json
+│   │   ├── img_factory_light.json
+│   │   ├── knight_rider_dark.json
+│   │   ├── lavender_theme_light.json
+│   │   ├── matrix_dark.json
+│   │   ├── pastel_theme_light.json
+│   │   ├── peach_theme_light.json
+│   │   ├── pink_theme_light.json
+│   │   ├── professional_light.json
+│   │   ├── red_dead_theme_dark.json
+│   │   ├── red_theme_dark.json
+│   │   ├── rockstar_dark.json
+│   │   ├── synthwave_outrun_dark.json
+│   │   ├── system_kde.json
+│   │   ├── tea_and_toast_dark.json
+│   │   ├── themes_organization.md
+│   │   └── yellow_theme_light.json
+│   └── utils
+│       ├── app_settings_system.py
+│       ├── themer_settings.json
+│       └── update_themes_script.py
+├── cc.py
+├── ChangeLog.md
+├── Credits.md
+├── img_factory_debug.log
+├── launch_col_workshop.py
+├── package-lock.json
+├── TODO.md
+└── tree.git
+
+14 directories, 77 files
