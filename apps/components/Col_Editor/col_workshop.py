@@ -41,14 +41,13 @@ from PyQt6.QtSvg import QSvgRenderer
 # Import project modules AFTER path setup
 from apps.debug.debug_functions import img_debugger
 from apps.methods.col_core_classes import COLFile, COLModel, COLVersion, Vector3
-from apps.components.methods.svg_icon_factory import SVGIconFactory
-#from apps.apps.methods.col_integration import get_col_detailed_analysis, create_temporary_col_file, cleanup_temporary_file
+from apps.methods.svg_icon_factory import SVGIconFactory
 from apps.gui.col_dialogs import show_col_analysis_dialog
 
 # Import COL viewport and preview from depends
 try:
-    from apps.components.Col_Editor.depends.col_3d_viewport import COL3DViewport
-    from apps.components.Col_Editor.depends.col_preview_generator import (
+    from apps.methods.col_3d_viewport import COL3DViewport
+    from apps.methods.col_preview_generator import (
         COLPreviewGenerator, create_col_preview, create_col_thumbnail
     )
     VIEWPORT_AVAILABLE = True
