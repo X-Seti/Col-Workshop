@@ -4020,9 +4020,10 @@ class COLWorkshop(QWidget): #vers 3
             from apps.methods.col_core_classes import COLFile
 
             # Create and load COL file
-            col_file = COLFile(file_path)
+            col_file = COLFile()
+            col_file.load_from_file(file_path)
 
-            if not col_file.load():
+            if not col_file.load_from_file(file_path):
                 error_msg = col_file.load_error if hasattr(col_file, 'load_error') else "Unknown error"
                 QMessageBox.warning(self, "Open Failed", f"Failed to load COL file:\n{error_msg}")
                 return False

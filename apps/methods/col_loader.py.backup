@@ -57,7 +57,7 @@ def load_col_file_object(main_window, file_path: str) -> Optional[COLFile]: #ver
         if not validate_col_file(main_window, file_path):
             return None
 
-        col_file = COLFile(file_path)
+        col_file = COLFile()
 
         if col_file.load_from_file(file_path):
             if col_file.load_error:
