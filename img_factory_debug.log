@@ -1,6 +1,9 @@
 === IMG Factory Debug Log ===
-Started: 2025-12-15 16:33:43
+Started: 2025-12-15 17:28:03
 Python: 3.13.7 (main, Aug 15 2025, 12:34:02) [GCC 15.2.1 20250813]
 Platform: linux
 ==================================================
 
+[17:28:03] DEBUG: debug_functions.py:467 in debug() - AppSettings initialized for standalone COL Workshop
+[17:28:03] SUCCESS: debug_functions.py:483 in success() - Theme applied: garujaro_dark
+[17:28:04] SUCCESS: debug_functions.py:483 in success() - Theme applied: garujaro_dark

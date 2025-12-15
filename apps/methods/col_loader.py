@@ -266,7 +266,8 @@ class COLBackgroundLoader(QThread):
                 return
             
             # Create COL file object
-            self.col_file = COLFile(self.file_path)
+            self.col_file = COLFile()
+            self.col_file.load_from_file(self.file_path)
             
             self.progress_update.emit(25, "Reading COL file data...")
             

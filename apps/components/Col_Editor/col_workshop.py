@@ -603,11 +603,18 @@ class COLWorkshop(QWidget): #vers 3
         self.infobar_font = QFont("Courier New", 9)
         self.standalone_mode = (main_window is None)
 
-        # Get app_settings from main_window if available
         if main_window and hasattr(main_window, 'app_settings'):
             self.app_settings = main_window.app_settings
         else:
-            self.app_settings = None
+            # FIXED: Create AppSettings for standalone mode
+            try:
+                from apps.utils.app_settings_system import AppSettings
+                self.app_settings = AppSettings()
+                img_debugger.debug("AppSettings initialized for standalone COL Workshop")
+            except Exception as e:
+                img_debugger.warning(f"Could not initialize AppSettings: {e}")
+                self.app_settings = None
+
 
         # Preview settings
         self._show_checkerboard = True
@@ -1593,7 +1600,7 @@ class COLWorkshop(QWidget): #vers 3
 
         # Get theme colors for corner indicators
         if self.app_settings:
-            theme_colors = self._get_theme_colors("default")
+            theme_colors = self.app_settings.get_theme_colors()
             accent_color = QColor(theme_colors.get('accent_primary', '#1976d2'))
             accent_color.setAlpha(180)
         else:
@@ -2008,7 +2015,7 @@ class COLWorkshop(QWidget): #vers 3
         self.properties_btn.setIcon(SVGIconFactory.properties_icon(24, icon_color))
         self.properties_btn.setToolTip("Theme")
         self.properties_btn.setFixedSize(35, 35)
-        self.properties_btn.clicked.connect(self._show_settings_dialog)
+        self.properties_btn.clicked.connect(self._launch_theme_settings)
         self.properties_btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.properties_btn.customContextMenuRequested.connect(self._show_settings_context_menu)
         layout.addWidget(self.properties_btn)
@@ -2327,27 +2334,20 @@ class COLWorkshop(QWidget): #vers 3
         return panel
 
 
-    def _create_middle_panel(self): #vers 3
-        """Create middle panel with COL models table - matches TXD Workshop layout"""
+    def _create_middle_panel(self): #vers 4
+        """Create middle panel with COL models table - theme-aware"""
         panel = QGroupBox("COL Models")
-        panel.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold;
-                font-size: 14px;
-                border: 1px solid #3a3a3a;
-                border-radius: 1px;
-                margin-top: 10px;
-                padding-top: 10px;
-                background-color: #2b2b2b;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top right;
-                right: 20px;
-                padding: 0 5px;
-                color: #e0e0e0;
-            }
-        """)
+
+        # Get theme colors
+        if self.app_settings:
+            colors = self.app_settings.get_theme_colors()
+            bg_color = colors.get('panel_bg', '#2b2b2b')
+            border_color = colors.get('border', '#3a3a3a')
+            text_color = colors.get('text_primary', '#e0e0e0')
+        else:
+            bg_color = '#2b2b2b'
+            border_color = '#3a3a3a'
+            text_color = '#e0e0e0'
 
         layout = QVBoxLayout(panel)
         layout.setSpacing(5)
@@ -3112,6 +3112,40 @@ class COLWorkshop(QWidget): #vers 3
             self.status_label.setText("Settings saved - platforms refreshed")
 
 
+    def _launch_theme_settings(self): #vers 2
+        """Launch theme engine from app_settings_system"""
+        try:
+            from apps.utils.app_settings_system import AppSettings, SettingsDialog
+
+            # Get or create app_settings
+            if not hasattr(self, 'app_settings') or self.app_settings is None:
+                self.app_settings = AppSettings()
+                if not hasattr(self.app_settings, 'current_settings'):
+                    img_debugger.error("AppSettings failed to initialize")
+                    from PyQt6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self, "Error", "Could not initialize theme system")
+                    return
+
+            # Launch settings dialog
+            dialog = SettingsDialog(self.app_settings, self)
+
+            # Connect theme change signal to apply theme
+            dialog.themeChanged.connect(lambda theme: self._apply_theme())
+
+            if dialog.exec():
+                # Apply theme after dialog closes
+                self._apply_theme()
+                img_debugger.success("Theme settings applied")
+                if hasattr(self, 'main_window') and self.main_window:
+                    if hasattr(self.main_window, 'log_message'):
+                        self.main_window.log_message("Theme settings updated")
+
+        except Exception as e:
+            img_debugger.error(f"Theme settings error: {e}")
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Theme Error", f"Could not load theme system:\n{e}")
+
+
     def _setup_settings_button(self): #vers 1
         """Setup settings button in UI"""
         settings_btn = QPushButton("âš™ Settings")
@@ -3783,22 +3817,30 @@ class COLWorkshop(QWidget): #vers 3
         print("======================\n")
 
 
-    def _apply_theme(self): #vers 2
-        """Apply theme from main window"""
+    def _apply_theme(self): #vers 3
+        """Apply theme from app_settings"""
         try:
-            if self.main_window and hasattr(self.main_window, 'app_settings'):
-                # Get current theme
-                theme_name = self.main_window.app_settings.current_settings.get('theme', 'IMG_Factory')
-                stylesheet = self.main_window.app_settings.get_stylesheet()
+            # Use self.app_settings first, then fall back to main_window
+            app_settings = None
+            if hasattr(self, 'app_settings') and self.app_settings:
+                app_settings = self.app_settings
+            elif self.main_window and hasattr(self.main_window, 'app_settings'):
+                app_settings = self.main_window.app_settings
 
-                # Apply to App
+            if app_settings:
+                # Get current theme
+                theme_name = app_settings.current_settings.get('theme', 'App_Factory')
+                stylesheet = app_settings.get_stylesheet()
+
+                # Apply stylesheet
                 self.setStyleSheet(stylesheet)
 
                 # Force update
                 self.update()
 
-                if hasattr(self.main_window, 'log_message'):
-                    self.main_window.log_message(f"theme applied: {theme_name}")
+                img_debugger.success(f"Theme applied: {theme_name}")
+                if self.main_window and hasattr(self.main_window, 'log_message'):
+                    self.main_window.log_message(f"Theme applied: {theme_name}")
             else:
                 # Fallback dark theme
                 self.setStyleSheet("""
@@ -3811,8 +3853,9 @@ class COLWorkshop(QWidget): #vers 3
                         border: 1px solid #3a3a3a;
                     }
                 """)
+                img_debugger.warning("No app_settings found, using fallback theme")
         except Exception as e:
-            print(f"Theme application error: {e}")
+            img_debugger.error(f"Theme application error: {e}")
 
 
     def _apply_settings(self, dialog): #vers 5
@@ -7310,4 +7353,5 @@ if __name__ == "__main__":
         print(f"ERROR: {e}")
         traceback.print_exc()
         sys.exit(1)
+
 
