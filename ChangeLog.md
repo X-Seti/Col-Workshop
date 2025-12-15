@@ -5,6 +5,9 @@
 
 Complete history of fixes, updates, and improvements.
 
+**Fixed**: - December 15, 2025
+- Romovel of self._ensure_depends_structure
+
 **Base**: - December 14, 2025
 - I have decided to split the development of img factory.
 - This will help improve the code for the project as working on one tool has created bugs in another tool.
