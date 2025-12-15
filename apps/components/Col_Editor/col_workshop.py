@@ -654,8 +654,6 @@ class COLWorkshop(QWidget): #vers 3
             parent_pos = parent.pos()
             self.move(parent_pos.x() + 50, parent_pos.y() + 80)
 
-        if self.standalone_mode:
-            self._ensure_depends_structure()
 
         # Setup UI FIRST
         self.setup_ui()
@@ -3976,7 +3974,7 @@ class COLWorkshop(QWidget): #vers 3
     def open_col_file(self, file_path): #vers 3
         """Open standalone COL file - supports COL1, COL2, COL3"""
         try:
-            from apps.apps.methods.col_core_classes import COLFile
+            from apps.methods.col_core_classes import COLFile
 
             # Create and load COL file
             col_file = COLFile(file_path)
@@ -4048,7 +4046,7 @@ class COLWorkshop(QWidget): #vers 3
                 return
 
             # Import analysis functions
-            from apps.apps.methods.col_operations import get_col_detailed_analysis
+            from apps.methods.col_operations import get_col_detailed_analysis
             from gui.col_dialogs import show_col_analysis_dialog
 
             # Get detailed analysis
@@ -5174,41 +5172,6 @@ class COLWorkshop(QWidget): #vers 3
         layout.addLayout(button_layout)
 
         dialog.exec()
-
-
-    def _ensure_depends_structure(self): #vers 1
-        """Ensure depends/ folder exists in standalone mode with required files"""
-        if not self.standalone_mode:
-            return
-
-        script_dir = Path(__file__).parent.resolve()
-        depends_dir = script_dir / "depends"
-
-        # Create depends folder if it doesn't exist
-        if not depends_dir.exists():
-            depends_dir.mkdir(parents=True, exist_ok=True)
-            print(f"Created depends directory: {depends_dir}")
-
-        # Check for required import modules
-        required_modules = [
-            'col_core_classes.py',
-            'col_dialogs.py',
-            'img_debug_functions.py'
-        ]
-
-        missing = []
-        for module in required_modules:
-            module_path = depends_dir / module
-            if not module_path.exists():
-                missing.append(module)
-
-        if missing:
-            print(f"Warning: Missing modules in depends/: {', '.join(missing)}")
-            print(f"Copy these from apps.apps.methods. to: {depends_dir}")
-
-            if self.main_window and hasattr(self.main_window, 'log_message'):
-                self.main_window.log_message(f" Missing import modules: {', '.join(missing)}")
-
 
     def _show_col_info(self): #vers 4
         """Show TXD Workshop information dialog - About and capabilities"""
@@ -6633,7 +6596,7 @@ class COLEditorDialog(QDialog): #vers 3
             self.status_bar.showMessage("Analyzing COL file...")
 
             # Import locally when needed
-            from apps.apps.methods.col_operations import get_col_detailed_analysis
+            from apps.methods.col_operations import get_col_detailed_analysis
             from gui.col_dialogs import show_col_analysis_dialog
 
             self.status_bar.showMessage("Analyzing COL file...")
