@@ -1,4 +1,4 @@
-#this belongs in components/col_structure_manager.py - Version: 1
+#this belongs in components/col_structure_manager.py - Version: 2
 # X-Seti - July23 2025 - IMG Factory 1.5 - COL Structure Manager - Complete Port
 # Ported from col_structure_manager.py-old with 100% functionality preservation
 # ONLY debug system changed from old COL debug to img_debugger
@@ -12,6 +12,7 @@ Uses IMG debug system throughout - preserves 100% original functionality
 import struct
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
+from apps.methods.col_core_classes import Vector3
 
 # Import IMG debug system - NO fallback code
 try:
@@ -158,7 +159,7 @@ class COLStructureManager:
         except Exception as e:
             raise ValueError(f"Error parsing COL header: {str(e)}")
     
-    def parse_col_bounds(self, data: bytes, offset: int, version: int) -> Tuple[COLBounds, int]: #vers 1
+    def parse_col_bounds(self, data: bytes, offset: int, version: int) -> Tuple[COLBounds, int]: #vers 2
         """Parse COL bounding data based on version"""
         try:
             if version == 1:
@@ -173,9 +174,9 @@ class COLStructureManager:
                 offset += 12
                 min_tuple = struct.unpack('<fff', data[offset:offset+12])
                 min_point = Vector3(min_tuple[0], min_tuple[1], min_tuple[2])
-                min_point = Vector3(min_tuple[0], min_tuple[1], min_tuple[2])
                 offset += 12
-                max_point = struct.unpack('<fff', data[offset:offset+12])
+                max_tuple = struct.unpack('<fff', data[offset:offset+12])
+                max_point = Vector3(max_tuple[0], max_tuple[1], max_tuple[2])
                 offset += 12
                 
             else:
@@ -185,9 +186,9 @@ class COLStructureManager:
                 
                 min_tuple = struct.unpack('<fff', data[offset:offset+12])
                 min_point = Vector3(min_tuple[0], min_tuple[1], min_tuple[2])
-                min_point = Vector3(min_tuple[0], min_tuple[1], min_tuple[2])
                 offset += 12
-                max_point = struct.unpack('<fff', data[offset:offset+12])
+                max_tuple = struct.unpack('<fff', data[offset:offset+12])
+                max_point = Vector3(max_tuple[0], max_tuple[1], max_tuple[2])
                 offset += 12
                 center_tuple = struct.unpack('<fff', data[offset:offset+12])
                 center = Vector3(center_tuple[0], center_tuple[1], center_tuple[2])
@@ -263,7 +264,7 @@ class COLStructureManager:
         except Exception as e:
             raise ValueError(f"Error parsing COL spheres: {str(e)}")
     
-    def parse_col_boxes(self, data: bytes, offset: int, count: int, version: int) -> Tuple[List[COLBox], int]: #vers 1
+    def parse_col_boxes(self, data: bytes, offset: int, count: int, version: int) -> Tuple[List[COLBox], int]: #vers 2
         """Parse COL collision boxes"""
         try:
             boxes = []
@@ -282,11 +283,11 @@ class COLStructureManager:
                 # Parse min point (12 bytes)
                 min_tuple = struct.unpack('<fff', data[offset:offset+12])
                 min_point = Vector3(min_tuple[0], min_tuple[1], min_tuple[2])
-                min_point = Vector3(min_tuple[0], min_tuple[1], min_tuple[2])
                 offset += 12
                 
                 # Parse max point (12 bytes)
-                max_point = struct.unpack('<fff', data[offset:offset+12])
+                max_tuple = struct.unpack('<fff', data[offset:offset+12])
+                max_point = Vector3(max_tuple[0], max_tuple[1], max_tuple[2])
                 offset += 12
                 
                 if version == 1:

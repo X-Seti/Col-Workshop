@@ -204,6 +204,11 @@ def safe_parse_spheres(model, data: bytes, offset: int, num_spheres: int, versio
                 sphere = COLSphere(center, radius, material)
                 model.spheres.append(sphere)
                 
+                # DEBUG: Print first sphere type
+                if i == 0:
+                    img_debugger.debug(f"DEBUG: Sphere center type: {type(sphere.center)}, has .x? {hasattr(sphere.center, 'x')}")
+                    img_debugger.debug(f"DEBUG: Sphere center value: {sphere.center}")
+                
             except Exception as e:
                 img_debugger.error(f"{version}: Error creating sphere {i}: {e}")
                 continue
@@ -264,6 +269,11 @@ def safe_parse_boxes(model, data: bytes, offset: int, num_boxes: int, version: s
                 box = COLBox(min_point, max_point, material)
                 model.boxes.append(box)
                 
+                # DEBUG: Print first box type
+                if i == 0:
+                    img_debugger.debug(f"DEBUG: Box min_point type: {type(box.min_point)}, has .x? {hasattr(box.min_point, 'x')}")
+                    img_debugger.debug(f"DEBUG: Box min value: {box.min_point}")
+                
             except Exception as e:
                 img_debugger.error(f"{version}: Error creating box {i}: {e}")
                 continue
@@ -295,6 +305,11 @@ def safe_parse_vertices(model, data: bytes, offset: int, num_vertices: int) -> i
             try:
                 vertex = COLVertex(position)
                 model.vertices.append(vertex)
+                
+                # DEBUG: Print first vertex type
+                if i == 0:
+                    img_debugger.debug(f"DEBUG: Vertex position type: {type(vertex.position)}, has .x? {hasattr(vertex.position, 'x')}")
+                    img_debugger.debug(f"DEBUG: Vertex position value: {vertex.position}")
                 
             except Exception as e:
                 img_debugger.error(f"COL: Error creating vertex {i}: {e}")
