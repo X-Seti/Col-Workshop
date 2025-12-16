@@ -545,3 +545,10 @@ See `TODO.md` for planned features and fixes.
 **Total Commits**: 100+ improvements
 **Lines of Code**: 10,000+ (clean, documented)
 **Community Impact**: Ongoing
+
+**Fixed**: - December 15, 2025
+apps/methods/col_structure_manager.py - Version: 2
+- Fixed vertex position from tuple to Vector3 object
+- Fixed sphere center from tuple to Vector3 object
+- Fixed box min/max points from tuple to Vector3 objects
+- Resolves stretched/missing faces in 3D viewport rendering

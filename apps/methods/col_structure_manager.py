@@ -168,9 +168,12 @@ class COLStructureManager:
                 
                 radius = struct.unpack('<f', data[offset:offset+4])[0]
                 offset += 4
-                center = struct.unpack('<fff', data[offset:offset+12])
+                center_tuple = struct.unpack('<fff', data[offset:offset+12])
+                center = Vector3(center_tuple[0], center_tuple[1], center_tuple[2])
                 offset += 12
-                min_point = struct.unpack('<fff', data[offset:offset+12])
+                min_tuple = struct.unpack('<fff', data[offset:offset+12])
+                min_point = Vector3(min_tuple[0], min_tuple[1], min_tuple[2])
+                min_point = Vector3(min_tuple[0], min_tuple[1], min_tuple[2])
                 offset += 12
                 max_point = struct.unpack('<fff', data[offset:offset+12])
                 offset += 12
@@ -180,11 +183,14 @@ class COLStructureManager:
                 if len(data) < offset + 28:
                     raise ValueError(f"Data too short for COL{version} bounds")
                 
-                min_point = struct.unpack('<fff', data[offset:offset+12])
+                min_tuple = struct.unpack('<fff', data[offset:offset+12])
+                min_point = Vector3(min_tuple[0], min_tuple[1], min_tuple[2])
+                min_point = Vector3(min_tuple[0], min_tuple[1], min_tuple[2])
                 offset += 12
                 max_point = struct.unpack('<fff', data[offset:offset+12])
                 offset += 12
-                center = struct.unpack('<fff', data[offset:offset+12])
+                center_tuple = struct.unpack('<fff', data[offset:offset+12])
+                center = Vector3(center_tuple[0], center_tuple[1], center_tuple[2])
                 offset += 12
                 radius = struct.unpack('<f', data[offset:offset+4])[0]
                 offset += 4
@@ -221,7 +227,8 @@ class COLStructureManager:
             
             for i in range(count):
                 # Parse center (12 bytes)
-                center = struct.unpack('<fff', data[offset:offset+12])
+                center_tuple = struct.unpack('<fff', data[offset:offset+12])
+                center = Vector3(center_tuple[0], center_tuple[1], center_tuple[2])
                 offset += 12
                 
                 # Parse radius (4 bytes)
@@ -273,7 +280,9 @@ class COLStructureManager:
             
             for i in range(count):
                 # Parse min point (12 bytes)
-                min_point = struct.unpack('<fff', data[offset:offset+12])
+                min_tuple = struct.unpack('<fff', data[offset:offset+12])
+                min_point = Vector3(min_tuple[0], min_tuple[1], min_tuple[2])
+                min_point = Vector3(min_tuple[0], min_tuple[1], min_tuple[2])
                 offset += 12
                 
                 # Parse max point (12 bytes)
@@ -322,7 +331,8 @@ class COLStructureManager:
                 position = struct.unpack('<fff', data[offset:offset+12])
                 offset += 12
                 
-                vertex = COLVertex(position=position)
+                position_vec = Vector3(position[0], position[1], position[2])
+                vertex = COLVertex(position=position_vec)
                 vertices.append(vertex)
             
             if self.debug:
