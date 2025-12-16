@@ -2,9 +2,12 @@
 ├── AI_Rules.md
 ├── appfactory.settings.json
 ├── apps
+│   ├── appfactory.settings.json
 │   ├── components
 │   │   ├── Col_Editor
-│   │   │   └── col_workshop.py
+│   │   │   ├── col_workshop.py
+│   │   │   ├── depends
+│   │   │   └── img_factory_debug.log
 │   │   └── unified_signal_handler.py
 │   ├── core
 │   │   ├── col_dialogs.py
@@ -14,8 +17,7 @@
 │   ├── debug
 │   │   └── debug_functions.py
 │   ├── gui
-│   ├── locals
-│   │   └── locales
+│   │   └── col_dialogs.py
 │   ├── methods
 │   │   ├── col_3d_viewport.py
 │   │   ├── col_core_classes.py
@@ -33,13 +35,14 @@
 │   │   ├── col_structure_manager.py
 │   │   ├── col_validation.py
 │   │   ├── imgcol_exists.py
+│   │   ├── img_core_classes.py
 │   │   ├── img_debug_functions.py
 │   │   ├── populate_col_table.py
 │   │   ├── progressbar_functions.py
 │   │   ├── refresh_table_functions.py
+│   │   ├── rw_versions.py
 │   │   ├── svg_icon_factory.py
 │   │   └── svg_shared_icons.py
-│   ├── support
 │   ├── templates
 │   │   └── new_templates.json
 │   ├── themes
@@ -52,6 +55,7 @@
 │   │   ├── bluish_light.json
 │   │   ├── classic_dark.json
 │   │   ├── cyberpunk_dark.json
+│   │   ├── default_green.json
 │   │   ├── garujaro_dark.json
 │   │   ├── green_shad_light.json
 │   │   ├── green_theme_light.json
@@ -84,10 +88,11 @@
 ├── cc.py
 ├── ChangeLog.md
 ├── Credits.md
-├── img_factory_debug.log
 ├── launch_col_workshop.py
+├── LICENSE
 ├── package-lock.json
+├── README.md
 ├── TODO.md
 └── tree.git
 
-14 directories, 77 files
+12 directories, 84 files
