@@ -161,6 +161,7 @@ class COLWorkshop(QWidget): #vers 3
         self.button_font = QFont("Arial", 10)
         self.infobar_font = QFont("Courier New", 9)
         self.standalone_mode = (main_window is None)
+        self.setWindowIcon(SVGIconFactory.col_workshop_icon())
 
         if main_window and hasattr(main_window, 'app_settings'):
             self.app_settings = main_window.app_settings
@@ -5075,6 +5076,10 @@ class COLEditorDialog(QDialog): #vers 3
             svg_data = svg_str.encode('utf-8')
 
             renderer = QSvgRenderer(QByteArray(svg_data))
+            if not renderer.isValid():
+                print(f"Invalid SVG data in col_workshop")
+                return QIcon()
+
             pixmap = QPixmap(size, size)
             pixmap.fill(QColor(0, 0, 0, 0))
 

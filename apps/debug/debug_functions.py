@@ -54,7 +54,7 @@ def debug_trace(func): #vers 1
 def apply_all_fixes_and_improvements(main_window): #vers 1
     """Apply all fixes and improvements to IMG Factory - CLEAN VERSION using IMG debug"""
     try:
-        main_window.log_message("🔧 Applying comprehensive fixes...")
+        main_window.log_message("Applying comprehensive fixes...")
 
         # 1. Fix search functionality - simplified approach
         search_manager_success = install_search_manager(main_window)
@@ -89,8 +89,8 @@ def apply_all_fixes_and_improvements(main_window): #vers 1
 
         if overall_success:
             main_window.log_message("=" * 50)
-            main_window.log_message("🎯 ALL FIXES APPLIED SUCCESSFULLY!")
-            main_window.log_message("📖 Check Debug menu for all options")
+            main_window.log_message("ALL FIXES APPLIED SUCCESSFULLY!")
+            main_window.log_message("Check Debug menu for all options")
 
         return overall_success
 
@@ -253,7 +253,7 @@ def create_debug_menu(main_window): #vers 1
         debug_menu.clear()
 
         # IMG Debug controls
-        img_debug_menu = debug_menu.addMenu("📁 IMG Debug")
+        img_debug_menu = debug_menu.addMenu("IMG Debug")
 
         img_enable_action = img_debug_menu.addAction("Enable IMG Debug")
         img_enable_action.triggered.connect(lambda: setattr(__import__('apps.debug.img_debug_functions').img_debug_functions.img_debugger, 'debug_enabled', True))
@@ -277,17 +277,17 @@ def create_debug_menu(main_window): #vers 1
         debug_menu.addSeparator()
 
         # Debug information
-        debug_info_action = debug_menu.addAction("📊 Debug Information")
+        debug_info_action = debug_menu.addAction("Debug Information")
         debug_info_action.triggered.connect(lambda: main_window.show_debug_info() if hasattr(main_window, 'show_debug_info') else None)
 
         # Debug log
-        debug_log_action = debug_menu.addAction("📋 View Debug Log")
+        debug_log_action = debug_menu.addAction("View Debug Log")
         debug_log_action.triggered.connect(lambda: main_window.view_debug_log() if hasattr(main_window, 'view_debug_log') else None)
 
         debug_menu.addSeparator()
 
         # Debug settings
-        debug_settings_action = debug_menu.addAction("⚙️ Debug Settings")
+        debug_settings_action = debug_menu.addAction("Debug Settings")
         debug_settings_action.triggered.connect(lambda: main_window.show_debug_settings() if hasattr(main_window, 'show_debug_settings') else None)
 
         main_window.log_message("✅ Debug menu created")
@@ -323,10 +323,10 @@ def add_status_indicators(main_window): #vers 1
                     debug_status_label.setText("🟢 COL Debug")
                     debug_status_label.setStyleSheet("color: green; font-weight: bold;")
                 else:
-                    debug_status_label.setText("🎛️ Debug Ready")
+                    debug_status_label.setText("Debug Ready")
                     debug_status_label.setStyleSheet("color: blue;")
             except:
-                debug_status_label.setText("🎛️ Debug Ready")
+                debug_status_label.setText("Debug Ready")
                 debug_status_label.setStyleSheet("color: blue;")
 
         update_debug_status()
@@ -356,8 +356,8 @@ def integrate_all_improvements(main_window): #vers 1
         add_status_indicators(main_window)
 
         if core_success:
-            main_window.log_message("🎉 IMG Factory 1.5 - All improvements integrated successfully!")
-            main_window.log_message("📖 Check Debug menu for all options")
+            main_window.log_message("IMG Factory 1.5 - All improvements integrated successfully!")
+            main_window.log_message("Check Debug menu for all options")
 
         return core_success
 
@@ -664,7 +664,6 @@ def debug_import_errors():
     img_debugger.debug("=== DEBUGGING IMPORT ERRORS ===")
 
     components_to_check = [
-        'img_core_classes',
         'img_creator',
         'img_validator',
         'img_templates',
@@ -728,11 +727,11 @@ def enhanced_error_handler(exc_type, exc_value, exc_traceback): #vers 1
                 line_text = linecache.getline(filename, line_number).strip()
 
                 if "format_file_size" in line_text:
-                    print(f"📁 FILE: {filename}")
-                    print(f"📍 LINE: {line_number}")
-                    print(f"🔧 FUNCTION: {function_name}")
-                    print(f"💥 CODE: {line_text}")
-                    print(f"❌ ERROR: {exc_value}")
+                    print(f"FILE: {filename}")
+                    print(f"LINE: {line_number}")
+                    print(f"FUNCTION: {function_name}")
+                    print(f"CODE: {line_text}")
+                    print(f"ERROR: {exc_value}")
                     print("=" * 50)
                     break
 
@@ -766,7 +765,7 @@ def install_enhanced_debug(main_window): #vers 1
             line_number = frame.f_lineno
             function_name = frame.f_code.co_name
 
-            enhanced_message = f"{message}\n   📁 {filename}:{line_number} in {function_name}()"
+            enhanced_message = f"{message}\n {filename}:{line_number} in {function_name}()"
             original_error(enhanced_message)
 
         img_debugger.error = enhanced_img_error
@@ -845,27 +844,7 @@ def debug_col_creation_process(col_creator_dialog):
 
 def debug_col_import_errors():
     """Debug COL component import issues using IMG debug system"""
-    if not is_col_debug_enabled():
-        return
-
-    img_debugger.debug("=== DEBUGGING COL IMPORT ERRORS ===")
-
-    components_to_check = [
-        'methods.col_core_classes',
-        'components.Col_Creator.col_creator',
-        'methods.col_validation',
-        'methods.col_parsing_functions',
-        'components.col_display'
-    ]
-
-    for component in components_to_check:
-        try:
-            __import__(component)
-            img_debugger.success(f"✓ {component} imported successfully")
-        except ImportError as e:
-            img_debugger.error(f"✗ Failed to import {component}: {e}")
-        except Exception as e:
-            img_debugger.error(f"✗ Error importing {component}: {e}")
+    pass
 
 def debug_col_loading_process(col_file_obj: Any, **params):
     """Debug COL file loading process using IMG debug system"""
