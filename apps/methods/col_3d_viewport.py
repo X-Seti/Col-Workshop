@@ -219,24 +219,27 @@ class COL3DViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         gluPerspective(45.0, aspect, 0.1, 1000.0)
         glMatrixMode(GL_MODELVIEW)
     
-    
-    def paintGL(self): #vers 1
+
+    def paintGL(self): #vers 2
         """Render the professional 3D scene"""
         if not OPENGL_AVAILABLE:
             return
-        
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glLoadIdentity()
-        
+
         # Setup camera transformation
         glTranslatef(self.camera_pan_x, -self.camera_pan_y, -self.camera_distance)
         glRotatef(self.camera_rotation_x, 1, 0, 0)
         glRotatef(self.camera_rotation_y, 0, 1, 0)
-        
+
+        # Apply GTA coordinate system transformation (Z-up -> Y-up)
+        #glRotatef(90, 1, 0, 0)  # Rotate -90° around X to convert Z-up to Y-up
+
         # Draw grid floor
         if self.show_grid:
             self.draw_grid_floor()
-        
+
         # Draw COL model if loaded
         if self.current_model:
             self.render_collision_model()
@@ -323,9 +326,11 @@ class COL3DViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         if not hasattr(self.current_model, 'vertices') or not self.current_model.vertices:
             return
         
-        if self.lighting_enabled:
-            glEnable(GL_LIGHTING)
-        
+        #if self.lighting_enabled:
+        #    glEnable(GL_LIGHTING)
+
+        glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, GL_TRUE)
+
         # Set material properties
         glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT, [0.3, 0.3, 0.3, 1.0])
         glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE, [0.8, 0.8, 0.8, 1.0])
@@ -378,6 +383,16 @@ class COL3DViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
                 invalid_faces += 1
                 continue
             
+            # DEBUG: Check for degenerate face
+            if face_idx < 5:  # First 5 faces only
+                area_vec_x = (v1.y - v0.y) * (v2.z - v0.z) - (v1.z - v0.z) * (v2.y - v0.y)
+                area_vec_y = (v1.z - v0.z) * (v2.x - v0.x) - (v1.x - v0.x) * (v2.z - v0.z)
+                area_vec_z = (v1.x - v0.x) * (v2.y - v0.y) - (v1.y - v0.y) * (v2.x - v0.x)
+                area = math.sqrt(area_vec_x**2 + area_vec_y**2 + area_vec_z**2)
+                print(f"  Face {face_idx} indices=({idx0},{idx1},{idx2}) area={area:.4f}")
+                if area < 0.0001:
+                    print(f"    WARNING: Degenerate face (zero area)")
+
             # Calculate face normal
             edge1_x = v1.x - v0.x
             edge1_y = v1.y - v0.y
@@ -400,9 +415,14 @@ class COL3DViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
                 glNormal3f(nx, ny, nz)
             
             # Draw triangle
-            glVertex3f(v0.x, v0.y, v0.z)
-            glVertex3f(v1.x, v1.y, v1.z)
-            glVertex3f(v2.x, v2.y, v2.z)
+            #glVertex3f(v0.x, v0.y, v0.z)
+            #glVertex3f(v1.x, v1.y, v1.z)
+            #glVertex3f(v2.x, v2.y, v2.z)
+
+            # Draw triangle - REVERSE WINDING ORDER
+            glVertex3f(v2.x, v2.z, -v2.y)  # v2 first
+            glVertex3f(v1.x, v1.z, -v1.y)  # v1 second
+            glVertex3f(v0.x, v0.z, -v0.y)  # v0 last
             
             valid_faces += 1
         
@@ -412,6 +432,7 @@ class COL3DViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         if not hasattr(self, '_last_face_count') or self._last_face_count != total_faces:
             print(f"[COL Viewport] Rendering: {valid_faces}/{total_faces} faces, {invalid_faces} skipped")
             print(f"[COL Viewport] Vertices available: {len(vertices)}")
+            print(f"[COL Viewport] Unique vertices used: {len(set(sum([list(f.vertex_indices) for f in self.current_model.faces], [])))}")
             print(f"[COL Viewport] Backface culling: {'ON' if self.backface_culling else 'OFF'}")
             self._last_face_count = total_faces
         
@@ -444,6 +465,13 @@ class COL3DViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             glEnd()
             
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+
+            # Debug output (only first time or when changed)
+            if not hasattr(self, '_last_face_count') or self._last_face_count != total_faces:
+                print(f"[COL Viewport] Rendering: {valid_faces}/{total_faces} faces, {invalid_faces} skipped")
+                print(f"[COL Viewport] Vertices available: {len(vertices)}")
+                print(f"[COL Viewport] Backface culling: {'ON' if self.backface_culling else 'OFF'}")
+                self._last_face_count = total_faces
     
     
     def draw_collision_sphere(self, sphere): #vers 1

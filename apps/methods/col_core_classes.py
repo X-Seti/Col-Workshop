@@ -581,7 +581,22 @@ class COLFile:
                 return
             
             model.update_flags()
+            
+            # DEBUG: Check parsed data
             img_debugger.debug(f"COL1: Parse complete - {model.get_stats()}")
+            if model.vertices:
+                v = model.vertices[0]
+                img_debugger.debug(f"DEBUG: First vertex type={type(v.position).__name__}, has .x={hasattr(v.position, 'x')}")
+                img_debugger.debug(f"DEBUG: First vertex value={v.position}")
+            if model.faces:
+                f = model.faces[0]
+                img_debugger.debug(f"DEBUG: First face indices={f.vertex_indices}")
+            if model.boxes:
+                b = model.boxes[0]
+                img_debugger.debug(f"DEBUG: First box min type={type(b.min_point).__name__}")
+            if model.spheres:
+                s = model.spheres[0]
+                img_debugger.debug(f"DEBUG: First sphere center type={type(s.center).__name__}")
             
         except Exception as e:
             img_debugger.error(f"COL1 parse error: {e}")
@@ -671,7 +686,22 @@ class COLFile:
                 return
             
             model.update_flags()
+            
+            # DEBUG: Check parsed data
             img_debugger.debug(f"COL2/3: Parse complete - {model.get_stats()}")
+            if model.vertices:
+                v = model.vertices[0]
+                img_debugger.debug(f"DEBUG: First vertex type={type(v.position).__name__}, has .x={hasattr(v.position, 'x')}")
+                img_debugger.debug(f"DEBUG: First vertex value={v.position}")
+            if model.faces:
+                f = model.faces[0]
+                img_debugger.debug(f"DEBUG: First face indices={f.vertex_indices}")
+            if model.boxes:
+                b = model.boxes[0]
+                img_debugger.debug(f"DEBUG: First box min type={type(b.min_point).__name__}")
+            if model.spheres:
+                s = model.spheres[0]
+                img_debugger.debug(f"DEBUG: First sphere center type={type(s.center).__name__}")
             
         except Exception as e:
             img_debugger.error(f"COL2/3 parse error: {e}")

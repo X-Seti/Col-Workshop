@@ -44,6 +44,7 @@ def safe_parse_faces_col1(model, data: bytes, offset: int, num_faces: int) -> in
     try:
         img_debugger.debug(f"COL1: Parsing {num_faces} faces starting at offset {offset}")
         
+
         for i in range(num_faces):
             # Check vertex indices (6 bytes: 3 shorts)
             vertex_data, new_offset = safe_unpack_check(data, offset, '<HHH', f"face {i} vertex indices")
@@ -79,6 +80,11 @@ def safe_parse_faces_col1(model, data: bytes, offset: int, num_faces: int) -> in
             else:
                 flags = flags_data[0]
                 offset = new_offset
+
+            # Skip 2 bytes padding (COL1 faces are 16 bytes total)
+            offset += 2
+
+            # Create face with safe data
             
             # Create face with safe data
             try:

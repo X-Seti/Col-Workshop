@@ -1,9 +1,59 @@
 === IMG Factory Debug Log ===
-Started: 2025-12-17 00:01:52
+Started: 2025-12-17 01:15:19
 Python: 3.13.7 (main, Aug 15 2025, 12:34:02) [GCC 15.2.1 20250813]
 Platform: linux
 ==================================================
 
-[00:01:52] DEBUG: debug_functions.py:467 in debug() - AppSettings initialized for standalone COL Workshop
-[00:01:52] SUCCESS: debug_functions.py:483 in success() - Theme applied: garujaro_dark
-[00:01:52] SUCCESS: debug_functions.py:483 in success() - Theme applied: garujaro_dark
+[01:15:20] DEBUG: debug_functions.py:467 in debug() - AppSettings initialized for standalone COL Workshop
+[01:15:20] SUCCESS: debug_functions.py:483 in success() - Theme applied: garujaro_dark
+[01:15:20] SUCCESS: debug_functions.py:483 in success() - Theme applied: garujaro_dark
+[01:15:26] INFO: debug_functions.py:471 in info() - Loading COL file: example2.col (1332 bytes)
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Counts - S:0 B:0 V:42 F:3226344957
+[01:15:26] WARNING: debug_functions.py:475 in warning() - ⚠️  Garbage face count detected: 3226344957
+[01:15:26] WARNING: debug_functions.py:475 in warning() -     Correcting to calculated value: 46
+[01:15:26] WARNING: debug_functions.py:475 in warning() -     (Remaining bytes: 736 / Face size: 16)
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Parsing 0 spheres starting at offset 84
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Successfully parsed 0 spheres
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Parsing 0 boxes starting at offset 84
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Successfully parsed 0 boxes
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - DEBUG: safe_parse_vertices CALLED with 42 vertices
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL: Parsing 42 vertices starting at offset 84
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - DEBUG: Vertex position type: <class 'apps.methods.col_core_classes.Vector3'>, has .x? True
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - DEBUG: Vertex position value: (-7.84, -6.82, -3.22)
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL: Successfully parsed 42 vertices
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Parsing 46 faces starting at offset 588
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Successfully parsed 46 faces
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Parse complete - ap_blastdef_03: S:0 B:0 V:42 F:46
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - DEBUG: First vertex type=Vector3, has .x=True
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - DEBUG: First vertex value=(-7.84, -6.82, -3.22)
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - DEBUG: First face indices=(5, 0, 7)
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - Parsed COL_1 model: ap_blastdef_03: S:0 B:0 V:42 F:46
+[01:15:26] SUCCESS: debug_functions.py:483 in success() - Successfully loaded 1 COL models
+[01:15:26] INFO: debug_functions.py:471 in info() - Loading COL file: example2.col (1332 bytes)
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Counts - S:0 B:0 V:42 F:3226344957
+[01:15:26] WARNING: debug_functions.py:475 in warning() - ⚠️  Garbage face count detected: 3226344957
+[01:15:26] WARNING: debug_functions.py:475 in warning() -     Correcting to calculated value: 46
+[01:15:26] WARNING: debug_functions.py:475 in warning() -     (Remaining bytes: 736 / Face size: 16)
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Parsing 0 spheres starting at offset 84
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Successfully parsed 0 spheres
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Parsing 0 boxes starting at offset 84
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Successfully parsed 0 boxes
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - DEBUG: safe_parse_vertices CALLED with 42 vertices
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL: Parsing 42 vertices starting at offset 84
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - DEBUG: Vertex position type: <class 'apps.methods.col_core_classes.Vector3'>, has .x? True
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - DEBUG: Vertex position value: (-7.84, -6.82, -3.22)
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL: Successfully parsed 42 vertices
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Parsing 46 faces starting at offset 588
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Successfully parsed 46 faces
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - COL1: Parse complete - ap_blastdef_03: S:0 B:0 V:42 F:46
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - DEBUG: First vertex type=Vector3, has .x=True
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - DEBUG: First vertex value=(-7.84, -6.82, -3.22)
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - DEBUG: First face indices=(5, 0, 7)
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - Parsed COL_1 model: ap_blastdef_03: S:0 B:0 V:42 F:46
+[01:15:26] SUCCESS: debug_functions.py:483 in success() - Successfully loaded 1 COL models
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - Populated collision table with 1 models
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - Selected row 0, model index 0
+[01:15:26] SUCCESS: debug_functions.py:483 in success() - 3D viewport updated for ap_blastdef_03
+[01:15:26] DEBUG: debug_functions.py:467 in debug() - Selected row 0, model index 0
+[01:15:26] SUCCESS: debug_functions.py:483 in success() - 3D viewport updated for ap_blastdef_03
+[01:15:26] SUCCESS: debug_functions.py:483 in success() - Opened COL file: /home/x2/Desktop/example2.col with 1 models
