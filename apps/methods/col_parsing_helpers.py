@@ -288,6 +288,7 @@ def safe_parse_boxes(model, data: bytes, offset: int, num_boxes: int, version: s
 def safe_parse_vertices(model, data: bytes, offset: int, num_vertices: int) -> int: #vers 1
     """Safely parse COL vertices with bounds checking"""
     try:
+        img_debugger.debug(f"DEBUG: safe_parse_vertices CALLED with {num_vertices} vertices")
         img_debugger.debug(f"COL: Parsing {num_vertices} vertices starting at offset {offset}")
         
         for i in range(num_vertices):
