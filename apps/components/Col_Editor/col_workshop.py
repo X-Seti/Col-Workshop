@@ -38,8 +38,6 @@ from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPoint, QRect, QByteArray
 from PyQt6.QtGui import QFont, QIcon, QPixmap, QImage, QPainter, QPen, QBrush, QColor, QCursor
 from PyQt6.QtSvg import QSvgRenderer
 
-# Import project modules AFTER path setup
-from apps.methods.svg_icon_factory import SVGIconFactory
 from apps.debug.debug_functions import img_debugger
 
 # Temporary 3D viewport placeholder
@@ -55,8 +53,15 @@ class COL3DViewport(QWidget):
     def set_view_options(self, **options): pass
 
 VIEWPORT_AVAILABLE = False  # 3D viewport not yet implemented
+
+# Import project modules AFTER path setup
+from apps.methods.svg_icon_factory import SVGIconFactory
+
 # Import COL data structures and parser
-from apps.methods.col_data_structures import Vector3, COLVersion, COLModel
+from apps.methods.col_data_structures import (
+    Vector3, COLVersion, BoundingBox, COLSphere, COLBox,
+    COLVertex, COLFace, COLModel
+)
 from apps.methods.col_file import COLFile
 
 # Add root directory to path
