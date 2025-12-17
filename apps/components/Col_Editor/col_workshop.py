@@ -73,7 +73,7 @@ class COLModelListWidget(QListWidget): #vers 1
 
     def set_col_file(self, col_file: COLFile): #vers 1
         """Set COL file and populate list"""
-        self.current_file = col_file
+        #self.current_file = col_file
         self.populate_models()
 
 
@@ -110,6 +110,28 @@ class COLModelListWidget(QListWidget): #vers 1
         if item:
             model_index = item.data(Qt.ItemDataRole.UserRole)
             self.model_context_menu.emit(model_index, self.mapToGlobal(position))
+
+
+class COLFile:
+    def __init__(self, file_path=None):
+        self.file_path = file_path
+        self.models = []
+        self.is_loaded = False
+
+class COLModel:
+    def __init__(self):
+        self.name = "Unknown"
+        self.version = 1
+        self.spheres = []
+        self.boxes = []
+        self.faces = []
+        self.vertices = []
+
+class COLVersion:
+    COL_1 = 1
+    COL_2 = 2
+    COL_3 = 3
+    name = "COL1"
 
 
 class COLWorkshop(QWidget): #vers 3
@@ -208,18 +230,38 @@ class COLWorkshop(QWidget): #vers 3
 
         # Apply theme ONCE at the end
         self._apply_theme()
+class COLFile:
+    def __init__(self, file_path=None):
+        self.file_path = file_path
+        self.models = []
+        self.is_loaded = False
 
-        if hasattr(self, '_update_dock_button_visibility'):
-            self._update_dock_button_visibility()
+class COLModel:
+    def __init__(self):
+        self.name = "Unknown"
+        self.version = 1
+        self.spheres = []
+        self.boxes = []
+        self.faces = []
+        self.vertices = []
 
-        if self.main_window and hasattr(self.main_window, 'app_settings'):
-            self.update()  # Force widget repaint
+class COLVersion:
+    COL_1 = 1
+    COL_2 = 2
+    COL_3 = 3
+    name = "COL1"
 
-        # Enable mouse tracking
-        self.setMouseTracking(True)
+    if hasattr(self, '_update_dock_button_visibility'):
+        self._update_dock_button_visibility()
 
-        if DEBUG_STANDALONE and self.standalone_mode:
-            print(App_name + " initialized")
+    if self.main_window and hasattr(self.main_window, 'app_settings'):
+        self.update()  # Force widget repaint
+
+    # Enable mouse tracking
+    self.setMouseTracking(True)
+
+    if DEBUG_STANDALONE and self.standalone_mode:
+        print(App_name + " initialized")
 
 
     def setup_ui(self): #vers 7
@@ -4370,27 +4412,6 @@ class COLWorkshop(QWidget): #vers 3
     """SVG icon data to QIcon with theme color support"""
 
 #moved to scg_icon_factory
-
-class COLFile:
-    def __init__(self, file_path=None):
-        self.file_path = file_path
-        self.models = []
-        self.is_loaded = False
-
-class COLModel:
-    def __init__(self):
-        self.name = "Unknown"
-        self.version = 1
-        self.spheres = []
-        self.boxes = []
-        self.faces = []
-        self.vertices = []
-
-class COLVersion:
-    COL_1 = 1
-    COL_2 = 2
-    COL_3 = 3
-    name = "COL1"
 
 class ZoomablePreview(QLabel): #vers 2
     """Fixed preview widget with zoom and pan"""
