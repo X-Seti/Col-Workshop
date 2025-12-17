@@ -71,12 +71,6 @@ class COLModelListWidget(QListWidget): #vers 1
         self.currentRowChanged.connect(self.on_selection_changed)
 
 
-    def set_col_file(self, col_file: COLFile): #vers 1
-        """Set COL file and populate list"""
-        #self.current_file = col_file
-        self.populate_models()
-
-
     def populate_models(self): #vers 1
         """Populate model list"""
         self.clear()
