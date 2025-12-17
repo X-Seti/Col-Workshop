@@ -4371,6 +4371,27 @@ class COLWorkshop(QWidget): #vers 3
 
 #moved to scg_icon_factory
 
+class COLFile:
+    def __init__(self, file_path=None):
+        self.file_path = file_path
+        self.models = []
+        self.is_loaded = False
+
+class COLModel:
+    def __init__(self):
+        self.name = "Unknown"
+        self.version = 1
+        self.spheres = []
+        self.boxes = []
+        self.faces = []
+        self.vertices = []
+
+class COLVersion:
+    COL_1 = 1
+    COL_2 = 2
+    COL_3 = 3
+    name = "COL1"
+
 class ZoomablePreview(QLabel): #vers 2
     """Fixed preview widget with zoom and pan"""
 
