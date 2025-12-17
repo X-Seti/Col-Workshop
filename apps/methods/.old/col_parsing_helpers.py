@@ -44,7 +44,6 @@ def safe_parse_faces_col1(model, data: bytes, offset: int, num_faces: int) -> in
     try:
         img_debugger.debug(f"COL1: Parsing {num_faces} faces starting at offset {offset}")
         
-
         for i in range(num_faces):
             # Check vertex indices (6 bytes: 3 shorts)
             vertex_data, new_offset = safe_unpack_check(data, offset, '<HHH', f"face {i} vertex indices")
@@ -80,11 +79,6 @@ def safe_parse_faces_col1(model, data: bytes, offset: int, num_faces: int) -> in
             else:
                 flags = flags_data[0]
                 offset = new_offset
-
-            # Skip 2 bytes padding (COL1 faces are 16 bytes total)
-            offset += 2
-
-            # Create face with safe data
             
             # Create face with safe data
             try:
@@ -210,11 +204,6 @@ def safe_parse_spheres(model, data: bytes, offset: int, num_spheres: int, versio
                 sphere = COLSphere(center, radius, material)
                 model.spheres.append(sphere)
                 
-                # DEBUG: Print first sphere type
-                if i == 0:
-                    img_debugger.debug(f"DEBUG: Sphere center type: {type(sphere.center)}, has .x? {hasattr(sphere.center, 'x')}")
-                    img_debugger.debug(f"DEBUG: Sphere center value: {sphere.center}")
-                
             except Exception as e:
                 img_debugger.error(f"{version}: Error creating sphere {i}: {e}")
                 continue
@@ -275,11 +264,6 @@ def safe_parse_boxes(model, data: bytes, offset: int, num_boxes: int, version: s
                 box = COLBox(min_point, max_point, material)
                 model.boxes.append(box)
                 
-                # DEBUG: Print first box type
-                if i == 0:
-                    img_debugger.debug(f"DEBUG: Box min_point type: {type(box.min_point)}, has .x? {hasattr(box.min_point, 'x')}")
-                    img_debugger.debug(f"DEBUG: Box min value: {box.min_point}")
-                
             except Exception as e:
                 img_debugger.error(f"{version}: Error creating box {i}: {e}")
                 continue
@@ -294,7 +278,6 @@ def safe_parse_boxes(model, data: bytes, offset: int, num_boxes: int, version: s
 def safe_parse_vertices(model, data: bytes, offset: int, num_vertices: int) -> int: #vers 1
     """Safely parse COL vertices with bounds checking"""
     try:
-        img_debugger.debug(f"DEBUG: safe_parse_vertices CALLED with {num_vertices} vertices")
         img_debugger.debug(f"COL: Parsing {num_vertices} vertices starting at offset {offset}")
         
         for i in range(num_vertices):
@@ -312,11 +295,6 @@ def safe_parse_vertices(model, data: bytes, offset: int, num_vertices: int) -> i
             try:
                 vertex = COLVertex(position)
                 model.vertices.append(vertex)
-                
-                # DEBUG: Print first vertex type
-                if i == 0:
-                    img_debugger.debug(f"DEBUG: Vertex position type: {type(vertex.position)}, has .x? {hasattr(vertex.position, 'x')}")
-                    img_debugger.debug(f"DEBUG: Vertex position value: {vertex.position}")
                 
             except Exception as e:
                 img_debugger.error(f"COL: Error creating vertex {i}: {e}")

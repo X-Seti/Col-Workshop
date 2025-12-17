@@ -57,7 +57,7 @@ def load_col_file_object(main_window, file_path: str) -> Optional[COLFile]: #ver
         if not validate_col_file(main_window, file_path):
             return None
 
-        col_file = COLFile()
+        col_file = COLFile(file_path)
 
         if col_file.load_from_file(file_path):
             if col_file.load_error:
@@ -266,8 +266,7 @@ class COLBackgroundLoader(QThread):
                 return
             
             # Create COL file object
-            self.col_file = COLFile()
-            self.col_file.load_from_file(self.file_path)
+            self.col_file = COLFile(self.file_path)
             
             self.progress_update.emit(25, "Reading COL file data...")
             
@@ -338,14 +337,14 @@ class COLBackgroundLoader(QThread):
                 return result
             
             # Replace the load method temporarily
-            # Removed original_load reference
-            # Removed load method replacement
+            original_load = self.col_file.load
+            self.col_file.load = progress_load
             
             try:
-                return self.col_file.load_from_file(self.file_path)
+                return self.col_file.load()
             finally:
                 # Restore original load method
-                # Removed load restore
+                self.col_file.load = original_load
             
         except Exception as e:
             self.progress_update.emit(0, f"Loading error: {str(e)}")

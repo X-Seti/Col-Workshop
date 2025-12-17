@@ -340,6 +340,973 @@ class SVGIconFactory: #vers 6
         </svg>'''
         return SVGIconFactory._create_icon(svg_data, size, None)
 
+#- Moved from Col_Workshop
+    def _create_bitdepth_icon(self): #vers 3
+        """Create bit depth icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path fill="currentColor"
+                d="M3,5H9V11H3V5M5,7V9H7V7H5M11,7H21V9H11V7M11,15H21V17H11V15M5,20L1.5,16.5L2.91,15.09L5,17.17L9.59,12.59L11,14L5,20Z"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_resize_icon(self): #vers 2
+        """Create resize icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path fill="currentColor"
+                d="M10,21V19H6.41L10.91,14.5L9.5,13.09L5,17.59V14H3V21H10M14.5,10.91L19,6.41V10H21V3H14V5H17.59L13.09,9.5L14.5,10.91Z"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_warning_icon_svg(self): #vers 1
+        """Create SVG warning icon for table display"""
+        svg_data = b"""
+        <svg width="16" height="16" viewBox="0 0 16 16">
+            <path fill="#FFA500" d="M8 1l7 13H1z"/>
+            <text x="8" y="12" font-size="10" fill="black" text-anchor="middle">!</text>
+        </svg>
+        """
+        return QIcon(QPixmap.fromImage(
+            QImage.fromData(QByteArray(svg_data))
+        ))
+
+
+    def _create_resize_icon2(self): #vers 1
+        """Resize grip icon - diagonal arrows"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M14 6l-8 8M10 6h4v4M6 14v-4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_upscale_icon(self): #vers 3
+        """Create AI upscale icon - brain/intelligence style"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <!-- Brain outline -->
+            <path d="M12 3 C8 3 5 6 5 9 C5 10 5.5 11 6 12 C5.5 13 5 14 5 15 C5 18 8 21 12 21 C16 21 19 18 19 15 C19 14 18.5 13 18 12 C18.5 11 19 10 19 9 C19 6 16 3 12 3 Z"
+                fill="none" stroke="currentColor" stroke-width="1.5"/>
+
+            <!-- Neural pathways inside -->
+            <path d="M9 8 L10 10 M14 8 L13 10 M10 12 L14 12 M9 14 L12 16 M15 14 L12 16"
+                stroke="currentColor" stroke-width="1" fill="none"/>
+
+            <!-- Upward indicator -->
+            <path d="M19 8 L19 4 M17 6 L19 4 L21 6"
+                stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_upscale_icon(self): #vers 3
+        """Create AI upscale icon - sparkle/magic AI style"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <!-- Large sparkle -->
+            <path d="M12 2 L13 8 L12 14 L11 8 Z M8 12 L2 11 L8 10 L14 11 Z"
+                fill="currentColor"/>
+
+            <!-- Small sparkles -->
+            <circle cx="18" cy="6" r="1.5" fill="currentColor"/>
+            <circle cx="6" cy="18" r="1.5" fill="currentColor"/>
+            <circle cx="19" cy="16" r="1" fill="currentColor"/>
+
+            <!-- Upward arrow -->
+            <path d="M16 20 L20 20 M18 18 L18 22"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_upscale_icon(self): #vers 3
+        """Create AI upscale icon - neural network style"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <!-- Neural network nodes -->
+            <circle cx="6" cy="6" r="2" fill="currentColor"/>
+            <circle cx="18" cy="6" r="2" fill="currentColor"/>
+            <circle cx="6" cy="18" r="2" fill="currentColor"/>
+            <circle cx="18" cy="18" r="2" fill="currentColor"/>
+            <circle cx="12" cy="12" r="2.5" fill="currentColor"/>
+
+            <!-- Connecting lines -->
+            <path d="M7.5 7.5 L10.5 10.5 M13.5 10.5 L16.5 7.5 M7.5 16.5 L10.5 13.5 M13.5 13.5 L16.5 16.5"
+                stroke="currentColor" stroke-width="1.5" fill="none"/>
+
+            <!-- Upward arrow overlay -->
+            <path d="M12 3 L12 9 M9 6 L12 3 L15 6"
+                stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_manage_icon(self): #vers 1
+        """Create manage/settings icon for bumpmap manager"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <!-- Gear/cog icon for management -->
+            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" fill="none"/>
+            <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_paint_icon(self): #vers 1
+        """Create paint brush icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path d="M20.71 7.04c.39-.39.39-1.04 0-1.41l-2.34-2.34c-.37-.39-1.02-.39-1.41 0l-1.84 1.83 3.75 3.75M3 17.25V21h3.75L17.81 9.93l-3.75-3.75L3 17.25z"
+                fill="currentColor"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_compress_icon(self): #vers 2
+        """Create compress icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path fill="currentColor"
+                d="M4,2H20V4H13V10H20V12H4V10H11V4H4V2M4,13H20V15H13V21H20V23H4V21H11V15H4V13Z"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_backface_icon(self): #vers 1
+        """Backface culling toggle - polygon with front/back sides"""
+        svg_data = b'''<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <!-- Front face (visible - solid) -->
+            <path d="M12 4 L20 8 L16 16 L8 16 L4 8 Z"
+                fill="currentColor" opacity="0.8"/>
+
+            <!-- Back edge (hidden - dashed) -->
+            <path d="M12 4 L8 16 M12 4 L16 16"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-dasharray="2,2"
+                opacity="0.3"
+                fill="none"/>
+
+            <!-- Front edges (visible - solid) -->
+            <path d="M4 8 L12 4 L20 8 L16 16 L8 16 Z"
+                stroke="currentColor"
+                stroke-width="1.5"
+                fill="none"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_build_icon(self): #vers 1
+        """Create build/construct icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path d="M22,9 L12,2 L2,9 L12,16 L22,9 Z M12,18 L4,13 L4,19 L12,24 L20,19 L20,13 L12,18 Z"
+                fill="currentColor"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_uncompress_icon(self): #vers 2
+        """Create uncompress icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path fill="currentColor" d="M11,4V2H13V4H11M13,21V19H11V21H13M4,12V10H20V12H4Z"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_view_icon(self): #vers 2
+        """Create view/eye icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path fill="currentColor"
+                d="M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9
+                    M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17
+                    M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5
+                    C17,19.5 21.27,16.39 23,12
+                    C21.27,7.61 17,4.5 12,4.5Z"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_add_icon(self): #vers 2
+        """Create add/plus icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path fill="currentColor" d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_delete_icon(self): #vers 2
+        """Create delete/minus icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path fill="currentColor" d="M19,13H5V11H19V13Z"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_color_picker_icon(self): #vers 1
+        """Color picker icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2"/>
+            <path d="M10 3v4M10 13v4M3 10h4M13 10h4" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_zoom_in_icon(self): #vers 1
+        """Zoom in icon (+)"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2"/>
+            <path d="M8 5v6M5 8h6" stroke="currentColor" stroke-width="2"/>
+            <path d="M13 13l4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_zoom_out_icon(self): #vers 1
+        """Zoom out icon (-)"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2"/>
+            <path d="M5 8h6" stroke="currentColor" stroke-width="2"/>
+            <path d="M13 13l4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_reset_icon(self): #vers 1
+        """Reset/1:1 icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M16 10A6 6 0 1 1 4 10M4 10l3-3m-3 3l3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_fit_icon(self): #vers 1
+        """Fit to window icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="3" y="3" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"/>
+            <path d="M7 7l6 6M13 7l-6 6" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_arrow_up_icon(self): #vers 1
+        """Arrow up"""
+        svg_data = b'''<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M8 3v10M4 7l4-4 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=16)
+
+
+    def _create_arrow_down_icon(self): #vers 1
+        """Arrow down"""
+        svg_data = b'''<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M8 13V3M12 9l-4 4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=16)
+
+
+    def _create_arrow_left_icon(self): #vers 1
+        """Arrow left"""
+        svg_data = b'''<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M3 8h10M7 4L3 8l4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=16)
+
+
+    def _create_arrow_right_icon(self): #vers 1
+        """Arrow right"""
+        svg_data = b'''<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M13 8H3M9 12l4-4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=16)
+
+
+    def _create_flip_vert_icon(self): #vers 1
+        """Create vertical flip SVG icon"""
+        from PyQt6.QtGui import QIcon, QPixmap, QPainter
+        from PyQt6.QtSvg import QSvgRenderer
+
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M3 12h18M8 7l-4 5 4 5M16 7l4 5-4 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>'''
+
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_flip_horz_icon(self): #vers 1
+        """Create horizontal flip SVG icon"""
+        from PyQt6.QtGui import QIcon, QPixmap, QPainter
+        from PyQt6.QtSvg import QSvgRenderer
+
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 3v18M7 8l5-4 5 4M7 16l5 4 5-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>'''
+
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_rotate_cw_icon(self): #vers 1
+        """Create clockwise rotation SVG icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M21 12a9 9 0 11-9-9v6M21 3l-3 6-6-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>'''
+
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_rotate_ccw_icon(self): #vers 1
+        """Create counter-clockwise rotation SVG icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M3 12a9 9 0 109-9v6M3 3l3 6 6-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>'''
+
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_copy_icon(self): #vers 1
+        """Create copy SVG icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/>
+            <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_paste_icon(self): #vers 1
+        """Create paste SVG icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2" stroke="currentColor" stroke-width="2"/>
+            <rect x="8" y="2" width="8" height="4" rx="1" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_edit_icon(self): #vers 1
+        """Create edit SVG icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="2"/>
+            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_convert_icon(self): #vers 1
+        """Create convert SVG icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M3 12h18M3 12l4-4M3 12l4 4M21 12l-4-4M21 12l-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_undo_icon(self): #vers 2
+        """Undo - Curved arrow icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path d="M3 7v6h6M3 13a9 9 0 1018 0 9 9 0 00-18 0z"
+                stroke="currentColor" stroke-width="2" fill="none"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_info_icon(self): #vers 1
+        """Info - circle with 'i' icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/>
+            <path d="M12 11v6M12 8v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_folder_icon(self): #vers 1
+        """Open IMG - Folder icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-7l-2-2H5a2 2 0 00-2 2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_file_icon(self): #vers 1
+        """Open col - File icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" stroke-width="2"/>
+            <path d="M14 2v6h6" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_open_icon(self): #vers 1
+        """Open - Folder icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path d="M3 7v13a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                stroke="currentColor" stroke-width="2"
+                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_save_icon(self): #vers 1
+        """Save col - Floppy disk icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" stroke="currentColor" stroke-width="2"/>
+            <path d="M17 21v-8H7v8M7 3v5h8" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_import_icon(self): #vers 1
+        """Import - Download/Import icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_export_icon(self): #vers 1
+        """Export - Upload/Export icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_saveas_icon(self): #vers 1
+        """Save - Floppy disk icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"
+                stroke="currentColor" stroke-width="2"
+                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <polyline points="17 21 17 13 7 13 7 21"
+                stroke="currentColor" stroke-width="2"
+                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <polyline points="7 3 7 8 15 8"
+                stroke="currentColor" stroke-width="2"
+                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_analyze_icon(self): #vers 1
+        """Analyze - Bar chart icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <line x1="18" y1="20" x2="18" y2="10"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <line x1="12" y1="20" x2="12" y2="4"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <line x1="6" y1="20" x2="6" y2="14"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_sphere_icon(self): #vers 1
+        """Sphere - Circle icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10"
+                stroke="currentColor" stroke-width="2"
+                fill="none"/>
+            <path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"
+                stroke="currentColor" stroke-width="2"
+                fill="none"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_box_icon(self): #vers 1
+        """Box - Cube icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"
+                stroke="currentColor" stroke-width="2"
+                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"
+                stroke="currentColor" stroke-width="2"
+                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="12" y1="22.08" x2="12" y2="12"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_mesh_icon(self): #vers 1
+        """Mesh - Grid/wireframe icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <rect x="3" y="3" width="18" height="18"
+                stroke="currentColor" stroke-width="2"
+                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="3" y1="9" x2="21" y2="9"
+                stroke="currentColor" stroke-width="2"/>
+            <line x1="3" y1="15" x2="21" y2="15"
+                stroke="currentColor" stroke-width="2"/>
+            <line x1="9" y1="3" x2="9" y2="21"
+                stroke="currentColor" stroke-width="2"/>
+            <line x1="15" y1="3" x2="15" y2="21"
+                stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_package_icon(self): #vers 1
+        """Export All - Package/Box icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" stroke="currentColor" stroke-width="2"/>
+            <path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_properties_icon(self): #vers 1
+        """Properties - Info/Details icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+            <path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    # CONTEXT MENU ICONS
+
+    def _create_plus_icon(self): #vers 1
+        """Create New Entry - Plus icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+            <path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_document_icon(self): #vers 1
+        """Create New col - Document icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" stroke-width="2"/>
+            <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_filter_icon(self): #vers 1
+        """Filter/sliders icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="6" cy="4" r="2" fill="currentColor"/>
+            <rect x="5" y="8" width="2" height="8" fill="currentColor"/>
+            <circle cx="14" cy="12" r="2" fill="currentColor"/>
+            <rect x="13" y="4" width="2" height="6" fill="currentColor"/>
+            <circle cx="10" cy="8" r="2" fill="currentColor"/>
+            <rect x="9" y="12" width="2" height="4" fill="currentColor"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_add_icon(self): #vers 1
+        """Add/plus icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_trash_icon(self): #vers 1
+        """Delete/trash icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M3 5h14M8 5V3h4v2M6 5v11a1 1 0 001 1h6a1 1 0 001-1V5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_filter_icon(self): #vers 1
+        """Filter/sliders icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="6" cy="4" r="2" fill="currentColor"/>
+            <rect x="5" y="8" width="2" height="8" fill="currentColor"/>
+            <circle cx="14" cy="12" r="2" fill="currentColor"/>
+            <rect x="13" y="4" width="2" height="6" fill="currentColor"/>
+            <circle cx="10" cy="8" r="2" fill="currentColor"/>
+            <rect x="9" y="12" width="2" height="4" fill="currentColor"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_delete_icon(self): #vers 1
+        """Delete/trash icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M3 5h14M8 5V3h4v2M6 5v11a1 1 0 001 1h6a1 1 0 001-1V5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_duplicate_icon(self): #vers 1
+        """Duplicate/copy icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="6" y="6" width="10" height="10" stroke="currentColor" stroke-width="2" fill="none"/>
+            <path d="M4 4h8v2H6v8H4V4z" fill="currentColor"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_create_icon(self): #vers 1
+        """Create/new icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_filter_icon(self): #vers 1
+        """Filter/sliders icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="6" cy="4" r="2" fill="currentColor"/>
+            <rect x="5" y="8" width="2" height="8" fill="currentColor"/>
+            <circle cx="14" cy="12" r="2" fill="currentColor"/>
+            <rect x="13" y="4" width="2" height="6" fill="currentColor"/>
+            <circle cx="10" cy="8" r="2" fill="currentColor"/>
+            <rect x="9" y="12" width="2" height="4" fill="currentColor"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_pencil_icon(self): #vers 1
+        """Edit - Pencil icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_trash_icon(self): #vers 1
+        """Delete - Trash icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_check_icon(self): #vers 2
+        """Create check/verify icon - document with checkmark"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"
+                fill="none" stroke="currentColor" stroke-width="2"/>
+            <path d="M14 2v6h6"
+                stroke="currentColor" stroke-width="2" fill="none"/>
+            <path d="M9 13l2 2 4-4"
+                stroke="currentColor" stroke-width="2" fill="none"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_eye_icon(self): #vers 1
+        """View - Eye icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" stroke-width="2"/>
+            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_list_icon(self): #vers 1
+        """Properties List - List icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    # WINDOW CONTROL ICONS
+
+    def _create_minimize_icon(self): #vers 1
+        """Minimize - Horizontal line"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_maximize_icon(self): #vers 1
+        """Maximize - Square"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokea-width="2"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_close_icon(self): #vers 1
+        """Close - X icon"""
+        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data)
+
+
+    def _create_settings_icon(self): #vers 1
+        """Settings/gear icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="10" cy="10" r="3" stroke="currentColor" stroke-width="2"/>
+            <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.93 4.93l1.41 1.41M13.66 13.66l1.41 1.41M4.93 15.07l1.41-1.41M13.66 6.34l1.41-1.41" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_minimize_icon(self): #vers 1
+        """Minimize - Horizontal line icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <line x1="5" y1="12" x2="19" y2="12"
+                stroke="currentColor" stroke-width="2"
+                stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_maximize_icon(self): #vers 1
+        """Maximize - Square icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <rect x="5" y="5" width="14" height="14"
+                stroke="currentColor" stroke-width="2"
+                fill="none" rx="2"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_close_icon(self): #vers 1
+        """Close - X icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <line x1="6" y1="6" x2="18" y2="18"
+                stroke="currentColor" stroke-width="2"
+                stroke-linecap="round"/>
+            <line x1="18" y1="6" x2="6" y2="18"
+                stroke="currentColor" stroke-width="2"
+                stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_add_icon(self): #vers 1
+        """Add - Plus icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <line x1="12" y1="5" x2="12" y2="19"
+                stroke="currentColor" stroke-width="2"
+                stroke-linecap="round"/>
+            <line x1="5" y1="12" x2="19" y2="12"
+                stroke="currentColor" stroke-width="2"
+                stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_delete_icon(self): #vers 1
+        """Delete - Trash icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <polyline points="3 6 5 6 21 6"
+                    stroke="currentColor" stroke-width="2"
+                    fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"
+                stroke="currentColor" stroke-width="2"
+                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_import_icon(self): #vers 1
+        """Import - Download arrow icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"
+                stroke="currentColor" stroke-width="2"
+                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <polyline points="7 10 12 15 17 10"
+                    stroke="currentColor" stroke-width="2"
+                    fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="12" y1="15" x2="12" y2="3"
+                stroke="currentColor" stroke-width="2"
+                stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_export_icon(self): #vers 1
+        """Export - Upload arrow icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"
+                stroke="currentColor" stroke-width="2"
+                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <polyline points="17 8 12 3 7 8"
+                    stroke="currentColor" stroke-width="2"
+                    fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="12" y1="3" x2="12" y2="15"
+                stroke="currentColor" stroke-width="2"
+                stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_checkerboard_icon(self): #vers 1
+        """Create checkerboard pattern icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="0" y="0" width="5" height="5" fill="currentColor"/>
+            <rect x="5" y="5" width="5" height="5" fill="currentColor"/>
+            <rect x="10" y="0" width="5" height="5" fill="currentColor"/>
+            <rect x="15" y="5" width="5" height="5" fill="currentColor"/>
+            <rect x="0" y="10" width="5" height="5" fill="currentColor"/>
+            <rect x="5" y="15" width="5" height="5" fill="currentColor"/>
+            <rect x="10" y="10" width="5" height="5" fill="currentColor"/>
+            <rect x="15" y="15" width="5" height="5" fill="currentColor"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_undo_icon(self): #vers 2
+        """Undo - Curved arrow icon"""
+        svg_data = b'''<svg viewBox="0 0 24 24">
+            <path d="M3 7v6h6M3 13a9 9 0 1018 0 9 9 0 00-18 0z"
+                stroke="currentColor" stroke-width="2" fill="none"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_sphere_icon(self): #vers 1
+        """Sphere collision icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2" fill="none"/>
+            <ellipse cx="10" cy="10" rx="7" ry="3" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M3 10 Q10 13 17 10" stroke="currentColor" stroke-width="1.5" fill="none"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_box_icon(self): #vers 1
+        """Box collision icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M4 6 L10 3 L16 6 L16 14 L10 17 L4 14 Z" stroke="currentColor" stroke-width="2" fill="none"/>
+            <path d="M4 6 L10 9 L16 6" stroke="currentColor" stroke-width="2"/>
+            <path d="M10 9 L10 17" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_mesh_icon(self): #vers 1
+        """Mesh collision icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M3 10 L10 3 L17 10 L10 17 Z" stroke="currentColor" stroke-width="2" fill="none"/>
+            <path d="M3 10 L17 10 M10 3 L10 17" stroke="currentColor" stroke-width="1.5"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_wireframe_icon(self): #vers 1
+        """Wireframe mode icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M5 5 L15 5 L15 15 L5 15 Z" stroke="currentColor" stroke-width="2" fill="none"/>
+            <path d="M5 10 L15 10 M10 5 L10 15" stroke="currentColor" stroke-width="1.5"/>
+            <circle cx="5" cy="5" r="1.5" fill="currentColor"/>
+            <circle cx="15" cy="5" r="1.5" fill="currentColor"/>
+            <circle cx="15" cy="15" r="1.5" fill="currentColor"/>
+            <circle cx="5" cy="15" r="1.5" fill="currentColor"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_bounds_icon(self): #vers 1
+        """Bounding box icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="3" y="3" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="3,2"/>
+            <path d="M3 3 L7 3 M17 3 L13 3 M3 17 L7 17 M17 17 L13 17 M3 3 L3 7 M3 17 L3 13 M17 3 L17 7 M17 17 L17 13" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_reset_view_icon(self): #vers 1
+        """Reset camera view icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M16 10A6 6 0 1 1 4 10M4 10l3-3m-3 3l3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_sphere_icon(self): #vers 1
+        """Sphere collision icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2" fill="none"/>
+            <ellipse cx="10" cy="10" rx="7" ry="3" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M3 10 Q10 13 17 10" stroke="currentColor" stroke-width="1.5" fill="none"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_box_icon(self): #vers 1
+        """Box collision icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M4 6 L10 3 L16 6 L16 14 L10 17 L4 14 Z" stroke="currentColor" stroke-width="2" fill="none"/>
+            <path d="M4 6 L10 9 L16 6" stroke="currentColor" stroke-width="2"/>
+            <path d="M10 9 L10 17" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_mesh_icon(self): #vers 1
+        """Mesh collision icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M3 10 L10 3 L17 10 L10 17 Z" stroke="currentColor" stroke-width="2" fill="none"/>
+            <path d="M3 10 L17 10 M10 3 L10 17" stroke="currentColor" stroke-width="1.5"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_wireframe_icon(self): #vers 1
+        """Wireframe mode icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M5 5 L15 5 L15 15 L5 15 Z" stroke="currentColor" stroke-width="2" fill="none"/>
+            <path d="M5 10 L15 10 M10 5 L10 15" stroke="currentColor" stroke-width="1.5"/>
+            <circle cx="5" cy="5" r="1.5" fill="currentColor"/>
+            <circle cx="15" cy="5" r="1.5" fill="currentColor"/>
+            <circle cx="15" cy="15" r="1.5" fill="currentColor"/>
+            <circle cx="5" cy="15" r="1.5" fill="currentColor"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_bounds_icon(self): #vers 1
+        """Bounding box icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="3" y="3" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="3,2"/>
+            <path d="M3 3 L7 3 M17 3 L13 3 M3 17 L7 17 M17 17 L13 17 M3 3 L3 7 M3 17 L3 13 M17 3 L17 7 M17 17 L17 13" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+    def _create_reset_view_icon(self): #vers 1
+        """Reset camera view icon"""
+        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M16 10A6 6 0 1 1 4 10M4 10l3-3m-3 3l3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>'''
+        return self._svg_to_icon(svg_data, size=20)
+
+
+
+    def _svg_to_icon(self, svg_data, size=24): #vers 2
+        """Convert SVG data to QIcon with theme color support"""
+        from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor
+        from PyQt6.QtSvg import QSvgRenderer
+        from PyQt6.QtCore import QByteArray
+
+        try:
+            # Get current text color from palette
+            text_color = self.palette().color(self.foregroundRole())
+
+            # Replace currentColor with actual color
+            svg_str = svg_data.decode('utf-8')
+            svg_str = svg_str.replace('currentColor', text_color.name())
+            svg_data = svg_str.encode('utf-8')
+
+            renderer = QSvgRenderer(QByteArray(svg_data))
+            pixmap = QPixmap(size, size)
+            pixmap.fill(QColor(0, 0, 0, 0))  # Transparent background
+
+            painter = QPainter(pixmap)
+            renderer.render(painter)
+            painter.end()
+
+            return QIcon(pixmap)
+        except:
+            # Fallback to no icon if SVG fails
+            return QIcon()
+
+
 
 # CLI testing
 if __name__ == "__main__":
