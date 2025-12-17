@@ -9,8 +9,8 @@ Uses col_parser.py for reading and will use col_writer.py for writing
 from typing import List, Optional
 from pathlib import Path
 
-from col_data_structures import COLModel
-from col_parser import COLParser
+from apps.methods.col_data_structures import COLModel
+from apps.methods.col_parser import COLParser
 
 ##Methods list -
 # load_from_file

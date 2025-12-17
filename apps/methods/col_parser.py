@@ -20,7 +20,7 @@ import struct
 from typing import List, Tuple, Optional
 from pathlib import Path
 
-from col_data_structures import (
+from apps.methods.col_data_structures import (
     Vector3, COLVersion, BoundingBox, COLSphere, COLBox,
     COLVertex, COLFace, COLFaceGroup, COLModel
 )
