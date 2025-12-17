@@ -1517,12 +1517,12 @@ class COLWorkshop(QWidget): #vers 3
         self.info_btn.setStyleSheet("""
             QPushButton {
                 font-weight: bold;
-                background-color: #4a4a4a;
-                border: 1px solid #5a5a5a;
+                background-color: bg_tertiary;
+                border: 1px solid bordor;
                 border-radius: 3px;
             }
             QPushButton:hover {
-                background-color: #5a5a5a;
+                background-color: button_hover;
             }
         """)
         self.info_btn.setIconSize(QSize(20, 20))
@@ -1551,12 +1551,12 @@ class COLWorkshop(QWidget): #vers 3
         self.dock_btn.setStyleSheet("""
             QPushButton {
                 font-weight: bold;
-                background-color: #4a4a4a;
-                border: 1px solid #5a5a5a;
+               background-color: bg_tertiary;
+                border: 1px solid bordor;
                 border-radius: 3px;
             }
             QPushButton:hover {
-                background-color: #5a5a5a;
+                background-color: button_hover;
             }
         """)
         self.dock_btn.clicked.connect(self.toggle_dock_mode)
