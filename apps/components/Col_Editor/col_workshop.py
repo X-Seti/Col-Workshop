@@ -1596,27 +1596,204 @@ class COLWorkshop(QWidget): #vers 3
         return self.toolbar
 
 
-    def _create_transform_panel(self): #vers 11
+    def _create_transform_text_panel(self): #vers 11
         """Create transform panel with variable width - no headers"""
-        self.transform_panel = QFrame()
-        self.transform_panel.setFrameStyle(QFrame.Shape.StyledPanel)
-        self.transform_panel.setMinimumWidth(30)
-        self.transform_panel.setMaximumWidth(200)
+        self.transform_text_panel = QFrame()
+        self.transform_text_panel.setFrameStyle(QFrame.Shape.StyledPanel)
+        self.transform_text_panel.setMinimumWidth(140)
+        self.transform_text_panel.setMaximumWidth(140)
+        #self.transform_text_panel.setContentsMargins(5, 5, 5, 5)
         if self.button_display_mode == 'icons':
-            self.transform_panel.setMaximumWidth(40)
-            self.transform_panel.setMinimumWidth(40)
+            self.transform_text_panel.setMaximumWidth(40)
+            self.transform_text_panel.setMinimumWidth(40)
             layout.addSpacing(5)
 
-        layout = QVBoxLayout(self.transform_panel)
-        layout.setContentsMargins(5, 5, 5, 5)
+        layout = QVBoxLayout(self.transform_text_panel)
+        #layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(5)
+        Spacer = 7
+        if self.button_display_mode == 'icons':
+            self.flip_vert_btn.setFixedSize(40, 40)
+
+        else:
+            layout.addSpacing(3)
+
+            # Flip Vertical
+            self.flip_vert_btn = QPushButton()
+            self.flip_vert_btn.setFont(self.button_font)
+            self.flip_vert_btn.setText("Flip Vertical")
+            #self.flip_vert_btn.clicked.connect(self._flip_vertical)
+            self.flip_vert_btn.setEnabled(False)
+            self.flip_vert_btn.setToolTip("Flip col vertically")
+            layout.addWidget(self.flip_vert_btn)
+
+            layout.addSpacing(Spacer)
+
+            # Flip Horizontal
+            self.flip_horz_btn = QPushButton()
+            self.flip_horz_btn.setFont(self.button_font)
+            self.flip_horz_btn.setText("Flip Horizontal")
+            #self.flip_horz_btn.clicked.connect(self._flip_horizontal)
+            self.flip_horz_btn.setEnabled(False)
+            self.flip_horz_btn.setToolTip("Flip col horizontally")
+            layout.addWidget(self.flip_horz_btn)
+
+            layout.addSpacing(Spacer)
+
+            # Rotate Clockwise
+            self.rotate_cw_btn = QPushButton()
+            self.rotate_cw_btn.setFont(self.button_font)
+            self.rotate_cw_btn.setText("Rotate 90° CW")
+            #self.rotate_cw_btn.clicked.connect(self._rotate_clockwise)
+            self.rotate_cw_btn.setEnabled(False)
+            self.rotate_cw_btn.setToolTip("Rotate 90 degrees clockwise")
+            layout.addWidget(self.rotate_cw_btn)
+
+            layout.addSpacing(Spacer)
+
+            # Rotate Counter-Clockwise
+            self.rotate_ccw_btn = QPushButton()
+            self.rotate_ccw_btn.setFont(self.button_font)
+            self.rotate_ccw_btn.setText("Rotate 90° CCW")
+            #self.rotate_ccw_btn.clicked.connect(self._rotate_counterclockwise)
+            self.rotate_ccw_btn.setEnabled(False)
+            self.rotate_ccw_btn.setToolTip("Rotate 90 degrees counter-clockwise")
+            layout.addWidget(self.rotate_ccw_btn)
+
+            layout.addSpacing(Spacer)
+
+            # Analyze button
+            self.analyze_btn = QPushButton()
+            self.analyze_btn.setFont(self.button_font)
+            self.analyze_btn.setText("Analyze")
+            self.analyze_btn.clicked.connect(self._analyze_collision)
+            self.analyze_btn.setEnabled(False)  # Enable when COL loaded
+            self.analyze_btn.setToolTip("Analyze collision data")
+            layout.addWidget(self.analyze_btn)
+
+            layout.addSpacing(Spacer)
+
+            # Copy
+            self.copy_btn = QPushButton()
+            self.copy_btn.setFont(self.button_font)
+            self.copy_btn.setText("Copy")
+            #self.copy_btn.clicked.connect(self._copy_surface)
+            self.copy_btn.setEnabled(False)
+            self.copy_btn.setToolTip("Copy col to clipboard")
+            layout.addWidget(self.copy_btn)
+
+            layout.addSpacing(Spacer)
+
+            # Paste
+            self.paste_btn = QPushButton()
+            self.paste_btn.setFont(self.button_font)
+            self.paste_btn.setText("Paste")
+            #self.paste_btn.clicked.connect(self._paste_surface)
+            self.paste_btn.setEnabled(False)
+            self.paste_btn.setToolTip("Paste col from clipboard")
+            layout.addWidget(self.paste_btn)
+
+            layout.addSpacing(Spacer)
+
+            # Create Collision
+            self.create_surface_btn = QPushButton()
+            self.create_surface_btn.setFont(self.button_font)
+            self.create_surface_btn.setText("Create")
+            #self.create_surface_btn.clicked.connect(self._create_new_surface_entry)
+            self.create_surface_btn.setToolTip("Create new blank Collision")
+            layout.addWidget(self.create_surface_btn)
+
+            layout.addSpacing(Spacer)
+
+            # Delete collision
+            self.delete_surface_btn = QPushButton()
+            self.delete_surface_btn.setFont(self.button_font)
+            self.delete_surface_btn.setText("Delete")
+            #self.delete_surface_btn.clicked.connect(self._delete_surface)
+            self.delete_surface_btn.setEnabled(False)
+            self.delete_surface_btn.setToolTip("Remove selected Collision")
+            layout.addWidget(self.delete_surface_btn)
+
+            layout.addSpacing(Spacer)
+
+            # Duplicate Collision
+            self.duplicate_surface_btn = QPushButton()
+            self.duplicate_surface_btn.setFont(self.button_font)
+            self.duplicate_surface_btn.setText("Duplicate")
+
+            #self.duplicate_surface_btn.clicked.connect(self._duplicate_surface)
+            self.duplicate_surface_btn.setEnabled(False)
+            self.duplicate_surface_btn.setToolTip("Clone selected Collision")
+            layout.addWidget(self.duplicate_surface_btn)
+
+            layout.addSpacing(Spacer)
+
+            self.paint_btn = QPushButton()
+            self.paint_btn.setFont(self.button_font)
+            self.paint_btn.setText("Paint")
+            #self.paint_btn.clicked.connect(self._open_paint_editor)
+            self.paint_btn.setEnabled(False)
+            self.paint_btn.setToolTip("Paint free hand on surface")
+            layout.addWidget(self.paint_btn)
+
+            layout.addSpacing(Spacer)
+
+            # Check col vs DFF
+            self.surface_type_btn = QPushButton()
+            self.surface_type_btn.setFont(self.button_font)
+            self.surface_type_btn.setText("Surface type")
+            #self.surface_type_btn.clicked.connect(self._check_col_type)
+            self.surface_type_btn.setToolTip("Surface types")
+            layout.addWidget(self.surface_type_btn)
+
+            layout.addSpacing(Spacer)
+
+            # Check col vs DFF
+            self.surface_edit_btn = QPushButton()
+            self.surface_edit_btn.setFont(self.button_font)
+            self.surface_edit_btn.setText("Surface Edit")
+            #self.surface_type_btn.clicked.connect(self._col_edit)
+            self.surface_edit_btn.setToolTip("Surface Editor")
+            layout.addWidget(self.surface_edit_btn)
+
+            layout.addSpacing(Spacer)
+
+            self.build_from_txd_btn = QPushButton()
+            self.build_from_txd_btn.setFont(self.button_font)
+            self.build_from_txd_btn.setText("Build col via")
+            #self.build_from_dff_btn.clicked.connect(self._build_col_from_dff)
+            self.build_from_txd_btn.setToolTip("Create col surface from txd texture names")
+            layout.addWidget(self.build_from_txd_btn)
+
+            layout.addSpacing(5)
+
+            layout.addStretch()
+
+            return self.transform_text_panel
+
+    def _create_transform_icon_panel(self): #vers 11
+        """Create transform panel with variable width - no headers"""
+        self.transform_icon_panel = QFrame()
+        self.transform_icon_panel.setFrameStyle(QFrame.Shape.StyledPanel)
+        self.transform_icon_panel.setMinimumWidth(50)
+        self.transform_icon_panel.setMaximumWidth(50)
+        #self.transform_icon_panel.setContentsMargins(5, 5, 5, 5)
+        if self.button_display_mode == 'icons':
+            self.transform_icon_panel.setMaximumWidth(40)
+            self.transform_icon_panel.setMinimumWidth(40)
+            layout.addSpacing(5)
+
+        layout = QVBoxLayout(self.transform_icon_panel)
+        #layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
+        iconspacer = 2
+
+        layout.addSpacing(iconspacer)
 
         # Flip Vertical
         self.flip_vert_btn = QPushButton()
-        self.flip_vert_btn.setFont(self.button_font)
         self.flip_vert_btn.setIcon(self.icon_factory.flip_vert_icon())
-        self.flip_vert_btn.setText("Flip Vertical")
-        self.flip_vert_btn.setIconSize(QSize(20, 20))
+        self.flip_vert_btn.setIconSize(QSize(30, 30))
         if self.button_display_mode == 'icons':
             self.flip_vert_btn.setFixedSize(40, 40)
         #self.flip_vert_btn.clicked.connect(self._flip_vertical)
@@ -1624,12 +1801,12 @@ class COLWorkshop(QWidget): #vers 3
         self.flip_vert_btn.setToolTip("Flip col vertically")
         layout.addWidget(self.flip_vert_btn)
 
+        layout.addSpacing(iconspacer)
+
         # Flip Horizontal
         self.flip_horz_btn = QPushButton()
-        self.flip_horz_btn.setFont(self.button_font)
         self.flip_horz_btn.setIcon(self.icon_factory.flip_horz_icon())
-        self.flip_horz_btn.setText("Flip Horizontal")
-        self.flip_horz_btn.setIconSize(QSize(20, 20))
+        self.flip_horz_btn.setIconSize(QSize(30, 30))
         if self.button_display_mode == 'icons':
             self.flip_horz_btn.setFixedSize(40, 40)
         #self.flip_horz_btn.clicked.connect(self._flip_horizontal)
@@ -1637,14 +1814,12 @@ class COLWorkshop(QWidget): #vers 3
         self.flip_horz_btn.setToolTip("Flip col horizontally")
         layout.addWidget(self.flip_horz_btn)
 
-        layout.addSpacing(5)
+        layout.addSpacing(iconspacer)
 
         # Rotate Clockwise
         self.rotate_cw_btn = QPushButton()
-        self.rotate_cw_btn.setFont(self.button_font)
         self.rotate_cw_btn.setIcon(self.icon_factory.rotate_cw_icon())
-        self.rotate_cw_btn.setText("Rotate 90° CW")
-        self.rotate_cw_btn.setIconSize(QSize(20, 20))
+        self.rotate_cw_btn.setIconSize(QSize(30, 30))
         if self.button_display_mode == 'icons':
             self.rotate_cw_btn.setFixedSize(40, 40)
         #self.rotate_cw_btn.clicked.connect(self._rotate_clockwise)
@@ -1652,11 +1827,11 @@ class COLWorkshop(QWidget): #vers 3
         self.rotate_cw_btn.setToolTip("Rotate 90 degrees clockwise")
         layout.addWidget(self.rotate_cw_btn)
 
+        layout.addSpacing(iconspacer)
+
         # Rotate Counter-Clockwise
         self.rotate_ccw_btn = QPushButton()
-        self.rotate_ccw_btn.setFont(self.button_font)
         self.rotate_ccw_btn.setIcon(self.icon_factory.rotate_ccw_icon())
-        self.rotate_ccw_btn.setText("Rotate 90° CCW")
         self.rotate_ccw_btn.setIconSize(QSize(20, 20))
         if self.button_display_mode == 'icons':
             self.rotate_ccw_btn.setFixedSize(40, 40)
@@ -1665,13 +1840,11 @@ class COLWorkshop(QWidget): #vers 3
         self.rotate_ccw_btn.setToolTip("Rotate 90 degrees counter-clockwise")
         layout.addWidget(self.rotate_ccw_btn)
 
-        layout.addSpacing(5)
+        layout.addSpacing(iconspacer)
 
         # Analyze button
         self.analyze_btn = QPushButton()
-        self.analyze_btn.setFont(self.button_font)
         self.analyze_btn.setIcon(self.icon_factory.analyze_icon())
-        self.analyze_btn.setText("Analyze")
         self.analyze_btn.setIconSize(QSize(20, 20))
         if self.button_display_mode == 'icons':
             self.analyze_btn.setFixedSize(40, 40)
@@ -1680,13 +1853,11 @@ class COLWorkshop(QWidget): #vers 3
         self.analyze_btn.setToolTip("Analyze collision data")
         layout.addWidget(self.analyze_btn)
 
-        layout.addStretch()
+        layout.addSpacing(iconspacer)
 
         # Copy
         self.copy_btn = QPushButton()
-        self.copy_btn.setFont(self.button_font)
         self.copy_btn.setIcon(self.icon_factory.copy_icon())
-        self.copy_btn.setText("Copy")
         self.copy_btn.setIconSize(QSize(20, 20))
         if self.button_display_mode == 'icons':
             self.copy_btn.setFixedSize(40, 40)
@@ -1695,11 +1866,11 @@ class COLWorkshop(QWidget): #vers 3
         self.copy_btn.setToolTip("Copy col to clipboard")
         layout.addWidget(self.copy_btn)
 
+        layout.addSpacing(iconspacer)
+
         # Paste
         self.paste_btn = QPushButton()
-        self.paste_btn.setFont(self.button_font)
         self.paste_btn.setIcon(self.icon_factory.paste_icon())
-        self.paste_btn.setText("Paste")
         self.paste_btn.setIconSize(QSize(20, 20))
         if self.button_display_mode == 'icons':
             self.paste_btn.setFixedSize(40, 40)
@@ -1708,23 +1879,23 @@ class COLWorkshop(QWidget): #vers 3
         self.paste_btn.setToolTip("Paste col from clipboard")
         layout.addWidget(self.paste_btn)
 
+        layout.addSpacing(iconspacer)
+
         # Create Collision
         self.create_surface_btn = QPushButton()
-        self.create_surface_btn.setFont(self.button_font)
         self.create_surface_btn.setIcon(self.icon_factory.add_icon())
-        self.create_surface_btn.setText("Create")
         self.create_surface_btn.setIconSize(QSize(20, 20))
         if self.button_display_mode == 'icons':
             self.create_surface_btn.setFixedSize(40, 40)
-        #self.create_surface_btn.clicked.connect(self.new_surface_entry)
+        #self.create_surface_btn.clicked.connect(self._create_new_surface_entry)
         self.create_surface_btn.setToolTip("Create new blank Collision")
         layout.addWidget(self.create_surface_btn)
 
+        layout.addSpacing(iconspacer)
+
         # Delete collision
         self.delete_surface_btn = QPushButton()
-        self.delete_surface_btn.setFont(self.button_font)
         self.delete_surface_btn.setIcon(self.icon_factory.delete_icon())
-        self.delete_surface_btn.setText("Delete")
         self.delete_surface_btn.setIconSize(QSize(20, 20))
         if self.button_display_mode == 'icons':
             self.delete_surface_btn.setFixedSize(40, 40)
@@ -1733,11 +1904,11 @@ class COLWorkshop(QWidget): #vers 3
         self.delete_surface_btn.setToolTip("Remove selected Collision")
         layout.addWidget(self.delete_surface_btn)
 
+        layout.addSpacing(iconspacer)
+
         # Duplicate Collision
         self.duplicate_surface_btn = QPushButton()
-        self.duplicate_surface_btn.setFont(self.button_font)
         self.duplicate_surface_btn.setIcon(self.icon_factory.duplicate_icon())
-        self.duplicate_surface_btn.setText("Duplicate")
         self.duplicate_surface_btn.setIconSize(QSize(20, 20))
         if self.button_display_mode == 'icons':
             self.duplicate_surface_btn.setFixedSize(40, 40)
@@ -1746,10 +1917,10 @@ class COLWorkshop(QWidget): #vers 3
         self.duplicate_surface_btn.setToolTip("Clone selected Collision")
         layout.addWidget(self.duplicate_surface_btn)
 
+        layout.addSpacing(iconspacer)
+
         self.paint_btn = QPushButton()
-        self.paint_btn.setFont(self.button_font)
         self.paint_btn.setIcon(self.icon_factory.paint_icon())
-        self.paint_btn.setText("Paint")
         self.paint_btn.setIconSize(QSize(20, 20))
         if self.button_display_mode == 'icons':
             self.paint_btn.setFixedSize(40, 40)
@@ -1758,13 +1929,11 @@ class COLWorkshop(QWidget): #vers 3
         self.paint_btn.setToolTip("Paint free hand on surface")
         layout.addWidget(self.paint_btn)
 
-        layout.addSpacing(5)
+        layout.addSpacing(iconspacer)
 
         # Check col vs DFF
         self.surface_type_btn = QPushButton()
-        self.surface_type_btn.setFont(self.button_font)
         self.surface_type_btn.setIcon(self.icon_factory.check_icon())
-        self.surface_type_btn.setText("Surface type")
         self.surface_type_btn.setIconSize(QSize(20, 20))
         if self.button_display_mode == 'icons':
             self.surface_type_btn.setFixedSize(40, 40)
@@ -1772,11 +1941,11 @@ class COLWorkshop(QWidget): #vers 3
         self.surface_type_btn.setToolTip("Surface types")
         layout.addWidget(self.surface_type_btn)
 
+        layout.addSpacing(iconspacer)
+
         # Check col vs DFF
         self.surface_edit_btn = QPushButton()
-        self.surface_edit_btn.setFont(self.button_font)
         self.surface_edit_btn.setIcon(self.icon_factory.check_icon())
-        self.surface_edit_btn.setText("Surface Edit")
         self.surface_edit_btn.setIconSize(QSize(20, 20))
         if self.button_display_mode == 'icons':
             self.surface_edit_btn.setFixedSize(40, 40)
@@ -1784,10 +1953,10 @@ class COLWorkshop(QWidget): #vers 3
         self.surface_edit_btn.setToolTip("Surface Editor")
         layout.addWidget(self.surface_edit_btn)
 
+        layout.addSpacing(iconspacer)
+
         self.build_from_txd_btn = QPushButton()
-        self.build_from_txd_btn.setFont(self.button_font)
         self.build_from_txd_btn.setIcon(self.icon_factory.build_icon())
-        self.build_from_txd_btn.setText("Build col via")
         self.build_from_txd_btn.setIconSize(QSize(20, 20))
         if self.button_display_mode == 'icons':
             self.build_from_txd_btn.setFixedSize(40, 40)
@@ -1799,7 +1968,7 @@ class COLWorkshop(QWidget): #vers 3
 
         layout.addStretch()
 
-        return self.transform_panel
+        return self.transform_icon_panel
 
 
     def _create_left_panel(self): #vers 5
@@ -1872,15 +2041,18 @@ class COLWorkshop(QWidget): #vers 3
         """Create right panel with editing controls - compact layout"""
         panel = QFrame()
         panel.setFrameStyle(QFrame.Shape.StyledPanel)
-        panel.setMinimumWidth(400)
+        panel.setMinimumWidth(200)
         has_bumpmap = False
         main_layout = QVBoxLayout(panel)
-        main_layout.setContentsMargins(5, 5, 5, 5)
+        #main_layout.setContentsMargins(5, 5, 5, 5)
         top_layout = QHBoxLayout()
 
         # Transform panel (left)
-        transform_panel = self._create_transform_panel()
-        top_layout.addWidget(transform_panel, stretch=1)
+        transform_icon_panel = self._create_transform_icon_panel()
+        top_layout.addWidget(transform_icon_panel)
+
+        transform_text_panel = self._create_transform_text_panel()
+        top_layout.addWidget(transform_text_panel)
 
         # Preview area (center) - 3D Viewport
         self.preview_widget = COL3DViewport()
