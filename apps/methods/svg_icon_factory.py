@@ -905,22 +905,288 @@ class SVGIconFactory: #vers 7
         </svg>'''
         return SVGIconFactory._create_icon(svg_data, size, color)
     
-
     @staticmethod
-    def _checkerpat_icon(size: int = 24, color: str = None) -> QIcon: #vers 2
-        """Create checkerboard pattern icon"""
-        svg_data = '''<svg viewBox="0 0 20 20" fill="none">
-            <rect x="0" y="0" width="5" height="5" fill="currentColor"/>
-            <rect x="5" y="5" width="5" height="5" fill="currentColor"/>
-            <rect x="10" y="0" width="5" height="5" fill="currentColor"/>
-            <rect x="15" y="5" width="5" height="5" fill="currentColor"/>
-            <rect x="0" y="10" width="5" height="5" fill="currentColor"/>
-            <rect x="5" y="15" width="5" height="5" fill="currentColor"/>
-            <rect x="10" y="10" width="5" height="5" fill="currentColor"/>
-            <rect x="15" y="15" width="5" height="5" fill="currentColor"/>
+    def checkerpat_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Checker pattern at 45 degree angle"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <g transform="rotate(45 12 12)">
+                <rect x="6" y="6" width="4" height="4" fill="currentColor"/>
+                <rect x="14" y="6" width="4" height="4" fill="currentColor"/>
+                <rect x="10" y="10" width="4" height="4" fill="currentColor"/>
+                <rect x="6" y="14" width="4" height="4" fill="currentColor"/>
+                <rect x="14" y="14" width="4" height="4" fill="currentColor"/>
+            </g>
         </svg>'''
         return SVGIconFactory._create_icon(svg_data, size, color)
 
+    @staticmethod
+    def surfaceedit_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Grid mesh with edit point"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <path d="M3 3h18v18H3z" stroke="currentColor" stroke-width="1" fill="none"/>
+            <line x1="3" y1="9" x2="21" y2="9" stroke="currentColor" stroke-width="0.5"/>
+            <line x1="3" y1="15" x2="21" y2="15" stroke="currentColor" stroke-width="0.5"/>
+            <line x1="9" y1="3" x2="9" y2="21" stroke="currentColor" stroke-width="0.5"/>
+            <line x1="15" y1="3" x2="15" y2="21" stroke="currentColor" stroke-width="0.5"/>
+            <circle cx="12" cy="12" r="2" fill="currentColor"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surfaceedit_icon_b(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Checkerboard with highlighted square"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="3" width="6" height="6" fill="currentColor" opacity="0.3"/>
+            <rect x="15" y="3" width="6" height="6" fill="currentColor" opacity="0.3"/>
+            <rect x="9" y="9" width="6" height="6" fill="currentColor"/>
+            <rect x="3" y="15" width="6" height="6" fill="currentColor" opacity="0.3"/>
+            <rect x="15" y="15" width="6" height="6" fill="currentColor" opacity="0.3"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surfaceedit_icon_c(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Wireframe surface with nodes"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <path d="M4 8 Q12 4, 20 8" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M4 12 Q12 10, 20 12" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M4 16 Q12 14, 20 16" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <circle cx="4" cy="8" r="1.5" fill="currentColor"/>
+            <circle cx="12" cy="6" r="1.5" fill="currentColor"/>
+            <circle cx="20" cy="8" r="1.5" fill="currentColor"/>
+            <circle cx="12" cy="12" r="1.5" fill="currentColor"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surfaceedit_icon_d(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Layered surfaces"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <rect x="4" y="4" width="16" height="4" fill="currentColor" opacity="0.3"/>
+            <rect x="6" y="10" width="16" height="4" fill="currentColor" opacity="0.6"/>
+            <rect x="4" y="16" width="16" height="4" fill="currentColor"/>
+            <path d="M20 12 L22 12 L20 14 L18 12 L20 12" fill="currentColor"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    #surface types
+    @staticmethod
+    def surface_grass_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Grass/vegetation surface"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <path d="M4 20 L4 14 Q4 10, 8 10" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M8 20 L8 12 Q8 8, 12 8" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M12 20 L12 10 Q12 6, 16 6" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M16 20 L16 14 Q16 10, 20 10" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <line x1="2" y1="20" x2="22" y2="20" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_concrete_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Concrete/stone surface"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="8" width="18" height="10" fill="currentColor" opacity="0.3"/>
+            <circle cx="7" cy="11" r="1" fill="currentColor"/>
+            <circle cx="13" cy="13" r="0.8" fill="currentColor"/>
+            <circle cx="17" cy="10" r="0.6" fill="currentColor"/>
+            <circle cx="10" cy="15" r="0.7" fill="currentColor"/>
+            <circle cx="19" cy="15" r="0.5" fill="currentColor"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_metal_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Metal surface"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="8" width="18" height="8" fill="currentColor" opacity="0.5"/>
+            <line x1="3" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="0.5" opacity="0.8"/>
+            <line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="1" opacity="1"/>
+            <line x1="3" y1="14" x2="21" y2="14" stroke="currentColor" stroke-width="0.5" opacity="0.8"/>
+            <circle cx="6" cy="12" r="0.8" fill="currentColor"/>
+            <circle cx="18" cy="12" r="0.8" fill="currentColor"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_wood_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Wood surface"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="8" width="18" height="8" fill="currentColor" opacity="0.3"/>
+            <path d="M5 8 Q8 10, 5 12 Q8 14, 5 16" stroke="currentColor" stroke-width="0.8" fill="none"/>
+            <path d="M10 8 Q13 10, 10 12 Q13 14, 10 16" stroke="currentColor" stroke-width="0.8" fill="none"/>
+            <path d="M15 8 Q18 10, 15 12 Q18 14, 15 16" stroke="currentColor" stroke-width="0.8" fill="none"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_water_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Water surface"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <path d="M2 12 Q5 9, 8 12 T14 12 T20 12 T26 12" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M2 15 Q5 13, 8 15 T14 15 T20 15 T26 15" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.6"/>
+            <path d="M2 18 Q5 17, 8 18 T14 18 T20 18 T26 18" stroke="currentColor" stroke-width="1" fill="none" opacity="0.3"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_sand_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Sand/dirt surface"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="10" width="18" height="8" fill="currentColor" opacity="0.2"/>
+            <circle cx="5" cy="12" r="0.5" fill="currentColor"/>
+            <circle cx="8" cy="14" r="0.6" fill="currentColor"/>
+            <circle cx="11" cy="11" r="0.4" fill="currentColor"/>
+            <circle cx="14" cy="15" r="0.5" fill="currentColor"/>
+            <circle cx="17" cy="13" r="0.6" fill="currentColor"/>
+            <circle cx="20" cy="16" r="0.4" fill="currentColor"/>
+            <circle cx="7" cy="16" r="0.5" fill="currentColor"/>
+            <circle cx="13" cy="13" r="0.4" fill="currentColor"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_glass_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Glass surface"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <rect x="4" y="6" width="16" height="12" fill="currentColor" opacity="0.1" stroke="currentColor" stroke-width="1.5"/>
+            <line x1="8" y1="8" x2="10" y2="10" stroke="currentColor" stroke-width="1" opacity="0.6"/>
+            <line x1="14" y1="12" x2="16" y2="14" stroke="currentColor" stroke-width="0.8" opacity="0.4"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_rubber_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Rubber/tire surface"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="9" width="18" height="7" fill="currentColor" opacity="0.4" rx="1"/>
+            <line x1="6" y1="11" x2="6" y2="14" stroke="currentColor" stroke-width="1.5"/>
+            <line x1="10" y1="11" x2="10" y2="14" stroke="currentColor" stroke-width="1.5"/>
+            <line x1="14" y1="11" x2="14" y2="14" stroke="currentColor" stroke-width="1.5"/>
+            <line x1="18" y1="11" x2="18" y2="14" stroke="currentColor" stroke-width="1.5"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_hex_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Hexagon/honeycomb pattern"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <path d="M12 4 L15 6 L15 10 L12 12 L9 10 L9 6 Z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M6 8 L9 10 L9 14 L6 16 L3 14 L3 10 Z" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+            <path d="M18 8 L21 10 L21 14 L18 16 L15 14 L15 10 Z" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+            <path d="M12 12 L15 14 L15 18 L12 20 L9 18 L9 14 Z" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_triangle_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Triangle pattern"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <path d="M12 4 L18 14 L6 14 Z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M6 14 L12 20 L3 20 Z" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+            <path d="M12 14 L18 20 L12 20 Z" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+            <path d="M18 14 L21 20 L18 20 Z" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_diamond_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Diamond pattern"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <path d="M12 4 L18 10 L12 16 L6 10 Z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M12 16 L16 20 L12 20 L8 20 Z" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+            <path d="M4 10 L6 10 L4 12 L2 10 Z" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+            <path d="M18 10 L20 10 L18 12 L18 10 Z" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_circle_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Circle pattern"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <circle cx="6" cy="6" r="2" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+            <circle cx="18" cy="6" r="2" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+            <circle cx="6" cy="18" r="2" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+            <circle cx="18" cy="18" r="2" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_square_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Square grid pattern"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <rect x="7" y="7" width="10" height="10" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <rect x="3" y="3" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+            <rect x="15" y="3" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+            <rect x="3" y="15" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+            <rect x="15" y="15" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none" opacity="0.6"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_brick_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Brick pattern"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="6" width="8" height="4" stroke="currentColor" stroke-width="1" fill="none"/>
+            <rect x="13" y="6" width="8" height="4" stroke="currentColor" stroke-width="1" fill="none"/>
+            <rect x="3" y="11" width="5" height="4" stroke="currentColor" stroke-width="1" fill="none"/>
+            <rect x="9" y="11" width="6" height="4" stroke="currentColor" stroke-width="1" fill="none"/>
+            <rect x="16" y="11" width="5" height="4" stroke="currentColor" stroke-width="1" fill="none"/>
+            <rect x="3" y="16" width="8" height="4" stroke="currentColor" stroke-width="1" fill="none"/>
+            <rect x="13" y="16" width="8" height="4" stroke="currentColor" stroke-width="1" fill="none"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_wave_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Wave pattern"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <path d="M2 8 Q4 6, 6 8 T10 8 T14 8 T18 8 T22 8" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M2 12 Q4 10, 6 12 T10 12 T14 12 T18 12 T22 12" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M2 16 Q4 14, 6 16 T10 16 T14 16 T18 16 T22 16" stroke="currentColor" stroke-width="1.5" fill="none"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_dot_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Dot pattern"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <circle cx="6" cy="6" r="1.5" fill="currentColor"/>
+            <circle cx="12" cy="6" r="1.5" fill="currentColor"/>
+            <circle cx="18" cy="6" r="1.5" fill="currentColor"/>
+            <circle cx="6" cy="12" r="1.5" fill="currentColor"/>
+            <circle cx="12" cy="12" r="1.5" fill="currentColor"/>
+            <circle cx="18" cy="12" r="1.5" fill="currentColor"/>
+            <circle cx="6" cy="18" r="1.5" fill="currentColor"/>
+            <circle cx="12" cy="18" r="1.5" fill="currentColor"/>
+            <circle cx="18" cy="18" r="1.5" fill="currentColor"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_stripe_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Stripe pattern"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <line x1="2" y1="6" x2="22" y2="6" stroke="currentColor" stroke-width="2"/>
+            <line x1="2" y1="10" x2="22" y2="10" stroke="currentColor" stroke-width="2"/>
+            <line x1="2" y1="14" x2="22" y2="14" stroke="currentColor" stroke-width="2"/>
+            <line x1="2" y1="18" x2="22" y2="18" stroke="currentColor" stroke-width="2"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
+
+    @staticmethod
+    def surface_cross_icon(size: int = 24, color: str = None) -> QIcon: #vers 1
+        """Cross/plus pattern"""
+        svg_data = '''<svg viewBox="0 0 24 24" fill="none">
+            <line x1="12" y1="4" x2="12" y2="20" stroke="currentColor" stroke-width="1.5"/>
+            <line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.5"/>
+            <line x1="6" y1="4" x2="6" y2="8" stroke="currentColor" stroke-width="1" opacity="0.6"/>
+            <line x1="18" y1="4" x2="18" y2="8" stroke="currentColor" stroke-width="1" opacity="0.6"/>
+            <line x1="6" y1="16" x2="6" y2="20" stroke="currentColor" stroke-width="1" opacity="0.6"/>
+            <line x1="18" y1="16" x2="18" y2="20" stroke="currentColor" stroke-width="1" opacity="0.6"/>
+        </svg>'''
+        return SVGIconFactory._create_icon(svg_data, size, color)
 
     #Missing Icons
 

@@ -1092,8 +1092,21 @@ class COLWorkshop(QWidget): #vers 3
             # Toolbar buttons
             ('open_btn', 'Open'),
             ('save_btn', 'Save'),
+            ('save_col_btn', 'Save TXD'),
         ]
 
+        # Adjust transform panel width based on mode
+        if hasattr(self, 'transform_icon_panel'):
+            if self.button_display_mode == 'icons':
+                self.transform_icon_panel.setMaximumWidth(50)
+            else:
+                self.transform_text_panel.setMaximumWidth(200)
+
+        for btn_name, btn_text in buttons_to_update:
+            if hasattr(self, btn_name):
+                button = getattr(self, btn_name)
+                self._apply_button_mode_to_button(button, btn_text)
+        self._update_dock_button_visibility()
 
     def paintEvent(self, event): #vers 2
         """Paint corner resize triangles"""
@@ -1595,7 +1608,7 @@ class COLWorkshop(QWidget): #vers 3
 
         return self.toolbar
 
-
+    #Left side vertical panel
     def _create_transform_text_panel(self): #vers 11
         """Create transform panel with variable width - no headers"""
         self.transform_text_panel = QFrame()
@@ -1765,11 +1778,10 @@ class COLWorkshop(QWidget): #vers 3
             self.build_from_txd_btn.setToolTip("Create col surface from txd texture names")
             layout.addWidget(self.build_from_txd_btn)
 
-            layout.addSpacing(5)
-
             layout.addStretch()
 
             return self.transform_text_panel
+
 
     def _create_transform_icon_panel(self): #vers 11
         """Create transform panel with variable width - no headers"""
@@ -1933,7 +1945,7 @@ class COLWorkshop(QWidget): #vers 3
 
         # Check col vs DFF
         self.surface_type_btn = QPushButton()
-        self.surface_type_btn.setIcon(self.icon_factory.check_icon())
+        self.surface_type_btn.setIcon(self.icon_factory.checkerboard_icon())
         self.surface_type_btn.setIconSize(QSize(20, 20))
         if self.button_display_mode == 'icons':
             self.surface_type_btn.setFixedSize(40, 40)
@@ -1945,7 +1957,7 @@ class COLWorkshop(QWidget): #vers 3
 
         # Check col vs DFF
         self.surface_edit_btn = QPushButton()
-        self.surface_edit_btn.setIcon(self.icon_factory.check_icon())
+        self.surface_edit_btn.setIcon(self.icon_factory.surfaceedit_icon())
         self.surface_edit_btn.setIconSize(QSize(20, 20))
         if self.button_display_mode == 'icons':
             self.surface_edit_btn.setFixedSize(40, 40)
@@ -1964,9 +1976,7 @@ class COLWorkshop(QWidget): #vers 3
         self.build_from_txd_btn.setToolTip("Create col surface from txd texture names")
         layout.addWidget(self.build_from_txd_btn)
 
-        layout.addSpacing(5)
-
-        layout.addStretch()
+        layout.addSpacing(iconspacer)
 
         return self.transform_icon_panel
 
@@ -2037,7 +2047,7 @@ class COLWorkshop(QWidget): #vers 3
         return panel
 
 
-    def _create_right_panel(self): #vers 10
+    def _create_right_panel(self): #vers 11
         """Create right panel with editing controls - compact layout"""
         panel = QFrame()
         panel.setFrameStyle(QFrame.Shape.StyledPanel)
@@ -2047,11 +2057,14 @@ class COLWorkshop(QWidget): #vers 3
         #main_layout.setContentsMargins(5, 5, 5, 5)
         top_layout = QHBoxLayout()
 
-        # Transform panel (left)
+        # Transform panel (icon)
         transform_icon_panel = self._create_transform_icon_panel()
+        top_layout.setSpacing(2)
         top_layout.addWidget(transform_icon_panel)
 
+        # Transform panel (text)
         transform_text_panel = self._create_transform_text_panel()
+        top_layout.setSpacing(2)
         top_layout.addWidget(transform_text_panel)
 
         # Preview area (center) - 3D Viewport
@@ -2422,7 +2435,7 @@ class COLWorkshop(QWidget): #vers 3
                 self.main_window.log_message(f"📋 Found {len(self.txd_list)} COL files")
         except Exception as e:
             if self.main_window and hasattr(self.main_window, 'log_message'):
-                self.main_window.log_message(f"❌ Error loading COL list: {str(e)}")
+                self.main_window.log_message(f"Error loading COL list: {str(e)}")
 
 
 # - Rest of the logic for the panels
@@ -3762,7 +3775,7 @@ class COLWorkshop(QWidget): #vers 3
                     self._load_col_files(col_data, entry.name)
         except Exception as e:
             if self.main_window and hasattr(self.main_window, 'log_message'):
-                self.main_window.log_message(f"❌ Error selecting COL: {str(e)}")
+                self.main_window.log_message(f"Error selecting COL: {str(e)}")
 
 
     def _extract_col_from_img(self, entry): #vers 2
@@ -3773,7 +3786,7 @@ class COLWorkshop(QWidget): #vers 3
             return self.current_img.read_entry_data(entry)
         except Exception as e:
             if self.main_window and hasattr(self.main_window, 'log_message'):
-                self.main_window.log_message(f"❌ Extract error: {str(e)}")
+                self.main_window.log_message(f"Extract error: {str(e)}")
             return None
 
 
@@ -4823,8 +4836,8 @@ class COLEditorDialog(QDialog): #vers 3
         layout = QVBoxLayout(self)
 
         # Toolbar
-        #self.toolbar = COLToolbar(self)
-        #layout.addWidget(self.toolbar)
+        self.toolbar = COLToolbar(self)
+        layout.addWidget(self.toolbar)
 
         # Main splitter
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
