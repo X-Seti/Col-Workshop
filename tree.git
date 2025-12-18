@@ -5,12 +5,9 @@
 │   ├── appfactory.settings.json
 │   ├── components
 │   │   ├── Col_Editor
-│   │   │   ├── col_workshop.py
-│   │   │   ├── depends
-│   │   │   └── img_factory_debug.log
+│   │   │   └── col_workshop.py
 │   │   └── unified_signal_handler.py
 │   ├── core
-│   │   ├── col_dialogs.py
 │   │   ├── col_display.py
 │   │   ├── col_gui_integration.py
 │   │   └── col_tab_css_theme.css
@@ -19,6 +16,10 @@
 │   ├── gui
 │   │   └── col_dialogs.py
 │   ├── methods
+│   │   ├── col_data_structures.py
+│   │   ├── col_file.py
+│   │   ├── col_parser.py
+│   │   └── svg_icon_factory.py
 │   ├── templates
 │   │   └── new_templates.json
 │   ├── themes
@@ -44,6 +45,8 @@
 │   │   ├── img_factory_light.json
 │   │   ├── knight_rider_dark.json
 │   │   ├── lavender_theme_light.json
+│   │   ├── manjaro2_dark.json
+│   │   ├── manjaro_dark.json
 │   │   ├── matrix_dark.json
 │   │   ├── pastel_theme_light.json
 │   │   ├── peach_theme_light.json
@@ -73,4 +76,4 @@
 ├── TODO.md
 └── tree.git
 
-12 directories, 62 files
+11 directories, 66 files
