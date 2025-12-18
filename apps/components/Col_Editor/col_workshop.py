@@ -39,6 +39,13 @@ from PyQt6.QtGui import QFont, QIcon, QPixmap, QImage, QPainter, QPen, QBrush, Q
 from PyQt6.QtSvg import QSvgRenderer
 
 from apps.debug.debug_functions import img_debugger
+from apps.methods.col_file import COLFile
+from apps.methods.col_table import setup_col_table_structure, populate_col_table
+
+
+
+
+
 
 # Temporary 3D viewport placeholder
 class COL3DViewport(QWidget):
@@ -1976,14 +1983,17 @@ class COLWorkshop(QWidget): #vers 3
 
         # Model table widget (like TXD Workshop texture_table)
         self.collision_list = QTableWidget()
-        self.collision_list.setColumnCount(2)
-        self.collision_list.setHorizontalHeaderLabels(["Preview", "Details"])
+        # Compatibility for table functions
+        class _GuiLayout:
+            def __init__(self, table):
+                self.table = table
+        self.gui_layout = _GuiLayout(self.collision_list)
+        self.collision_list.setColumnCount(8)
+        self.collision_list.setHorizontalHeaderLabels(["Model Name", "Type", "Version", "Size", "Spheres", "Boxes", "Vertices", "Faces"])
         self.collision_list.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.collision_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.collision_list.setAlternatingRowColors(True)
         self.collision_list.itemSelectionChanged.connect(self._on_collision_selected)
-        self.collision_list.setIconSize(QSize(64, 64))
-        self.collision_list.setColumnWidth(0, 80)  # Thumbnail column
         self.collision_list.horizontalHeader().setStretchLastSection(True)  # Details column stretches
         layout.addWidget(self.collision_list)
         self.collision_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -3613,7 +3623,7 @@ class COLWorkshop(QWidget): #vers 3
     def open_col_file(self, file_path): #vers 3
         """Open standalone COL file - supports COL1, COL2, COL3"""
         try:
-            from apps.methods.col_core_classes import COLFile
+            from apps.methods.col_file import COLFile
 
             # Create and load COL file
             col_file = COLFile()
@@ -3634,7 +3644,9 @@ class COLWorkshop(QWidget): #vers 3
             self.setWindowTitle(f"{App_name} - {os.path.basename(file_path)} - {version_str}")
 
             # Populate UI
-            self._populate_collision_list()  # ADD THIS LINE
+            #self._populate_collision_list()  # ADD THIS LINE
+            setup_col_table_structure(self)
+            populate_col_table(self, col_file)
 
             # Select first model by default
             if self.collision_list.rowCount() > 0:
