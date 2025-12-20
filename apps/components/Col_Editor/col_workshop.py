@@ -43,10 +43,6 @@ from apps.methods.col_file import COLFile
 from apps.methods.col_table import setup_col_table_structure, populate_col_table
 
 
-
-
-
-
 # Temporary 3D viewport placeholder
 class COL3DViewport(QWidget):
     def __init__(self, parent=None):
@@ -3626,12 +3622,13 @@ class COLWorkshop(QWidget): #vers 3
             from apps.methods.col_file import COLFile
 
             # Create and load COL file
-            col_file = COLFile()
-            col_file.load_from_file(file_path)
+            # col_file = COLFile()
+            # col_file.load_from_file(file_path)
 
-            if not col_file.load_from_file(file_path):
-                error_msg = col_file.load_error if hasattr(col_file, 'load_error') else "Unknown error"
-                QMessageBox.warning(self, "Open Failed", f"Failed to load COL file:\n{error_msg}")
+            from apps.methods.col_workshop_loader import load_col_with_progress
+            col_file = load_col_with_progress(file_path, self)
+
+            if not col_file:  # Just check if None
                 return False
 
             # Store loaded file

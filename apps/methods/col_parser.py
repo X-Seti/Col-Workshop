@@ -78,6 +78,7 @@ class COLParser:
         except Exception as e:
             raise ValueError(f"Header parse error: {str(e)}")
     
+
     def parse_bounds(self, data: bytes, offset: int, version: COLVersion) -> Tuple[BoundingBox, int]: #vers 1
         """Parse bounding box (40 bytes for COL1, 28 bytes for COL2/3)
         
@@ -133,6 +134,7 @@ class COLParser:
         except Exception as e:
             raise ValueError(f"Bounds parse error: {str(e)}")
     
+
     def parse_counts(self, data: bytes, offset: int, version: COLVersion) -> Tuple[int, int, int, int, int]: #vers 1
         """Parse collision element counts
         
@@ -153,12 +155,6 @@ class COLParser:
                 num_vertices = struct.unpack('<I', data[offset:offset+4])[0]
                 offset += 4
                 num_faces = struct.unpack('<I', data[offset:offset+4])[0]
-                offset += 4
-            else:
-                # COL2/3: spheres, boxes, faces, vertices (16 bytes)
-                if len(data) < offset + 16:
-                    raise ValueError("Data too short for COL2/3 counts")
-                
                 num_spheres = struct.unpack('<I', data[offset:offset+4])[0]
                 offset += 4
                 num_boxes = struct.unpack('<I', data[offset:offset+4])[0]
@@ -176,6 +172,7 @@ class COLParser:
         except Exception as e:
             raise ValueError(f"Counts parse error: {str(e)}")
     
+
     def parse_spheres(self, data: bytes, offset: int, count: int, version: COLVersion) -> Tuple[list, int]: #vers 1
         """Parse collision spheres
         
@@ -223,6 +220,7 @@ class COLParser:
         except Exception as e:
             raise ValueError(f"Spheres parse error: {str(e)}")
     
+
     def parse_boxes(self, data: bytes, offset: int, count: int, version: COLVersion) -> Tuple[list, int]: #vers 1
         """Parse collision boxes
         
@@ -271,6 +269,7 @@ class COLParser:
         except Exception as e:
             raise ValueError(f"Boxes parse error: {str(e)}")
     
+
     def parse_vertices(self, data: bytes, offset: int, count: int, version: COLVersion) -> Tuple[list, int]: #vers 1
         """Parse mesh vertices
         
@@ -316,7 +315,8 @@ class COLParser:
             
         except Exception as e:
             raise ValueError(f"Vertices parse error: {str(e)}")
-    
+
+
     def parse_faces(self, data: bytes, offset: int, count: int, version: COLVersion) -> Tuple[list, int]: #vers 1
         """Parse mesh faces
         
@@ -367,6 +367,7 @@ class COLParser:
         except Exception as e:
             raise ValueError(f"Faces parse error: {str(e)}")
     
+
     def parse_model(self, data: bytes, offset: int = 0) -> Tuple[Optional[COLModel], int]: #vers 1
         """Parse complete COL model
         
@@ -388,10 +389,18 @@ class COLParser:
             # Parse counts
             num_spheres, num_boxes, num_vertices, num_faces, offset = self.parse_counts(data, offset, version)
             
+            # Sanity check counts
+            if num_vertices > 100000 or num_faces > 100000:
+                if self.debug:
+                    img_debugger.warning(f"Skipping model with unrealistic counts: V:{num_vertices} F:{num_faces}")
+                return None, offset
+            
             # Parse collision elements
             model.spheres, offset = self.parse_spheres(data, offset, num_spheres, version)
             model.boxes, offset = self.parse_boxes(data, offset, num_boxes, version)
             model.vertices, offset = self.parse_vertices(data, offset, num_vertices, version)
+            
+            
             model.faces, offset = self.parse_faces(data, offset, num_faces, version)
             
             # Update flags
@@ -405,7 +414,9 @@ class COLParser:
             
         except Exception as e:
             if self.debug:
-                img_debugger.error(f"Model parse failed: {str(e)}")
+                import traceback
+            img_debugger.error(f"Model parse failed: {str(e)}")
+            img_debugger.error(traceback.format_exc())
             return None, offset
 
 

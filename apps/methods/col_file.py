@@ -31,6 +31,7 @@ class COLFile:
         self.debug = debug
         self.parser = COLParser(debug=debug)
     
+
     def load_from_file(self, file_path: str) -> bool: #vers 1
         """Load COL file from disk
         
@@ -76,6 +77,7 @@ class COLFile:
             img_debugger.error(self.load_error)
             return False
     
+
     def is_multi_model_archive(self, data: bytes) -> bool: #vers 1
         """Check if file contains multiple COL models
         
@@ -110,6 +112,7 @@ class COLFile:
         except Exception:
             return False
     
+
     def _load_single_model(self, data: bytes) -> bool: #vers 1
         """Load single COL model
         
@@ -123,7 +126,8 @@ class COLFile:
             model, offset = self.parser.parse_model(data, 0)
             
             if model is None:
-                self.load_error = "Failed to parse COL model"
+                import traceback
+                self.load_error = f"Failed to parse COL model: {traceback.format_exc()}"
                 return False
             
             self.models.append(model)
@@ -139,6 +143,7 @@ class COLFile:
             img_debugger.error(self.load_error)
             return False
     
+
     def _load_multi_model_archive(self, data: bytes) -> bool: #vers 1
         """Load multi-model COL archive
         
@@ -155,17 +160,36 @@ class COLFile:
             if self.debug:
                 img_debugger.info("Parsing multi-model archive...")
             
-            # Find all signature positions
-            signatures = []
+            # Parse models sequentially using file_size from headers
             offset = 0
+            models_loaded = 0
             
-            while offset < len(data) - 4:
+            while offset < len(data) - 32:
+                # Check for valid signature
                 sig = data[offset:offset+4]
-                if sig in [b'COLL', b'COL\x02', b'COL\x03', b'COL\x04']:
-                    signatures.append(offset)
+                if sig not in [b'COLL', b'COL', b'COL', b'COL']:
+                    break
+                
+                # Read file_size from header to skip to next model
+                file_size = struct.unpack('<I', data[offset+4:offset+8])[0]
+                
+                try:
+                    model, _ = self.parser.parse_model(data, offset)
+                    
+                    if model:
+                        self.models.append(model)
+                        models_loaded += 1
+                        if self.debug:
+                            img_debugger.debug(f"Model {models_loaded}: {model.name} loaded")
+                    
+                    # Skip to next model using file_size
+                    offset += file_size
+                    
+                except Exception as e:
                     if self.debug:
-                        img_debugger.debug(f"Found signature at offset {offset}")
-                offset += 1
+                        img_debugger.warning(f"Model error: {str(e)}")
+                    # Try to skip using file_size
+                    offset += file_size if file_size > 0 else 100
             
             if not signatures:
                 self.load_error = "No COL signatures found"
@@ -205,6 +229,7 @@ class COLFile:
             img_debugger.error(self.load_error)
             return False
     
+
     def get_model(self, index: int) -> Optional[COLModel]: #vers 1
         """Get model by index
         
@@ -218,6 +243,7 @@ class COLFile:
             return self.models[index]
         return None
     
+
     def get_info(self) -> str: #vers 1
         """Get file information summary
         
