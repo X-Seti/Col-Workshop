@@ -1,5 +1,4 @@
 .
-├── –
 ├── AI_Rules.md
 ├── appfactory.settings.json
 ├── apps
@@ -13,17 +12,14 @@
 │   │   ├── col_gui_integration.py
 │   │   └── col_tab_css_theme.css
 │   ├── debug
-│   │   └── debug_functions.py
 │   ├── gui
 │   │   ├── col_dialogs.py
 │   │   └── col_workshop_dialogs.py
 │   ├── methods
-│   │   ├── col_data_structures.py
-│   │   ├── col_file.py
-│   │   ├── col_parser.py
-│   │   ├── col_table.py
 │   │   ├── col_workshop_loader.py
-│   │   ├── gta_rw.py
+│   │   ├── col_workshop_parser.py
+│   │   ├── col_workshop_structures.py
+│   │   ├── __init__.py
 │   │   └── svg_icon_factory.py
 │   ├── templates
 │   │   └── new_templates.json
@@ -72,13 +68,34 @@
 ├── cc.py
 ├── ChangeLog.md
 ├── Credits.md
-├── debug_col.py
-├── img_factory_debug.log
+├── gta_rw.py
 ├── launch_col_workshop.py
+├── LC
+│   ├── commer.col
+│   ├── generic.col
+│   ├── indust.col
+│   ├── suburb.col
+│   ├── VEHICLES.COL
+│   └── WEAPONS.COL
 ├── LICENSE
 ├── package-lock.json
 ├── README.md
+├── SA
+│   ├── peds.col
+│   ├── vehicles.col
+│   └── weapons.col
 ├── TODO.md
-└── tree.git
+├── tree.git
+└── VC
+    ├── example2.col
+    ├── game_vc.col
+    ├── generic.col
+    ├── GENERIC.COL
+    ├── peds.col
+    ├── PEDS.COL
+    ├── vehicles.col
+    ├── VEHICLES.COL
+    ├── weapons.col
+    └── WEAPONS.COL
 
-11 directories, 71 files
+14 directories, 85 files

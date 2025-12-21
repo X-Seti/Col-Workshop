@@ -41,6 +41,16 @@ from PyQt6.QtSvg import QSvgRenderer
 # Import project modules AFTER path setup
 from apps.methods.svg_icon_factory import SVGIconFactory
 
+# COL Workshop parser system
+from apps.methods.col_workshop_structures import (
+    COLModel, COLVersion, COLHeader, COLBounds,
+    COLSphere, COLBox, COLVertex, COLFace
+)
+from apps.methods.col_workshop_parser import COLParser
+from apps.methods.col_workshop_loader import COLFile
+
+
+
 # Temporary 3D viewport placeholder
 class COL3DViewport(QWidget):
     def __init__(self, parent=None):
@@ -164,17 +174,12 @@ class COLWorkshop(QWidget): #vers 3
             try:
                 from apps.utils.app_settings_system import AppSettings
                 self.app_settings = AppSettings()
-                img_debugger.debug("AppSettings initialized for standalone COL Workshop")
             except Exception as e:
-                img_debugger.warning(f"Could not initialize AppSettings: {e}")
+                print(f"Could not initialize AppSettings: {e}")
                 self.app_settings = None
-
         if hasattr(self.app_settings, 'theme_changed'):
             self.app_settings.theme_changed.connect(self._refresh_icons)
 
-        # Preview settings
-        self._show_checkerboard = True
-        self._show_spheres = True
         self._show_boxes = True
         self._show_mesh = True
 
@@ -973,7 +978,7 @@ class COLWorkshop(QWidget): #vers 3
 
 
         except Exception as e:
-            img_debugger.error(f"Error docking: {str(e)}")
+            print(f"Error docking: {str(e)}")
             self.show()
 
 
@@ -1005,7 +1010,7 @@ class COLWorkshop(QWidget): #vers 3
                 self.main_window.log_message(f"{App_name} undocked to standalone")
                 
         except Exception as e:
-            img_debugger.error(f"Error undocking: {str(e)}")
+            print(f"Error undocking: {str(e)}")
             # Fallback
             self.setWindowFlags(Qt.WindowType.Window)
             self.show()
@@ -2376,6 +2381,11 @@ class COLWorkshop(QWidget): #vers 3
                 self.main_window.log_message(f"Error loading COL list: {str(e)}")
 
 
+  #  def setup_col_table_structure(workshop): pass
+  #  def populate_col_table(workshop, col_file):
+  #      for model in col_file.models:
+  #          print(f"Model: {model.header.name}")
+
 # - Rest of the logic for the panels
 
     def _pan_preview(self, dx, dy): #vers 2
@@ -2444,7 +2454,7 @@ class COLWorkshop(QWidget): #vers 3
         if level_data is None:
             # Return collision preview widget for main preview area
             preview = CollisionPreviewWidget(self)
-            img_debugger.debug(f"Created CollisionPreviewWidget: {type(preview)}")  # ADD THIS
+            print(f"Created CollisionPreviewWidget: {type(preview)}")  # ADD THIS
             return preview
 
         # Original logic with level_data for mipmap/level cards (if needed)
@@ -2686,7 +2696,7 @@ class COLWorkshop(QWidget): #vers 3
                     self.main_window.log_message(f"{App_name} docked back to main window")
                     
         except Exception as e:
-            img_debugger.error(f"Error toggling tear-off: {str(e)}")
+            print(f"Error toggling tear-off: {str(e)}")
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Tear-off Error", f"Could not toggle tear-off state:\n{str(e)}")
 
@@ -2711,7 +2721,7 @@ class COLWorkshop(QWidget): #vers 3
             if not hasattr(self, 'app_settings') or self.app_settings is None:
                 self.app_settings = AppSettings()
                 if not hasattr(self.app_settings, 'current_settings'):
-                    img_debugger.error("AppSettings failed to initialize")
+                    print("AppSettings failed to initialize")
                     from PyQt6.QtWidgets import QMessageBox
                     QMessageBox.warning(self, "Error", "Could not initialize theme system")
                     return
@@ -2725,13 +2735,13 @@ class COLWorkshop(QWidget): #vers 3
             if dialog.exec():
                 # Apply theme after dialog closes
                 self._apply_theme()
-                img_debugger.success("Theme settings applied")
+                print("Theme settings applied")
                 if hasattr(self, 'main_window') and self.main_window:
                     if hasattr(self.main_window, 'log_message'):
                         self.main_window.log_message("Theme settings updated")
 
         except Exception as e:
-            img_debugger.error(f"Theme settings error: {e}")
+            print(f"Theme settings error: {e}")
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Theme Error", f"Could not load theme system:\n{e}")
 
@@ -3428,7 +3438,7 @@ class COLWorkshop(QWidget): #vers 3
                 # Force update
                 self.update()
 
-                img_debugger.success(f"Theme applied: {theme_name}")
+                print(f"Theme applied: {theme_name}")
                 if self.main_window and hasattr(self.main_window, 'log_message'):
                     self.main_window.log_message(f"Theme applied: {theme_name}")
             else:
@@ -3443,9 +3453,9 @@ class COLWorkshop(QWidget): #vers 3
                         border: 1px solid #3a3a3a;
                     }
                 """)
-                img_debugger.warning("No app_settings found, using fallback theme")
+                print("No app_settings found, using fallback theme")
         except Exception as e:
-            img_debugger.error(f"Theme application error: {e}")
+            print(f"Theme application error: {e}")
 
 
     def _apply_settings(self, dialog): #vers 5
@@ -3511,7 +3521,7 @@ class COLWorkshop(QWidget): #vers 3
                 self.open_col_file(file_path)
 
         except Exception as e:
-            img_debugger.error(f"Error in open file dialog: {str(e)}")
+            print(f"Error in open file dialog: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to open file:\n{str(e)}")
 
 
@@ -3533,14 +3543,14 @@ class COLWorkshop(QWidget): #vers 3
                     self.main_window.log_message(f"✅ Saved COL: {os.path.basename(self.current_file_path)}")
 
                 QMessageBox.information(self, "Save", f"COL file saved successfully:\n{os.path.basename(self.current_file_path)}")
-                img_debugger.success(f"Saved COL file: {self.current_file_path}")
+                print(f"Saved COL file: {self.current_file_path}")
             else:
                 error_msg = self.current_col_file.save_error if hasattr(self.current_col_file, 'save_error') else "Unknown error"
                 QMessageBox.critical(self, "Save Error", f"Failed to save COL file:\n{error_msg}")
-                img_debugger.error(f"Save failed: {error_msg}")
+                print(f"Save failed: {error_msg}")
 
         except Exception as e:
-            img_debugger.error(f"Error saving file: {str(e)}")
+            print(f"Error saving file: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to save file:\n{str(e)}")
 
 
@@ -3560,7 +3570,7 @@ class COLWorkshop(QWidget): #vers 3
                 self._save_file()
 
         except Exception as e:
-            img_debugger.error(f"Error in save as dialog: {str(e)}")
+            print(f"Error in save as dialog: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to save file:\n{str(e)}")
 
 
@@ -3607,16 +3617,20 @@ class COLWorkshop(QWidget): #vers 3
     def open_col_file(self, file_path): #vers 3
         """Open standalone COL file - supports COL1, COL2, COL3"""
         try:
-            from apps.methods.col_file import COLFile
+            from apps.methods.col_workshop_loader import COLFile
 
             # Create and load COL file
             # col_file = COLFile()
             # col_file.load_from_file(file_path)
 
-            from apps.methods.col_workshop_loader import load_col_with_progress
-            col_file = load_col_with_progress(file_path, self)
+            #from apps.methods.col_workshop_loader import load_col_with_progress
+            #col_file = load_col_with_progress(file_path, self)
 
-            if not col_file:  # Just check if None
+            #if not col_file:  # Just check if None
+            #    return False
+
+            col_file = COLFile(debug=True)
+            if not col_file.load(file_path):
                 return False
 
             # Store loaded file
@@ -3648,11 +3662,11 @@ class COLWorkshop(QWidget): #vers 3
             if self.main_window and hasattr(self.main_window, 'log_message'):
                 self.main_window.log_message(f"✅ Loaded COL: {os.path.basename(file_path)} ({model_count} models)")
 
-            img_debugger.success(f"Opened COL file: {file_path} with {model_count} models")
+            print(f"Opened COL file: {file_path} with {model_count} models")
             return True
 
         except Exception as e:
-            img_debugger.error(f"Error opening COL file: {str(e)}")
+            print(f"Error opening COL file: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to open COL file:\n{str(e)}")
             return False
 
@@ -3666,11 +3680,11 @@ class COLWorkshop(QWidget): #vers 3
             if self.main_window and hasattr(self.main_window, 'log_message'):
                 self.main_window.log_message(f"Loading COL files from IMG: {os.path.basename(img_path)}")
 
-            img_debugger.info(f"IMG archive COL loading - not yet implemented: {img_path}")
+            print(f"IMG archive COL loading - not yet implemented: {img_path}")
             return False
 
         except Exception as e:
-            img_debugger.error(f"Error loading from IMG archive: {str(e)}")
+            print(f"Error loading from IMG archive: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to load from IMG:\n{str(e)}")
             return False
 
@@ -3700,7 +3714,7 @@ class COLWorkshop(QWidget): #vers 3
                 self.main_window.log_message(f"✅ Analyzed COL: {os.path.basename(self.current_file_path)}")
 
         except Exception as e:
-            img_debugger.error(f"Error analyzing file: {str(e)}")
+            print(f"Error analyzing file: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to analyze file:\n{str(e)}")
 
 
@@ -3736,25 +3750,25 @@ class COLWorkshop(QWidget): #vers 3
         try:
             selected_rows = self.collision_list.selectionModel().selectedRows()
             if not selected_rows:
-                img_debugger.debug("No rows selected")
+                print("No rows selected")
                 return
 
             row = selected_rows[0].row()
             details_item = self.collision_list.item(row, 1)
 
             if not details_item:
-                img_debugger.debug("No details item found")
+                print("No details item found")
                 return
 
             model_index = details_item.data(Qt.ItemDataRole.UserRole)
-            img_debugger.debug(f"Selected row {row}, model index {model_index}")
+            print(f"Selected row {row}, model index {model_index}")
 
             if not self.current_col_file or not hasattr(self.current_col_file, 'models'):
-                img_debugger.debug("No COL file or models")
+                print("No COL file or models")
                 return
 
             if model_index is None or model_index < 0 or model_index >= len(self.current_col_file.models):
-                img_debugger.debug(f"Invalid model index: {model_index}")
+                print(f"Invalid model index: {model_index}")
                 return
 
             # Get selected model
@@ -3770,21 +3784,21 @@ class COLWorkshop(QWidget): #vers 3
                 if VIEWPORT_AVAILABLE and isinstance(self.preview_widget, COL3DViewport):
                     # Use 3D viewport
                     self.preview_widget.set_current_model(model, model_index)
-                    img_debugger.success(f"3D viewport updated for {model_name}")
+                    print(f"3D viewport updated for {model_name}")
                 else:
                     # Use 2D preview fallback
                     width = max(400, self.preview_widget.width())
                     height = max(400, self.preview_widget.height())
-                    img_debugger.debug(f"Rendering 2D preview: {width}x{height} for {model_name}")
+                    print(f"Rendering 2D preview: {width}x{height} for {model_name}")
                     preview_pixmap = self._render_collision_preview(model, width, height)
                     self.preview_widget.setPixmap(preview_pixmap)
                     self.preview_widget.setScaledContents(False)
-                    img_debugger.success(f"2D preview updated for {model_name}")
+                    print(f"2D preview updated for {model_name}")
             else:
-                img_debugger.warning("No preview_widget attribute found")
+                print("No preview_widget attribute found")
 
         except Exception as e:
-            img_debugger.error(f"Error selecting model: {str(e)}")
+            print(f"Error selecting model: {str(e)}")
             import traceback
             traceback.print_exc()
 
@@ -3940,10 +3954,10 @@ class COLWorkshop(QWidget): #vers 3
                 # Set row height
                 self.collision_list.setRowHeight(row, 100)
 
-            img_debugger.debug(f"Populated collision table with {len(self.current_col_file.models)} models")
+            print(f"Populated collision table with {len(self.current_col_file.models)} models")
 
         except Exception as e:
-            img_debugger.error(f"Error populating collision table: {str(e)}")
+            print(f"Error populating collision table: {str(e)}")
 
 
     def _create_preview_widget(self, level_data=None): #vers 3
@@ -3970,9 +3984,9 @@ class COLWorkshop(QWidget): #vers 3
         try:
             if hasattr(self, 'viewer_3d'):
                 self.viewer_3d.set_view_options(show_spheres=checked)
-            img_debugger.debug(f"Spheres visibility: {checked}")
+            print(f"Spheres visibility: {checked}")
         except Exception as e:
-            img_debugger.error(f"Error toggling spheres: {str(e)}")
+            print(f"Error toggling spheres: {str(e)}")
 
 
     def _toggle_boxes(self, checked): #vers 3
@@ -3980,9 +3994,9 @@ class COLWorkshop(QWidget): #vers 3
         try:
             if hasattr(self, 'viewer_3d'):
                 self.viewer_3d.set_view_options(show_boxes=checked)
-            img_debugger.debug(f"Boxes visibility: {checked}")
+            print(f"Boxes visibility: {checked}")
         except Exception as e:
-            img_debugger.error(f"Error toggling boxes: {str(e)}")
+            print(f"Error toggling boxes: {str(e)}")
 
 
     def _toggle_mesh(self, checked): #vers 3
@@ -3990,9 +4004,9 @@ class COLWorkshop(QWidget): #vers 3
         try:
             if hasattr(self, 'viewer_3d'):
                 self.viewer_3d.set_view_options(show_mesh=checked)
-            img_debugger.debug(f"Mesh visibility: {checked}")
+            print(f"Mesh visibility: {checked}")
         except Exception as e:
-            img_debugger.error(f"Error toggling mesh: {str(e)}")
+            print(f"Error toggling mesh: {str(e)}")
 
 
 # ----- Render functions
@@ -4769,7 +4783,7 @@ class COLEditorDialog(QDialog): #vers 3
         self.setup_ui()
         self.connect_signals()
 
-        img_debugger.debug(App_name + " dialog created")
+        print(App_name + " dialog created")
 
 
     def setup_ui(self): #vers 1
@@ -4899,7 +4913,7 @@ class COLEditorDialog(QDialog): #vers 3
             self.setWindowTitle(f"COL Editor - {os.path.basename(file_path)}")
             self.is_modified = False
 
-            img_debugger.success(f"COL file loaded: {file_path}")
+            print(f"COL file loaded: {file_path}")
             return True
 
         except Exception as e:
@@ -4907,7 +4921,7 @@ class COLEditorDialog(QDialog): #vers 3
             self.status_bar.showMessage("Ready")
             error_msg = f"Error loading COL file: {str(e)}"
             QMessageBox.critical(self, "Error", error_msg)
-            img_debugger.error(error_msg)
+            print(error_msg)
             return False
 
 
@@ -4945,7 +4959,7 @@ class COLEditorDialog(QDialog): #vers 3
         except Exception as e:
             error_msg = f"Error saving COL file: {str(e)}"
             QMessageBox.critical(self, "Save Error", error_msg)
-            img_debugger.error(error_msg)
+            print(error_msg)
 
 
     def save_file_as(self): #vers 1
@@ -4989,7 +5003,7 @@ class COLEditorDialog(QDialog): #vers 3
         except Exception as e:
             error_msg = f"Error analyzing COL file: {str(e)}"
             QMessageBox.critical(self, "Analysis Error", error_msg)
-            img_debugger.error(error_msg)
+            print(error_msg)
 
 
     def on_model_selected(self, model_index: int): #vers 1
@@ -5017,10 +5031,10 @@ class COLEditorDialog(QDialog): #vers 3
             model_name = getattr(self.current_model, 'name', f'Model_{model_index}')
             self.status_bar.showMessage(f"Selected: {model_name}")
 
-            img_debugger.debug(f"Model selected: {model_name} (index {model_index})")
+            print(f"Model selected: {model_name} (index {model_index})")
 
         except Exception as e:
-            img_debugger.error(f"Error selecting model: {str(e)}")
+            print(f"Error selecting model: {str(e)}")
 
 
     def _create_viewport_controls(self): #vers 1
@@ -5225,10 +5239,10 @@ class COLEditorDialog(QDialog): #vers 3
             if hasattr(self, 'viewer_3d') and VIEWPORT_AVAILABLE:
                 self.viewer_3d.set_current_model(current_model, selected_index)
 
-            img_debugger.debug(f"Property changed: {property_name} = {new_value}")
+            print(f"Property changed: {property_name} = {new_value}")
 
         except Exception as e:
-            img_debugger.error(f"Error handling property change: {str(e)}")
+            print(f"Error handling property change: {str(e)}")
             self.status_bar.showMessage(f"Error: {str(e)}")
 
 
@@ -5269,7 +5283,7 @@ class COLEditorDialog(QDialog): #vers 3
         else:
             event.accept()
 
-        img_debugger.debug("COL Editor dialog closed")
+        print("COL Editor dialog closed")
 
 
     # Add import/export functionality when docked
@@ -5291,7 +5305,7 @@ class COLEditorDialog(QDialog): #vers 3
                 self.main_window.log_message(f"{App_name} import/export functionality ready")
                 
         except Exception as e:
-            img_debugger.error(f"Error adding import/export functionality: {str(e)}")
+            print(f"Error adding import/export functionality: {str(e)}")
 
 
     def _import_col_data(self): #vers 1
@@ -5303,7 +5317,7 @@ class COLEditorDialog(QDialog): #vers 3
                 from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.information(self, "Import", "Import functionality coming soon!")
         except Exception as e:
-            img_debugger.error(f"Error importing COL data: {str(e)}")
+            print(f"Error importing COL data: {str(e)}")
 
 
     def _export_col_data(self): #vers 1
@@ -5315,7 +5329,7 @@ class COLEditorDialog(QDialog): #vers 3
                 from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.information(self, "Export", "Export functionality coming soon!")
         except Exception as e:
-            img_debugger.error(f"Error exporting COL data: {str(e)}")
+            print(f"Error exporting COL data: {str(e)}")
 
 
 # Convenience functions
@@ -5326,18 +5340,19 @@ def open_col_editor(parent=None, file_path: str = None) -> COLEditorDialog: #ver
 
         if file_path:
             if editor.load_col_file(file_path):
-                img_debugger.success(f"COL editor opened with file: {file_path}")
+                print(f"COL editor opened with file: {file_path}")
             else:
-                img_debugger.error(f"Failed to load file in COL editor: {file_path}")
+                print(f"Failed to load file in COL editor: {file_path}")
 
         editor.show()
         return editor
 
     except Exception as e:
-        img_debugger.error(f"Error opening COL editor: {str(e)}")
+        print(f"Error opening COL editor: {str(e)}")
         if parent:
             QMessageBox.critical(parent, "COL Editor Error", f"Failed to open COL editor:\n{str(e)}")
         return None
+
 
 def create_new_model(model_name: str = "New Model") -> COLModel: #vers 1
 
@@ -5354,11 +5369,11 @@ def create_new_model(model_name: str = "New Model") -> COLModel: #vers 1
         if hasattr(model, 'calculate_bounding_box'):
             model.calculate_bounding_box()
 
-        img_debugger.debug(f"Created new COL model: {model_name}")
+        print(f"Created new COL model: {model_name}")
         return model
 
     except Exception as e:
-        img_debugger.error(f"Error creating new COL model: {str(e)}")
+        print(f"Error creating new COL model: {str(e)}")
         return None
 
 
@@ -5374,11 +5389,11 @@ def delete_model(col_file: COLFile, model_index: int) -> bool: #vers 1
         model_name = getattr(col_file.models[model_index], 'name', f'Model_{model_index}')
         del col_file.models[model_index]
 
-        img_debugger.debug(f"Deleted COL model: {model_name}")
+        print(f"Deleted COL model: {model_name}")
         return True
 
     except Exception as e:
-        img_debugger.error(f"Error deleting COL model: {str(e)}")
+        print(f"Error deleting COL model: {str(e)}")
         return False
 
 
@@ -5386,11 +5401,11 @@ def export_model(model: COLModel, file_path: str) -> bool: #vers 1
     """Export single model to file"""
     try:
         # TODO: Implement model export
-        img_debugger.info(f"Model export to {file_path} - not yet implemented")
+        print(f"Model export to {file_path} - not yet implemented")
         return False
 
     except Exception as e:
-        img_debugger.error(f"Error exporting model: {str(e)}")
+        print(f"Error exporting model: {str(e)}")
         return False
 
 
@@ -5398,11 +5413,11 @@ def import_elements(model: COLModel, file_path: str) -> bool: #vers 1
     """Import collision elements from file"""
     try:
         # TODO: Implement element import
-        img_debugger.info(f"Element import from {file_path} - not yet implemented")
+        print(f"Element import from {file_path} - not yet implemented")
         return False
 
     except Exception as e:
-        img_debugger.error(f"Error importing elements: {str(e)}")
+        print(f"Error importing elements: {str(e)}")
         return False
 
 
@@ -5410,17 +5425,17 @@ def refresh_model_list(list_widget: COLModelListWidget, col_file: COLFile): #ver
     """Refresh model list widget"""
     try:
         list_widget.set_col_file(col_file)
-        img_debugger.debug("Model list refreshed")
+        print("Model list refreshed")
 
     except Exception as e:
-        img_debugger.error(f"Error refreshing model list: {str(e)}")
+        print(f"Error refreshing model list: {str(e)}")
 
 
 def update_view_options(viewer: 'COL3DViewport', **options): #vers 1
     """Update 3D viewer options"""
     try:
         viewer.set_view_options(**options)
-        img_debugger.debug(f"View options updated: {options}")
+        print(f"View options updated: {options}")
 
         def _ensure_standalone_functionality(self): #vers 1
             """Ensure popped-out windows work independently of img factory"""
@@ -5443,10 +5458,10 @@ def update_view_options(viewer: 'COL3DViewport', **options): #vers 1
                         self.setWindowFlags(Qt.WindowType.Window)
 
             except Exception as e:
-                img_debugger.error(f"Error ensuring standalone functionality: {str(e)}")
+                print(f"Error ensuring standalone functionality: {str(e)}")
 
     except Exception as e:
-        img_debugger.error(f"Error updating view options: {str(e)}")
+        print(f"Error updating view options: {str(e)}")
 
 
 
@@ -5454,11 +5469,11 @@ def apply_changes(editor: COLEditorDialog) -> bool: #vers 1
     """Apply all pending changes"""
     try:
         # TODO: Implement change application
-        img_debugger.info("Apply changes - not yet implemented")
+        print("Apply changes - not yet implemented")
         return True
 
     except Exception as e:
-        img_debugger.error(f"Error applying changes: {str(e)}")
+        print(f"Error applying changes: {str(e)}")
         return False
 
 
