@@ -1,4 +1,5 @@
 .
+├── –
 ├── AI_Rules.md
 ├── appfactory.settings.json
 ├── apps
@@ -14,11 +15,15 @@
 │   ├── debug
 │   │   └── debug_functions.py
 │   ├── gui
-│   │   └── col_dialogs.py
+│   │   ├── col_dialogs.py
+│   │   └── col_workshop_dialogs.py
 │   ├── methods
 │   │   ├── col_data_structures.py
 │   │   ├── col_file.py
 │   │   ├── col_parser.py
+│   │   ├── col_table.py
+│   │   ├── col_workshop_loader.py
+│   │   ├── gta_rw.py
 │   │   └── svg_icon_factory.py
 │   ├── templates
 │   │   └── new_templates.json
@@ -76,4 +81,4 @@
 ├── TODO.md
 └── tree.git
 
-11 directories, 66 files
+11 directories, 71 files
