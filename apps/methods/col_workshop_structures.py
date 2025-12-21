@@ -1,103 +1,126 @@
-#this belongs in methods/col_workshop_structures.py - Version: 1
-# X-Seti - December21 2025 - Col Workshop - COL Data Structures
+#this belongs in methods/col_table.py - Version: 1
+# X-Seti - December18 2025 - Col Workshop - COL Table Population
 """
-COL Data Structures - Pure data classes for collision models
-Supports COL1 (GTA3/VC) initially, COL2/3 (SA) to be added
+COL Table Population - Display COL models in table widget
 """
 
-from dataclasses import dataclass
-from typing import List, Tuple
-from enum import Enum
+import os
+from PyQt6.QtWidgets import QTableWidgetItem
+from PyQt6.QtCore import Qt
 
-##Classes list -
-# COLBounds
-# COLBox  
-# COLFace
-# COLHeader
-# COLModel
-# COLSphere
-# COLVersion
-# COLVertex
+# Optional debug - use print if not available
+try:
+    from apps.debug.debug_functions import img_debugger
+except ImportError:
+    class SimpleDebugger:
+        def debug(self, msg): print(f"DEBUG: {msg}")
+        def error(self, msg): print(f"ERROR: {msg}")
+        def warning(self, msg): print(f"WARN: {msg}")
+        def success(self, msg): print(f"SUCCESS: {msg}")
+    img_debugger = SimpleDebugger()
 
-class COLVersion(Enum): #vers 1
-    """COL file format versions"""
-    COL_1 = 1  # GTA III, Vice City
-    COL_2 = 2  # GTA SA (PS2)
-    COL_3 = 3  # GTA SA (PC/Xbox)
-    COL_4 = 4  # GTA SA (unused)
+##Methods list -
+# populate_col_table
+# setup_col_table_structure
 
-@dataclass
-class COLHeader: #vers 1
-    """COL model header - 32 bytes total"""
-    fourcc: bytes        # 4 bytes - b'COLL', b'COL2', b'COL3', b'COL4'
-    size: int            # 4 bytes - file size from after this value
-    name: str            # 22 bytes - model name (null-terminated)
-    model_id: int        # 2 bytes - model ID (0-19999)
-    version: COLVersion  # Derived from fourcc
+def setup_col_table_structure(main_window) -> bool: #vers 1
+    """Setup table columns for COL data"""
+    try:
+        if not hasattr(main_window, 'gui_layout') or not hasattr(main_window.gui_layout, 'table'):
+            img_debugger.error("No table widget available")
+            return False
+        
+        table = main_window.gui_layout.table
+        
+        # COL columns
+        col_headers = ["Model Name", "Type", "Version", "Size", "Spheres", "Boxes", "Vertices", "Faces"]
+        table.setColumnCount(len(col_headers))
+        table.setHorizontalHeaderLabels(col_headers)
+        
+        # Column widths
+        table.setColumnWidth(0, 200)  # Model Name
+        table.setColumnWidth(1, 80)   # Type
+        table.setColumnWidth(2, 80)   # Version
+        table.setColumnWidth(3, 100)  # Size
+        table.setColumnWidth(4, 80)   # Spheres
+        table.setColumnWidth(5, 80)   # Boxes
+        table.setColumnWidth(6, 80)   # Vertices
+        table.setColumnWidth(7, 80)   # Faces
+        
+        table.setSortingEnabled(True)
+        
+        img_debugger.debug("COL table structure ready")
+        return True
+        
+    except Exception as e:
+        img_debugger.error(f"Table setup error: {str(e)}")
+        return False
 
-@dataclass
-class COLBounds: #vers 1
-    """COL bounding data - 40 bytes (COL1 order)"""
-    radius: float                        # 4 bytes
-    center: Tuple[float, float, float]   # 12 bytes
-    min: Tuple[float, float, float]      # 12 bytes
-    max: Tuple[float, float, float]      # 12 bytes
+def populate_col_table(main_window, col_file) -> bool: #vers 1
+    """Populate table with COL models"""
+    try:
+        if not col_file or not hasattr(col_file, 'models') or not col_file.models:
+            img_debugger.warning("No COL data")
+            return False
+        
+        if not hasattr(main_window, 'gui_layout') or not hasattr(main_window.gui_layout, 'table'):
+            img_debugger.error("No table widget")
+            return False
+        
+        table = main_window.gui_layout.table
+        models = col_file.models
+        
+        # Set rows
+        table.setRowCount(len(models))
+        
+        for row, model in enumerate(models):
+            # Model Name
+            name = model.name if model.name else f"Model_{row+1}"
+            item = QTableWidgetItem(name)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row, 0, item)
+            
+            # Type
+            item = QTableWidgetItem("COL")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row, 1, item)
+            
+            # Version
+            version_text = f"COL{model.version.value}"
+            item = QTableWidgetItem(version_text)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row, 2, item)
+            
+            # Size (placeholder - calculate later if needed)
+            item = QTableWidgetItem("N/A")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row, 3, item)
+            
+            # Spheres
+            item = QTableWidgetItem(str(len(model.spheres)))
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row, 4, item)
+            
+            # Boxes
+            item = QTableWidgetItem(str(len(model.boxes)))
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row, 5, item)
+            
+            # Vertices
+            item = QTableWidgetItem(str(len(model.vertices)))
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row, 6, item)
+            
+            # Faces
+            item = QTableWidgetItem(str(len(model.faces)))
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row, 7, item)
+        
+        img_debugger.success(f"Table populated: {len(models)} models")
+        return True
+        
+    except Exception as e:
+        img_debugger.error(f"Table population error: {str(e)}")
+        return False
 
-@dataclass
-class COLSphere: #vers 1
-    """COL collision sphere - 20 bytes (COL1)"""
-    radius: float                        # 4 bytes
-    center: Tuple[float, float, float]   # 12 bytes
-    material: int                        # 1 byte
-    flag: int                            # 1 byte
-    brightness: int                      # 1 byte
-    light: int                           # 1 byte
-
-@dataclass
-class COLBox: #vers 1
-    """COL collision box - 28 bytes"""
-    min: Tuple[float, float, float]      # 12 bytes
-    max: Tuple[float, float, float]      # 12 bytes
-    material: int                        # 1 byte
-    flag: int                            # 1 byte
-    brightness: int                      # 1 byte
-    light: int                           # 1 byte
-
-@dataclass
-class COLVertex: #vers 1
-    """COL mesh vertex - 12 bytes (COL1 float)"""
-    x: float
-    y: float
-    z: float
-
-@dataclass
-class COLFace: #vers 1
-    """COL mesh face - 16 bytes (COL1)"""
-    a: int              # 4 bytes - vertex index
-    b: int              # 4 bytes - vertex index
-    c: int              # 4 bytes - vertex index
-    material: int       # 1 byte
-    flag: int           # 1 byte
-    brightness: int     # 1 byte
-    light: int          # 1 byte
-
-@dataclass
-class COLModel: #vers 1
-    """Complete COL model structure"""
-    header: COLHeader
-    bounds: COLBounds
-    spheres: List[COLSphere]
-    boxes: List[COLBox]
-    vertices: List[COLVertex]
-    faces: List[COLFace]
-    
-    def get_stats(self) -> dict: #vers 1
-        """Get model statistics"""
-        return {
-            'name': self.header.name,
-            'version': self.header.version.name,
-            'spheres': len(self.spheres),
-            'boxes': len(self.boxes),
-            'vertices': len(self.vertices),
-            'faces': len(self.faces)
-        }
+__all__ = ['setup_col_table_structure', 'populate_col_table']

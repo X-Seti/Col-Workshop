@@ -39,13 +39,15 @@ from PyQt6.QtGui import QFont, QIcon, QPixmap, QImage, QPainter, QPen, QBrush, Q
 from PyQt6.QtSvg import QSvgRenderer
 
 # Import project modules AFTER path setup
-from apps.methods.svg_icon_factory import SVGIconFactory
+from apps.methods.col_svg_icons import SVGIconFactory
 
 # COL Workshop parser system
-from apps.methods.col_workshop_structures import (
+from apps.methods.col_workshop_classes import (
     COLModel, COLVersion, COLHeader, COLBounds,
     COLSphere, COLBox, COLVertex, COLFace
 )
+
+from apps.methods.col_workshop_structures import setup_col_table_structure, populate_col_table
 from apps.methods.col_workshop_parser import COLParser
 from apps.methods.col_workshop_loader import COLFile
 
