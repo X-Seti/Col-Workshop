@@ -272,7 +272,7 @@ def _load_col_file(main_window, file_path): #vers 1
         col_file = COLFile()
 
         # Load the file
-        if col_file.load():
+        if col_file.load_from_file(file_path):
             model_count = len(col_file.models) if hasattr(col_file, 'models') else 0
             img_debugger.success(f"COL file loaded: {model_count} models")
             return col_file

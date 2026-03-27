@@ -202,11 +202,16 @@ class COLBox:
 
 class COLVertex:
     """Mesh vertex"""
-    
-    def __init__(self, position: Vector3): #vers 1
-        """Initialize vertex"""
-        self.position = position
-    
+
+    def __init__(self, position=None, x=None, y=None, z=None): #vers 2
+        """Accept both COLVertex(Vector3) and COLVertex(x=, y=, z=) styles."""
+        if position is not None:
+            self.position = position
+        elif x is not None:
+            self.position = Vector3(x, y, z)
+        else:
+            self.position = Vector3(0.0, 0.0, 0.0)
+
     def __str__(self):
         return f"COLVertex({self.position})"
 
@@ -527,14 +532,12 @@ class COLFile:
             model.bounding_box.max = Vector3(max_x, max_y, max_z)
             offset += 12
             
-            # Parse counts (20 bytes)
-            if offset + 20 > len(data):
+            # Parse counts (16 bytes) - COL1: spheres, boxes, vertices, faces
+            if offset + 16 > len(data):
                 img_debugger.error("COL1: Data too small for counts")
                 return
             
             num_spheres = struct.unpack('<I', data[offset:offset+4])[0]
-            offset += 4
-            num_unknown = struct.unpack('<I', data[offset:offset+4])[0]
             offset += 4
             num_boxes = struct.unpack('<I', data[offset:offset+4])[0]
             offset += 4
@@ -547,7 +550,7 @@ class COLFile:
             
             # CRITICAL FIX: Check for garbage face count
             num_faces = self._calculate_face_count(
-                data, offset, num_spheres, num_unknown, num_boxes, num_vertices, num_faces, is_col1=True
+                data, offset, num_spheres, num_boxes, num_vertices, num_faces, is_col1=True
             )
             
             if model.calculated_face_count:
@@ -562,9 +565,6 @@ class COLFile:
                 
                 # Parse spheres
                 offset = safe_parse_spheres(model, data, offset, num_spheres, "COL1")
-                
-                # Skip unknown data
-                offset += num_unknown * 4
                 
                 # Parse boxes
                 offset = safe_parse_boxes(model, data, offset, num_boxes, "COL1")
@@ -581,22 +581,7 @@ class COLFile:
                 return
             
             model.update_flags()
-            
-            # DEBUG: Check parsed data
             img_debugger.debug(f"COL1: Parse complete - {model.get_stats()}")
-            if model.vertices:
-                v = model.vertices[0]
-                img_debugger.debug(f"DEBUG: First vertex type={type(v.position).__name__}, has .x={hasattr(v.position, 'x')}")
-                img_debugger.debug(f"DEBUG: First vertex value={v.position}")
-            if model.faces:
-                f = model.faces[0]
-                img_debugger.debug(f"DEBUG: First face indices={f.vertex_indices}")
-            if model.boxes:
-                b = model.boxes[0]
-                img_debugger.debug(f"DEBUG: First box min type={type(b.min_point).__name__}")
-            if model.spheres:
-                s = model.spheres[0]
-                img_debugger.debug(f"DEBUG: First sphere center type={type(s.center).__name__}")
             
         except Exception as e:
             img_debugger.error(f"COL1 parse error: {e}")
@@ -686,22 +671,7 @@ class COLFile:
                 return
             
             model.update_flags()
-            
-            # DEBUG: Check parsed data
             img_debugger.debug(f"COL2/3: Parse complete - {model.get_stats()}")
-            if model.vertices:
-                v = model.vertices[0]
-                img_debugger.debug(f"DEBUG: First vertex type={type(v.position).__name__}, has .x={hasattr(v.position, 'x')}")
-                img_debugger.debug(f"DEBUG: First vertex value={v.position}")
-            if model.faces:
-                f = model.faces[0]
-                img_debugger.debug(f"DEBUG: First face indices={f.vertex_indices}")
-            if model.boxes:
-                b = model.boxes[0]
-                img_debugger.debug(f"DEBUG: First box min type={type(b.min_point).__name__}")
-            if model.spheres:
-                s = model.spheres[0]
-                img_debugger.debug(f"DEBUG: First sphere center type={type(s.center).__name__}")
             
         except Exception as e:
             img_debugger.error(f"COL2/3 parse error: {e}")
@@ -709,8 +679,8 @@ class COLFile:
             img_debugger.error(traceback.format_exc())
     
     def _calculate_face_count(self, data: bytes, offset: int, num_spheres: int, 
-                             num_unknown: int, num_boxes: int, num_vertices: int, 
-                             num_faces: int, is_col1: bool = True) -> int: #vers 1
+                             num_boxes: int, num_vertices: int, 
+                             num_faces: int, is_col1: bool = True) -> int: #vers 2
         """
         Calculate actual face count from file size
         Fixes garbage face count issues (e.g. 3,226,344,957 instead of 46)
@@ -733,11 +703,11 @@ class COLFile:
             SPHERE_SIZE = 24  # center(12) + radius(4) + material(4) + flags(4)
             BOX_SIZE = 32     # min(12) + max(12) + material(4) + flags(4)
             VERTEX_SIZE = 12  # position(12)
-            FACE_SIZE_COL1 = 16  # indices(6) + mat(2) + light(2) + flags(4) + padding(2)
+            FACE_SIZE_COL1 = 14  # indices(6) + mat(2) + light(2) + flags(4)
             FACE_SIZE_COL23 = 12 # indices(6) + mat(2) + light(2) + padding(2)
             
             data_used = (num_spheres * SPHERE_SIZE) + \
-                       (num_unknown * 4 if is_col1 else 0) + \
+                       0 + \
                        (num_boxes * BOX_SIZE) + \
                        (num_vertices * VERTEX_SIZE)
             

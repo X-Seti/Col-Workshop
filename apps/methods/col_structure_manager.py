@@ -1,4 +1,4 @@
-#this belongs in components/col_structure_manager.py - Version: 2
+#this belongs in components/col_structure_manager.py - Version: 1
 # X-Seti - July23 2025 - IMG Factory 1.5 - COL Structure Manager - Complete Port
 # Ported from col_structure_manager.py-old with 100% functionality preservation
 # ONLY debug system changed from old COL debug to img_debugger
@@ -12,20 +12,9 @@ Uses IMG debug system throughout - preserves 100% original functionality
 import struct
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
-from apps.methods.col_core_classes import Vector3
 
 # Import IMG debug system - NO fallback code
-try:
-    from apps.debug.debug_functions import img_debugger
-except ImportError:
-    # Fallback debug function if import fails
-    class DebugFallback:
-        def debug(self, msg): print(f"DEBUG: {msg}")
-        def error(self, msg): print(f"ERROR: {msg}")
-        def warning(self, msg): print(f"WARNING: {msg}")
-        def success(self, msg): print(f"SUCCESS: {msg}")
-    img_debugger = DebugFallback()
-
+from apps.debug.debug_functions import img_debugger
 ##Functions list -
 # _estimate_model_size
 # get_model_statistics
@@ -159,60 +148,52 @@ class COLStructureManager:
         except Exception as e:
             raise ValueError(f"Error parsing COL header: {str(e)}")
     
-
-    def parse_col_bounds(self, data: bytes, offset: int, version: int) -> Tuple[COLBounds, int]: #vers 2
+    def parse_col_bounds(self, data: bytes, offset: int, version: int) -> Tuple[COLBounds, int]: #vers 1
         """Parse COL bounding data based on version"""
         try:
             if version == 1:
                 # COL1: radius + center + min + max (40 bytes)
                 if len(data) < offset + 40:
                     raise ValueError("Data too short for COL1 bounds")
-
+                
                 radius = struct.unpack('<f', data[offset:offset+4])[0]
                 offset += 4
-                center_tuple = struct.unpack('<fff', data[offset:offset+12])
-                center = Vector3(center_tuple[0], center_tuple[1], center_tuple[2])
+                center = struct.unpack('<fff', data[offset:offset+12])
                 offset += 12
-                min_tuple = struct.unpack('<fff', data[offset:offset+12])
-                min_point = Vector3(min_tuple[0], min_tuple[1], min_tuple[2])
+                min_point = struct.unpack('<fff', data[offset:offset+12])
                 offset += 12
-                max_tuple = struct.unpack('<fff', data[offset:offset+12])
-                max_point = Vector3(max_tuple[0], max_tuple[1], max_tuple[2])
+                max_point = struct.unpack('<fff', data[offset:offset+12])
                 offset += 12
-
+                
             else:
                 # COL2/3: min + max + center + radius (28 bytes)
                 if len(data) < offset + 28:
                     raise ValueError(f"Data too short for COL{version} bounds")
-
-                min_tuple = struct.unpack('<fff', data[offset:offset+12])
-                min_point = Vector3(min_tuple[0], min_tuple[1], min_tuple[2])
+                
+                min_point = struct.unpack('<fff', data[offset:offset+12])
                 offset += 12
-                max_tuple = struct.unpack('<fff', data[offset:offset+12])
-                max_point = Vector3(max_tuple[0], max_tuple[1], max_tuple[2])
+                max_point = struct.unpack('<fff', data[offset:offset+12])
                 offset += 12
-                center_tuple = struct.unpack('<fff', data[offset:offset+12])
-                center = Vector3(center_tuple[0], center_tuple[1], center_tuple[2])
+                center = struct.unpack('<fff', data[offset:offset+12])
                 offset += 12
                 radius = struct.unpack('<f', data[offset:offset+4])[0]
                 offset += 4
-
+            
             bounds = COLBounds(
                 radius=radius,
                 center=center,
                 min_point=min_point,
                 max_point=max_point
             )
-
+            
             if self.debug:
                 img_debugger.debug(f"📏 Bounds: radius={radius:.2f}, center={center}")
-
+            
             return bounds, offset
-
+            
         except Exception as e:
             raise ValueError(f"Error parsing COL bounds: {str(e)}")
     
-
     def parse_col_spheres(self, data: bytes, offset: int, count: int, version: int) -> Tuple[List[COLSphere], int]: #vers 1
         """Parse COL collision spheres"""
         try:
@@ -230,8 +211,7 @@ class COLStructureManager:
             
             for i in range(count):
                 # Parse center (12 bytes)
-                center_tuple = struct.unpack('<fff', data[offset:offset+12])
-                center = Vector3(center_tuple[0], center_tuple[1], center_tuple[2])
+                center = struct.unpack('<fff', data[offset:offset+12])
                 offset += 12
                 
                 # Parse radius (4 bytes)
@@ -266,33 +246,30 @@ class COLStructureManager:
         except Exception as e:
             raise ValueError(f"Error parsing COL spheres: {str(e)}")
     
-
-    def parse_col_boxes(self, data: bytes, offset: int, count: int, version: int) -> Tuple[List[COLBox], int]: #vers 2
+    def parse_col_boxes(self, data: bytes, offset: int, count: int, version: int) -> Tuple[List[COLBox], int]: #vers 1
         """Parse COL collision boxes"""
         try:
             boxes = []
-
+            
             if version == 1:
                 # COL1: min + max + material + flags (32 bytes each)
                 box_size = 32
             else:
                 # COL2/3: min + max + material (28 bytes each)
                 box_size = 28
-
+            
             if len(data) < offset + (count * box_size):
                 raise ValueError(f"Data too short for {count} boxes")
-
+            
             for i in range(count):
                 # Parse min point (12 bytes)
-                min_tuple = struct.unpack('<fff', data[offset:offset+12])
-                min_point = Vector3(min_tuple[0], min_tuple[1], min_tuple[2])
+                min_point = struct.unpack('<fff', data[offset:offset+12])
                 offset += 12
-
+                
                 # Parse max point (12 bytes)
-                max_tuple = struct.unpack('<fff', data[offset:offset+12])
-                max_point = Vector3(max_tuple[0], max_tuple[1], max_tuple[2])
+                max_point = struct.unpack('<fff', data[offset:offset+12])
                 offset += 12
-
+                
                 if version == 1:
                     # Parse material and flags (4 bytes each)
                     material = struct.unpack('<I', data[offset:offset+4])[0]
@@ -304,7 +281,7 @@ class COLStructureManager:
                     material = struct.unpack('<I', data[offset:offset+4])[0]
                     offset += 4
                     flags = 0
-
+                
                 box = COLBox(
                     min_point=min_point,
                     max_point=max_point,
@@ -312,16 +289,15 @@ class COLStructureManager:
                     flags=flags
                 )
                 boxes.append(box)
-
+            
             if self.debug:
                 img_debugger.debug(f"Parsed {len(boxes)} collision boxes")
-
+            
             return boxes, offset
-
+            
         except Exception as e:
             raise ValueError(f"Error parsing COL boxes: {str(e)}")
-
-
+    
     def parse_col_vertices(self, data: bytes, offset: int, count: int) -> Tuple[List[COLVertex], int]: #vers 1
         """Parse COL mesh vertices"""
         try:
@@ -336,8 +312,7 @@ class COLStructureManager:
                 position = struct.unpack('<fff', data[offset:offset+12])
                 offset += 12
                 
-                position_vec = Vector3(position[0], position[1], position[2])
-                vertex = COLVertex(position=position_vec)
+                vertex = COLVertex(position=position)
                 vertices.append(vertex)
             
             if self.debug:

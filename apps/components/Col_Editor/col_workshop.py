@@ -39,33 +39,660 @@ from PyQt6.QtGui import QFont, QIcon, QPixmap, QImage, QPainter, QPen, QBrush, Q
 from PyQt6.QtSvg import QSvgRenderer
 
 # Import project modules AFTER path setup
-from apps.debug.debug_functions import img_debugger
-from apps.methods.col_core_classes import COLFile, COLModel, COLVersion, Vector3
-from apps.methods.svg_icon_factory import SVGIconFactory
-from apps.gui.col_dialogs import show_col_analysis_dialog
+from apps.methods.imgfactory_svg_icons import SVGIconFactory
 
-# Import COL viewport and preview from depends
-try:
-    from apps.methods.col_3d_viewport import COL3DViewport
-    from apps.methods.col_preview_generator import (
-        COLPreviewGenerator, create_col_preview, create_col_thumbnail
-    )
-    VIEWPORT_AVAILABLE = True
-except ImportError:
-    VIEWPORT_AVAILABLE = False
-    COL3DViewport = None
-    print("Warning: COL 3D viewport not available - install PyOpenGL")
+# COL Workshop parser system
+from apps.methods.col_workshop_classes import (
+    COLModel, COLVersion, COLHeader, COLBounds,
+    COLSphere, COLBox, COLVertex, COLFace
+)
+
+from apps.methods.col_workshop_structures import setup_col_table_structure, populate_col_table
+from apps.methods.col_workshop_parser import COLParser
+from apps.methods.col_workshop_loader import COLFile
+
+
+
+# Temporary 3D viewport placeholder
+class COL3DViewport(QWidget): #vers 2
+    """COL preview viewport.
+    Left-drag = pan, Right-drag = free rotate, Scroll = zoom, Middle = pan.
+    G key / button = translate gizmo, R key / button = rotate gizmo.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(200, 200)
+        self._model        = None
+        self._yaw          = 30.0
+        self._pitch        = 20.0
+        self._zoom         = 1.0
+        self._pan_x        = 0.0
+        self._pan_y        = 0.0
+        self._flip_h       = False
+        self._flip_v       = False
+        self._show_spheres = True
+        self._show_boxes   = True
+        self._show_mesh    = True
+        self._backface     = False
+        self._render_style = 'semi'
+        self._bg_color     = (25, 25, 35)
+        # drag state
+        self._left_drag    = None
+        self._right_drag   = None
+        self._mid_drag     = None
+        # gizmo
+        self._gizmo_mode   = 'translate'  # 'translate' | 'rotate'
+        self._gizmo_drag   = None         # 'X'|'Y'|'Z' while dragging
+        self._gizmo_start  = None
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.DefaultContextMenu)
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+
+    # ── public API ────────────────────────────────────────────────────────
+    def set_current_file(self, col_file): pass
+    def set_view_options(self, **kw):     pass
+
+    def set_current_model(self, model, index=0):
+        self._model = model
+        # Reset view so the new model is centred and visible
+        self._pan_x = 0.0
+        self._pan_y = 0.0
+        self._zoom  = 1.0
+        self.update()
+
+    def zoom_in(self):
+        self._zoom = min(20.0, self._zoom * 1.25); self.update()
+
+    def zoom_out(self):
+        self._zoom = max(0.05, self._zoom / 1.25); self.update()
+
+    def reset_view(self):
+        self._yaw = 30.0; self._pitch = 20.0
+        self._zoom = 1.0; self._pan_x = self._pan_y = 0.0
+        self._flip_h = self._flip_v = False
+        self.update()
+
+    def fit_to_window(self):
+        self._pan_x = self._pan_y = 0.0; self._zoom = 1.0; self.update()
+
+    def pan(self, dx, dy):
+        self._pan_x += dx; self._pan_y += dy; self.update()
+
+    def rotate_cw(self):
+        self._yaw = (self._yaw + 90) % 360; self.update()
+
+    def rotate_ccw(self):
+        self._yaw = (self._yaw - 90) % 360; self.update()
+
+    def flip_horizontal(self):
+        self._flip_h = not self._flip_h; self.update()
+
+    def flip_vertical(self):
+        self._flip_v = not self._flip_v; self.update()
+
+    def set_background_color(self, rgb):
+        self._bg_color = rgb; self.update()
+
+    def set_show_spheres(self, v): self._show_spheres = v; self.update()
+    def set_show_boxes(self,   v): self._show_boxes   = v; self.update()
+    def set_show_mesh(self,    v): self._show_mesh     = v; self.update()
+    def set_backface(self,     v): self._backface      = v; self.update()
+    def set_render_style(self, s): self._render_style  = s; self.update()
+
+    def toggle_gizmo_mode(self):
+        self._gizmo_mode = 'rotate' if self._gizmo_mode == 'translate' else 'translate'
+        self._gizmo_drag = None
+        self.update()
+
+    def _set_gizmo(self, mode):
+        self._gizmo_mode = mode; self._gizmo_drag = None; self.update()
+
+    # ── projection (self-contained, no workshop needed) ──────────────────
+    def _proj(self, x, y, z):
+        """Project 3D world point → 2D screen pixel using current view state."""
+        import math
+        yr = math.radians(self._yaw);   cy, sy = math.cos(yr), math.sin(yr)
+        pr = math.radians(self._pitch); cp, sp = math.cos(pr), math.sin(pr)
+        rx = x*cy - y*sy
+        ry = x*sy + y*cy
+        ry2 = ry*cp - z*sp
+        return rx, ry2
+
+    def _get_scale_origin(self):
+        """Return (scale, ox, oy) mapping 3D projected coords to screen pixels."""
+        W, H = self.width(), self.height()
+        model = self._model
+        if not model:
+            return 50.0 * self._zoom, W/2 + self._pan_x, H/2 + self._pan_y
+
+        verts = getattr(model, 'vertices', [])
+        spheres = getattr(model, 'spheres', [])
+        boxes   = getattr(model, 'boxes',   [])
+
+        pts3 = [(v.x, v.y, v.z) for v in verts]
+        for s in spheres:
+            c = s.center; r = s.radius
+            cx,cy,cz = (c.x,c.y,c.z) if hasattr(c,'x') else (c[0],c[1],c[2])
+            pts3 += [(cx-r,cy,cz),(cx+r,cy,cz),(cx,cy-r,cz),(cx,cy+r,cz),(cx,cy,cz-r),(cx,cy,cz+r)]
+        for b in boxes:
+            mn = b.min if not hasattr(b,'min_point') else b.min_point
+            mx = b.max if not hasattr(b,'max_point') else b.max_point
+            for p in [mn, mx]:
+                pts3.append((p.x,p.y,p.z) if hasattr(p,'x') else (p[0],p[1],p[2]))
+
+        if not pts3:
+            return 50.0 * self._zoom, W/2 + self._pan_x, H/2 + self._pan_y
+
+        pts2 = [self._proj(x,y,z) for x,y,z in pts3]
+        xs = [p[0] for p in pts2]; ys = [p[1] for p in pts2]
+        rng = max(max(xs)-min(xs), max(ys)-min(ys), 0.001)
+        pad = 40
+        base_scale = (min(W,H) - pad*2) / rng
+        scale = base_scale * self._zoom
+        cx2 = (min(xs)+max(xs))/2; cy2 = (min(ys)+max(ys))/2
+        ox = W/2 - cx2*scale + self._pan_x
+        oy = H/2 - cy2*scale + self._pan_y
+        return scale, ox, oy
+
+    def _to_screen(self, x, y, z):
+        scale, ox, oy = self._get_scale_origin()
+        px, py = self._proj(x, y, z)
+        return px*scale + ox, py*scale + oy
+
+    # ── gizmo hit test ───────────────────────────────────────────────────
+    def _gizmo_centre(self):
+        """Screen coords of gizmo origin (model centroid)."""
+        model = self._model
+        if not model: return None
+        verts = getattr(model, 'vertices', [])
+        if verts:
+            cx = sum(v.x for v in verts)/len(verts)
+            cy = sum(v.y for v in verts)/len(verts)
+            cz = sum(v.z for v in verts)/len(verts)
+        else:
+            cx = cy = cz = 0.0
+        return self._to_screen(cx, cy, cz)
+
+    def _gizmo_arm(self):
+        return max(45, min(self.width(), self.height()) * 0.15)
+
+    def _hit_gizmo(self, mx, my):
+        """Return axis 'X'/'Y'/'Z' if click near a gizmo handle, else None."""
+        import math
+        ctr = self._gizmo_centre()
+        if not ctr: return None
+        gx, gy = ctr
+        arm = self._gizmo_arm()
+        best, best_d = None, 16
+        for (dx,dy,dz), name in [((1,0,0),'X'),((0,1,0),'Y'),((0,0,1),'Z')]:
+            px, py = self._proj(dx, dy, dz)
+            tx, ty = gx+px*arm, gy+py*arm
+            if math.hypot(mx-tx, my-ty) < best_d:
+                best_d, best = math.hypot(mx-tx, my-ty), name
+        return best
+
+    # ── mouse ────────────────────────────────────────────────────────────
+    def mousePressEvent(self, event):
+        mx, my = event.position().x(), event.position().y()
+        W, H = self.width(), self.height()
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Toggle button (top-right)
+            if W-70 <= mx <= W-4 and 4 <= my <= 26:
+                self.toggle_gizmo_mode(); return
+            # Gizmo axis
+            axis = self._hit_gizmo(mx, my)
+            if axis:
+                self._gizmo_drag  = axis
+                self._gizmo_start = event.position()
+                self.setCursor(Qt.CursorShape.SizeAllCursor)
+            else:
+                self._left_drag = event.position()
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        elif event.button() == Qt.MouseButton.RightButton:
+            self._right_drag = event.position()
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            self._mid_drag = event.position()
+            self.setCursor(Qt.CursorShape.SizeAllCursor)  # rotate
+
+    def mouseMoveEvent(self, event):
+        import math
+
+        # ── Gizmo drag ───────────────────────────────────────────────────
+        if self._gizmo_drag and (event.buttons() & Qt.MouseButton.LeftButton):
+            d  = event.position() - self._gizmo_start
+            self._gizmo_start = event.position()
+            axis = self._gizmo_drag
+            scale, _, _ = self._get_scale_origin()
+            ax3 = {'X':(1,0,0),'Y':(0,1,0),'Z':(0,0,1)}[axis]
+            px, py = self._proj(*ax3)
+            screen_len = math.hypot(px, py) or 1.0
+
+            def _vec(obj):
+                """Return the Vector3-like object itself if it has .x/.y/.z"""
+                return obj if (obj and hasattr(obj,'x')) else None
+
+            def _box_pts(box):
+                """Yield the min and max Vector3 points of a box."""
+                mn = getattr(box,'min_point', getattr(box,'min', None))
+                mx = getattr(box,'max_point', getattr(box,'max', None))
+                for pt in [mn, mx]:
+                    if pt and hasattr(pt,'x'): yield pt
+
+            if self._gizmo_mode == 'translate':
+                dot = (d.x()*px + d.y()*py) / screen_len
+                delta = dot / scale
+                if self._model:
+                    # Move vertices
+                    for v in getattr(self._model, 'vertices', []):
+                        if   axis=='X': v.x += delta
+                        elif axis=='Y': v.y += delta
+                        else:           v.z += delta
+                    # Move box min/max points
+                    for box in getattr(self._model, 'boxes', []):
+                        for pt in _box_pts(box):
+                            if   axis=='X': pt.x += delta
+                            elif axis=='Y': pt.y += delta
+                            else:           pt.z += delta
+                    # Move sphere centres
+                    for sph in getattr(self._model, 'spheres', []):
+                        c = _vec(sph.center)
+                        if c:
+                            if   axis=='X': c.x += delta
+                            elif axis=='Y': c.y += delta
+                            else:           c.z += delta
+                    # Move bounds centre
+                    bounds = getattr(self._model, 'bounds', None)
+                    if bounds:
+                        for pt in [getattr(bounds,'center',None),
+                                   getattr(bounds,'min',None),
+                                   getattr(bounds,'max',None)]:
+                            if pt and hasattr(pt,'x'):
+                                if   axis=='X': pt.x += delta
+                                elif axis=='Y': pt.y += delta
+                                else:           pt.z += delta
+            else:  # rotate
+                perp_x, perp_y = -py, px
+                deg = (d.x()*perp_x + d.y()*perp_y) / screen_len * 0.8
+                r = math.radians(deg)
+                cos_r, sin_r = math.cos(r), math.sin(r)
+                if self._model:
+                    def _rot_pt(pt):
+                        if not (pt and hasattr(pt,'x')): return
+                        x2,y2,z2 = pt.x, pt.y, pt.z
+                        if axis=='X':
+                            pt.y = y2*cos_r - z2*sin_r
+                            pt.z = y2*sin_r + z2*cos_r
+                        elif axis=='Y':
+                            pt.x = x2*cos_r + z2*sin_r
+                            pt.z = -x2*sin_r + z2*cos_r
+                        else:
+                            pt.x = x2*cos_r - y2*sin_r
+                            pt.y = x2*sin_r + y2*cos_r
+                    # Rotate vertices
+                    for v in getattr(self._model, 'vertices', []):
+                        _rot_pt(v)
+                    # Rotate box min/max
+                    for box in getattr(self._model, 'boxes', []):
+                        for pt in _box_pts(box):
+                            _rot_pt(pt)
+                    # Rotate sphere centres
+                    for sph in getattr(self._model, 'spheres', []):
+                        _rot_pt(_vec(sph.center))
+                    # Rotate bounds
+                    bounds = getattr(self._model, 'bounds', None)
+                    if bounds:
+                        for attr in ('center','min','max'):
+                            _rot_pt(getattr(bounds, attr, None))
+            self.update()
+            return
+
+        # ── Pan (left drag on background) ────────────────────────────────
+        if self._left_drag and (event.buttons() & Qt.MouseButton.LeftButton):
+            d = event.position() - self._left_drag
+            self._pan_x += d.x(); self._pan_y += d.y()
+            self._left_drag = event.position(); self.update()
+
+        # ── Free rotate (right drag) ──────────────────────────────────────
+        if self._right_drag and (event.buttons() & Qt.MouseButton.RightButton):
+            d = event.position() - self._right_drag
+            self._yaw   = (self._yaw + d.x() * 0.4) % 360
+            self._pitch = max(-89.0, min(89.0, self._pitch + d.y() * 0.4))
+            self._right_drag = event.position(); self.update()
+
+        # ── Free rotate (middle drag) ─────────────────────────────────────
+        if self._mid_drag and (event.buttons() & Qt.MouseButton.MiddleButton):
+            d = event.position() - self._mid_drag
+            self._yaw   = (self._yaw + d.x() * 0.4) % 360
+            self._pitch = max(-89.0, min(89.0, self._pitch + d.y() * 0.4))
+            self._mid_drag = event.position(); self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._left_drag = None; self._gizmo_drag = None
+        elif event.button() == Qt.MouseButton.RightButton:
+            self._right_drag = None
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            self._mid_drag = None
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+
+    def wheelEvent(self, event):
+        factor = 1.18 if event.angleDelta().y() > 0 else 1/1.18
+        self._zoom = max(0.02, min(40.0, self._zoom * factor))
+        self.update()
+
+    def keyPressEvent(self, event):
+        if   event.key() == Qt.Key.Key_G: self._set_gizmo('translate')
+        elif event.key() == Qt.Key.Key_R: self._set_gizmo('rotate')
+        elif event.key() == Qt.Key.Key_F: self.fit_to_window()
+        elif event.key() == Qt.Key.Key_V: self._cycle_render_style()
+        else: super().keyPressEvent(event)
+
+    def _cycle_render_style(self):
+        modes = ['wireframe','semi','solid']
+        self._render_style = modes[(modes.index(self._render_style)+1) % 3]                              if self._render_style in modes else 'semi'
+        self.update()
+
+    def contextMenuEvent(self, event):
+        from PyQt6.QtWidgets import QMenu
+        m = QMenu(self)
+        m.addAction("Top",       lambda: self._set_angles(0,   0))
+        m.addAction("Front",     lambda: self._set_angles(0,  90))
+        m.addAction("Side",      lambda: self._set_angles(90,  0))
+        m.addAction("Isometric", lambda: self._set_angles(45, 35))
+        m.addSeparator()
+        m.addAction("Reset View",    self.reset_view)
+        m.addAction("Fit to Window", self.fit_to_window)
+        m.addSeparator()
+        m.addAction("Move Gizmo  [G]",   lambda: self._set_gizmo('translate'))
+        m.addAction("Rotate Gizmo [R]",  lambda: self._set_gizmo('rotate'))
+        m.addSeparator()
+        for style,label in [('wireframe','Wireframe [V]'),
+                             ('semi',     'Semi-transparent [V]'),
+                             ('solid',    'Solid [V]')]:
+            tick = '✓ ' if self._render_style == style else '    '
+            m.addAction(tick+label, lambda s=style: self.set_render_style(s))
+        m.exec(event.globalPos())
+
+    def _set_angles(self, yaw, pitch):
+        self._yaw, self._pitch = float(yaw), float(pitch); self.update()
+
+    # ── paint ─────────────────────────────────────────────────────────────
+    def paintEvent(self, event):
+        """Fully self-contained paint — grid, mesh, boxes, spheres, bounds, gizmo, HUD."""
+        from PyQt6.QtGui import (QPainter, QColor, QFont, QPen, QBrush,
+                                  QPolygonF, QLinearGradient)
+        from PyQt6.QtCore import QPointF, QRectF
+        import math
+
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        W, H = self.width(), self.height()
+        r2, g2, b2 = self._bg_color
+        p.fillRect(self.rect(), QColor(r2, g2, b2))
+
+        if not self._model:
+            p.setPen(QColor(120, 120, 120))
+            p.setFont(QFont('Arial', 11))
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No model selected")
+            return
+
+        scale, ox, oy = self._get_scale_origin()
+
+        def to_screen(x, y, z):
+            px, py = self._proj(x, y, z)
+            return px * scale + ox, py * scale + oy
+
+        def g3(obj):
+            if hasattr(obj, 'x'):        return obj.x, obj.y, obj.z
+            if hasattr(obj, 'position'): return obj.position.x, obj.position.y, obj.position.z
+            if obj is None:              return 0.0, 0.0, 0.0
+            return float(obj[0]), float(obj[1]), float(obj[2])
+
+        model   = self._model
+        verts   = getattr(model, 'vertices', [])
+        faces   = getattr(model, 'faces',   [])
+        boxes   = getattr(model, 'boxes',   [])
+        spheres = getattr(model, 'spheres', [])
+        bounds  = getattr(model, 'bounds',  None)
+
+        # ── Extent from ALL geometry (verts + boxes + spheres) ───────────
+        all_pts = [(v.x, v.y, v.z) for v in verts]
+        for box in boxes:
+            mn = getattr(box,'min_point', getattr(box,'min', None))
+            mx = getattr(box,'max_point', getattr(box,'max', None))
+            if mn: all_pts.append(g3(mn))
+            if mx: all_pts.append(g3(mx))
+        for sph in spheres:
+            cx,cy3,cz = g3(getattr(sph,'center',None))
+            r = getattr(sph,'radius',1.0)
+            all_pts += [(cx+r,cy3,cz),(cx-r,cy3,cz),(cx,cy3+r,cz),(cx,cy3-r,cz)]
+        if bounds:
+            for attr in ('min','max'):
+                pt = getattr(bounds, attr, None)
+                if pt: all_pts.append(g3(pt))
+
+        if all_pts:
+            extent = max(max(abs(c) for pt in all_pts for c in pt), 1.0)
+        else:
+            extent = 5.0
+
+        # ── Reference grid (XY plane, Z=0) ───────────────────────────────
+        raw_step = extent / 4.0
+        mag  = 10 ** math.floor(math.log10(max(raw_step, 0.001)))
+        step = round(raw_step / mag) * mag; step = max(step, 0.01)
+        half = math.ceil(extent / step + 1) * step
+        n    = int(half / step)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        for i in range(-n, n + 1):
+            v2 = i * step
+            col = QColor(75, 80, 105) if i == 0 else QColor(50, 55, 72)
+            p.setPen(QPen(col, 1))
+            x0,y0 = to_screen(-half, v2, 0); x1,y1 = to_screen(half, v2, 0)
+            p.drawLine(int(x0), int(y0), int(x1), int(y1))
+            x0,y0 = to_screen(v2, -half, 0); x1,y1 = to_screen(v2, half, 0)
+            p.drawLine(int(x0), int(y0), int(x1), int(y1))
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        # ── Material colours (same as mesh editor) ────────────────────────
+        MAT_COLORS = {
+            0:(200,200,200),1:(60,60,60),2:(140,120,80),3:(100,80,50),
+            4:(180,170,150),5:(60,150,60),6:(220,200,140),7:(50,100,220),
+            8:(160,160,160),9:(140,100,60),10:(180,180,200),11:(180,220,240),
+            12:(100,80,60),13:(150,150,150),14:(80,160,80),
+        }
+        def mat_col(mat_id):
+            t = MAT_COLORS.get(mat_id,(120,120,120))
+            return QColor(*t)
+
+        # ── Mesh faces ────────────────────────────────────────────────────
+        rs = self._render_style  # 'wireframe' | 'semi' | 'solid'
+        if self._show_mesh and verts and faces:
+            for face in faces:
+                idx = getattr(face,'vertex_indices',None)
+                if idx is None:
+                    fa = getattr(face,'a',None)
+                    if fa is not None: idx=(fa,face.b,face.c)
+                if not idx or len(idx)!=3: continue
+                try:
+                    pts=[QPointF(*to_screen(*g3(verts[i]))) for i in idx]
+                except (IndexError,AttributeError): continue
+                mc = mat_col(getattr(face,'material',0))
+                if rs == 'solid':
+                    p.setBrush(QBrush(mc))
+                    p.setPen(QPen(mc.darker(130),0.5))
+                elif rs == 'semi':
+                    fill=QColor(mc.red(),mc.green(),mc.blue(),90)
+                    p.setBrush(QBrush(fill))
+                    p.setPen(QPen(QColor(mc.red()//2+60,mc.green()//2+60,mc.blue()//2+60),0.5))
+                else:  # wireframe
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    p.setPen(QPen(QColor(100,180,100),1))
+                p.drawPolygon(QPolygonF(pts))
+
+        # ── Boxes — draw all 12 edges of AABB ─────────────────────────────
+        if self._show_boxes:
+            p.setPen(QPen(QColor(220,180,50),1.5))
+            p.setBrush(QBrush(QColor(220,180,50,30)) if rs!='wireframe' else Qt.BrushStyle.NoBrush)
+            for box in boxes:
+                mn_obj = getattr(box,'min_point',getattr(box,'min',None))
+                mx_obj = getattr(box,'max_point',getattr(box,'max',None))
+                if mn_obj is None or mx_obj is None: continue
+                x0,y0,z0 = g3(mn_obj)
+                x1,y1,z1 = g3(mx_obj)
+                # 8 corners
+                corners=[(xa,ya,za) for xa in(x0,x1) for ya in(y0,y1) for za in(z0,z1)]
+                sc=[to_screen(*c) for c in corners]
+                # 12 edges of the cube
+                edges=[(0,1),(0,2),(0,4),(1,3),(1,5),(2,3),(2,6),(3,7),(4,5),(4,6),(5,7),(6,7)]
+                for a2,b2 in edges:
+                    ax,ay=sc[a2]; bx,by=sc[b2]
+                    p.drawLine(int(ax),int(ay),int(bx),int(by))
+
+        # ── Spheres — draw 3 projected rings (equator + 2 meridians) ──────
+        if self._show_spheres:
+            p.setPen(QPen(QColor(80,200,220),1.5))
+            p.setBrush(QBrush(QColor(80,200,220,25)) if rs!='wireframe' else Qt.BrushStyle.NoBrush)
+            N = 48
+            for sph in spheres:
+                cx,cy3,cz = g3(getattr(sph,'center',sph))
+                r = getattr(sph,'radius',1.0)
+                # 3 rings in different planes
+                for t1,t2,t3 in [(1,0,0,),(0,1,0),(0,0,1)]:
+                    # tangent vectors from axis (t1,t2,t3)
+                    if t3: ta,tb = (1,0,0),(0,1,0)
+                    elif t2: ta,tb = (1,0,0),(0,0,1)
+                    else: ta,tb = (0,1,0),(0,0,1)
+                    pts=[]
+                    for i in range(N+1):
+                        a2=2*math.pi*i/N
+                        wx=cx+r*(math.cos(a2)*ta[0]+math.sin(a2)*tb[0])
+                        wy=cy3+r*(math.cos(a2)*ta[1]+math.sin(a2)*tb[1])
+                        wz=cz+r*(math.cos(a2)*ta[2]+math.sin(a2)*tb[2])
+                        pts.append(QPointF(*to_screen(wx,wy,wz)))
+                    for i in range(len(pts)-1):
+                        p.drawLine(pts[i],pts[i+1])
+
+        # ── Bounding box (model.bounds) ───────────────────────────────────
+        if bounds:
+            mn_obj=getattr(bounds,'min',None); mx_obj=getattr(bounds,'max',None)
+            if mn_obj and mx_obj:
+                x0,y0,z0=g3(mn_obj); x1,y1,z1=g3(mx_obj)
+                corners=[(xa,ya,za) for xa in(x0,x1) for ya in(y0,y1) for za in(z0,z1)]
+                sc=[to_screen(*c) for c in corners]
+                edges=[(0,1),(0,2),(0,4),(1,3),(1,5),(2,3),(2,6),(3,7),(4,5),(4,6),(5,7),(6,7)]
+                p.setPen(QPen(QColor(180,100,220,160),1,Qt.PenStyle.DashLine))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                for a2,b2 in edges:
+                    ax,ay=sc[a2]; bx,by=sc[b2]
+                    p.drawLine(int(ax),int(ay),int(bx),int(by))
+            # Bounding sphere
+            bc=getattr(bounds,'center',None); br=getattr(bounds,'radius',0)
+            if bc and br>0:
+                cx,cy3,cz=g3(bc)
+                ta,tb=(1,0,0),(0,1,0)
+                pts=[]
+                for i in range(49):
+                    a2=2*math.pi*i/48
+                    wx=cx+br*(math.cos(a2)*ta[0]+math.sin(a2)*tb[0])
+                    wy=cy3+br*(math.cos(a2)*ta[1]+math.sin(a2)*tb[1])
+                    wz=cz+br*(math.cos(a2)*ta[2]+math.sin(a2)*tb[2])
+                    pts.append(QPointF(*to_screen(wx,wy,wz)))
+                p.setPen(QPen(QColor(180,100,220,120),1,Qt.PenStyle.DotLine))
+                for i in range(len(pts)-1): p.drawLine(pts[i],pts[i+1])
+
+        # ── Gizmo at model centroid ───────────────────────────────────────
+        if all_pts:
+            cx3=sum(pt[0] for pt in all_pts)/len(all_pts)
+            cy3=sum(pt[1] for pt in all_pts)/len(all_pts)
+            cz3=sum(pt[2] for pt in all_pts)/len(all_pts)
+        else:
+            cx3=cy3=cz3=0.0
+        gx,gy=to_screen(cx3,cy3,cz3)
+        arm=max(45,min(W,H)*0.15)
+        axes=[((1,0,0),QColor(220,60,60),'X'),((0,1,0),QColor(60,200,60),'Y'),((0,0,1),QColor(60,120,220),'Z')]
+        sorted_axes=sorted(axes,key=lambda a:self._proj(*a[0])[1],reverse=True)
+        if self._gizmo_mode=='translate':
+            for (dx,dy,dz),color,label in sorted_axes:
+                px2,py2=self._proj(dx,dy,dz)
+                tx,ty=gx+px2*arm,gy+py2*arm
+                p.setPen(QPen(color,2)); p.drawLine(int(gx),int(gy),int(tx),int(ty))
+                ang=math.atan2(ty-gy,tx-gx); aw,ah=12,6
+                tip=QPointF(tx,ty)
+                lpt=QPointF(tx-aw*math.cos(ang)+ah*math.sin(ang),ty-aw*math.sin(ang)-ah*math.cos(ang))
+                rpt=QPointF(tx-aw*math.cos(ang)-ah*math.sin(ang),ty-aw*math.sin(ang)+ah*math.cos(ang))
+                p.setBrush(QBrush(color)); p.setPen(QPen(color,1))
+                p.drawPolygon(QPolygonF([tip,lpt,rpt]))
+                lx=tx+(9 if tx>=gx else -14); ly=ty+(5 if ty>=gy else -3)
+                p.setFont(QFont('Arial',8,QFont.Weight.Bold)); p.setPen(color)
+                p.drawText(int(lx),int(ly),label)
+        else:
+            N=64
+            rings=[((1,0,0),(0,1,0),(0,0,1),QColor(220,60,60),'X'),
+                   ((0,1,0),(1,0,0),(0,0,1),QColor(60,200,60),'Y'),
+                   ((0,0,1),(1,0,0),(0,1,0),QColor(60,120,220),'Z')]
+            for (_,t1,t2,color,label) in sorted(rings,key=lambda r:self._proj(*r[0])[1],reverse=True):
+                t1x,t1y,t1z=t1; t2x,t2y,t2z=t2
+                pts=[]
+                for i in range(N+1):
+                    a2=2*math.pi*i/N
+                    wx=math.cos(a2)*t1x+math.sin(a2)*t2x
+                    wy=math.cos(a2)*t1y+math.sin(a2)*t2y
+                    wz=math.cos(a2)*t1z+math.sin(a2)*t2z
+                    px2,py2=self._proj(wx,wy,wz)
+                    pts.append(QPointF(gx+px2*arm,gy+py2*arm))
+                p.setPen(QPen(color,2)); p.setBrush(Qt.BrushStyle.NoBrush)
+                for i in range(len(pts)-1): p.drawLine(pts[i],pts[i+1])
+                p45x=math.cos(math.pi/4)*t1x+math.sin(math.pi/4)*t2x
+                p45y=math.cos(math.pi/4)*t1y+math.sin(math.pi/4)*t2y
+                p45z=math.cos(math.pi/4)*t1z+math.sin(math.pi/4)*t2z
+                lp,lq=self._proj(p45x,p45y,p45z)
+                p.setFont(QFont('Arial',8,QFont.Weight.Bold)); p.setPen(color)
+                p.drawText(int(gx+lp*arm+(6 if lp>=0 else -12)),int(gy+lq*arm+(5 if lq>=0 else -3)),label)
+        p.setBrush(QBrush(QColor(230,230,230))); p.setPen(QPen(QColor(160,160,160),1))
+        p.drawEllipse(int(gx)-5,int(gy)-5,10,10)
+
+        # ── Render mode + toggle button (top-right) ───────────────────────
+        bx,by,bw,bh=W-70,4,66,22
+        p.setBrush(QBrush(QColor(40,44,62))); p.setPen(QPen(QColor(80,90,130),1))
+        p.drawRoundedRect(bx,by,bw,bh,4,4)
+        p.setFont(QFont('Arial',8)); p.setPen(QColor(200,200,220))
+        lbl='↕ Move [G]' if self._gizmo_mode=='translate' else '↻ Rotate [R]'
+        p.drawText(bx+4,by+15,lbl)
+        # Render mode chip
+        mode_lbl={'wireframe':'Wire','semi':'Semi','solid':'Solid'}.get(rs,'?')
+        mode_col={'wireframe':QColor(100,180,100),'semi':QColor(180,180,100),'solid':QColor(100,140,220)}.get(rs,QColor(180,180,180))
+        p.setBrush(QBrush(QColor(40,44,62))); p.setPen(QPen(mode_col,1))
+        p.drawRoundedRect(W-70,28,66,18,3,3)
+        p.setPen(mode_col); p.setFont(QFont('Arial',7))
+        p.drawText(W-66,41,f"[V] {mode_lbl}")
+
+        # ── HUD ───────────────────────────────────────────────────────────
+        p.setFont(QFont('Arial',8)); p.setPen(QColor(200,200,200))
+        p.drawText(6,14,getattr(model,'name','') or '')
+        y2=H-54
+        for col_c,txt in [(QColor(100,180,100),f"Mesh  F:{len(faces)} V:{len(verts)}"),
+                          (QColor(220,180,50), f"Boxes  {len(boxes)}"),
+                          (QColor(80,200,220), f"Spheres  {len(spheres)}")]:
+            p.setPen(col_c); p.drawText(6,y2,txt); y2+=14
+        p.setPen(QColor(120,125,140)); p.setFont(QFont('Arial',7))
+        p.drawText(6,H-4,f"Y:{self._yaw:.0f}° P:{self._pitch:.0f}° Z:{self._zoom:.2f}x")
+        p.drawText(W-68,H-4,f"grid {step:.3g}")
+
+    def _find_workshop(self):
+        ref = getattr(self, '_workshop_ref', None)
+        if ref is not None: return ref
+        p = self.parent()
+        while p:
+            if isinstance(p, COLWorkshop): return p
+            p = p.parent() if callable(getattr(p, 'parent', None)) else None
+        return None
+VIEWPORT_AVAILABLE = True
 
 # Add root directory to path
 App_name = "Col Workshop"
 DEBUG_STANDALONE = False
-
-# Use new 3D viewport if available, fallback to text display
-if VIEWPORT_AVAILABLE:
-    ViewportWidget = COL3DViewport
-else:
-    ViewportWidget = QLabel  # Fallback text display
-
 
 # Import AppSettings
 try:
@@ -76,114 +703,6 @@ except ImportError:
     print("Warning: AppSettings not available")
 
 
-
-##class COLModelListWidget: -
-# __init__
-# on_selection_changed
-# populate_models
-# set_col_file
-# show_context_menu
-
-##class COLPropertiesWidget: -
-# __init__
-# add_box
-# add_sphere
-# clear_properties
-# export_mesh
-# import_mesh
-# on_version_changed
-# remove_box
-# remove_sphere
-# set_current_model
-# setup_boxes_tab
-# setup_mesh_tab
-# setup_model_tab
-# setup_spheres_tab
-# setup_tabs
-# update_boxes_table
-# update_mesh_info
-# update_properties
-# update_spheres_table
-
-##class COLWorkshop: -
-# __init__
-# _apply_always_on_top
-# _apply_button_mode
-# _apply_window_flags
-# _create_info_panel
-# _create_left_panel
-# _create_preview_controls
-# _create_preview_widget
-# _create_right_panel
-# _create_transform_panel
-# _dock_to_main
-# _enable_name_edit
-# _ensure_depends_structure
-# _extract_entry_data
-# _generate_thumbnail
-# _load_settings
-# _on_collision_selected
-# _populate_collision_list
-# _render_collision_preview
-# _save_settings
-# _save_surface_name
-# _show_col_info
-# _toggle_boxes
-# _toggle_mesh
-# _toggle_spheres
-# _undock_from_main
-# _update_dock_button_visibility
-# load_from_img_archive
-# open_col_file
-# save_col_file
-# show_settings_dialog
-# toggle_dock_mode
-# update_display
-
-##class ZoomablePreview: -
-# __init__
-# _update_scaled_pixmap
-# fit_to_window
-# mouseMoveEvent
-# mousePressEvent
-# mouseReleaseEvent
-# paintEvent
-# pan
-# render_collision
-# rotate_x
-# rotate_y
-# rotate_z
-# set_model
-# setPixmap
-# wheelEvent
-# zoom_in
-# zoom_out
-
-##class COLEditorDialog: -
-# __init__
-# analyze_file
-# closeEvent
-# connect_signals
-# load_col_file
-# on_model_selected
-# on_property_changed
-# open_file
-# save_file
-# save_file_as
-# setup_ui
-
-##Module-level functions -
-# apply_changes
-# create_new_model
-# delete_model
-# export_model
-# import_elements
-# open_col_editor
-# open_workshop
-# refresh_model_list
-# update_view_options
-
-
 class COLModelListWidget(QListWidget): #vers 1
     """Enhanced model list widget"""
 
@@ -191,6 +710,7 @@ class COLModelListWidget(QListWidget): #vers 1
     model_context_menu = pyqtSignal(int, object)  # Model index, position
 
     def __init__(self, parent=None):
+        self.icon_factory = SVGIconFactory()
         super().__init__(parent)
         self.current_file = None
 
@@ -200,12 +720,6 @@ class COLModelListWidget(QListWidget): #vers 1
 
         # Connect selection
         self.currentRowChanged.connect(self.on_selection_changed)
-
-
-    def set_col_file(self, col_file: COLFile): #vers 1
-        """Set COL file and populate list"""
-        self.current_file = col_file
-        self.populate_models()
 
 
     def populate_models(self): #vers 1
@@ -230,10 +744,12 @@ class COLModelListWidget(QListWidget): #vers 1
             item.setData(Qt.ItemDataRole.UserRole, i)  # Store model index
             self.addItem(item)
 
+
     def on_selection_changed(self, row): #vers 1
         """Handle selection change"""
         if row >= 0:
             self.model_selected.emit(row)
+
 
     def show_context_menu(self, position): #vers 1
         """Show context menu"""
@@ -242,336 +758,6 @@ class COLModelListWidget(QListWidget): #vers 1
             model_index = item.data(Qt.ItemDataRole.UserRole)
             self.model_context_menu.emit(model_index, self.mapToGlobal(position))
 
-
-class COLPropertiesWidget(QTabWidget): #vers 2
-    """Enhanced properties editor widget for COL elements"""
-
-    property_changed = pyqtSignal(str, object)  # property_name, new_value
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.current_model = None
-
-        self.setup_tabs()
-
-
-    def setup_tabs(self): #vers 1
-        """Setup property tabs"""
-        # Model properties tab
-        self.model_tab = QWidget()
-        self.setup_model_tab()
-        self.addTab(self.model_tab, "  Model")
-
-        # Spheres tab
-        self.spheres_tab = QWidget()
-        self.setup_spheres_tab()
-        self.addTab(self.spheres_tab, "🔵 Spheres")
-
-        # Boxes tab
-        self.boxes_tab = QWidget()
-        self.setup_boxes_tab()
-        self.addTab(self.boxes_tab, "  Boxes")
-
-        # Mesh tab
-        self.mesh_tab = QWidget()
-        self.setup_mesh_tab()
-        self.addTab(self.mesh_tab, "🌐 Mesh")
-
-
-    def setup_model_tab(self): #vers 1
-        """Setup model properties tab"""
-        layout = QVBoxLayout(self.model_tab)
-
-        # Model info group
-        info_group = QGroupBox("Model Information")
-        info_layout = QFormLayout(info_group)
-
-        self.model_name_edit = QLineEdit()
-        self.model_name_edit.textChanged.connect(lambda text: self.property_changed.emit('name', text))
-        info_layout.addRow("Name:", self.model_name_edit)
-
-        self.model_version_combo = QComboBox()
-        for version in COLVersion:
-            self.model_version_combo.addItem(f"COL{version.value}", version)
-        self.model_version_combo.currentIndexChanged.connect(self.on_version_changed)
-        info_layout.addRow("Version:", self.model_version_combo)
-
-        self.model_id_spin = QSpinBox()
-        self.model_id_spin.setRange(0, 65535)
-        self.model_id_spin.valueChanged.connect(lambda value: self.property_changed.emit('model_id', value))
-        info_layout.addRow("Model ID:", self.model_id_spin)
-
-        layout.addWidget(info_group)
-
-        # Bounding box group
-        bbox_group = QGroupBox("Bounding Box")
-        bbox_layout = QFormLayout(bbox_group)
-
-        # Center coordinates
-        center_layout = QHBoxLayout()
-        self.center_x_spin = QDoubleSpinBox()
-        self.center_x_spin.setRange(-999999, 999999)
-        self.center_x_spin.setDecimals(3)
-        center_layout.addWidget(self.center_x_spin)
-
-        self.center_y_spin = QDoubleSpinBox()
-        self.center_y_spin.setRange(-999999, 999999)
-        self.center_y_spin.setDecimals(3)
-        center_layout.addWidget(self.center_y_spin)
-
-        self.center_z_spin = QDoubleSpinBox()
-        self.center_z_spin.setRange(-999999, 999999)
-        self.center_z_spin.setDecimals(3)
-        center_layout.addWidget(self.center_z_spin)
-
-        bbox_layout.addRow("Center (X,Y,Z):", center_layout)
-
-        self.radius_spin = QDoubleSpinBox()
-        self.radius_spin.setRange(0, 999999)
-        self.radius_spin.setDecimals(3)
-        bbox_layout.addRow("Radius:", self.radius_spin)
-
-        layout.addWidget(bbox_group)
-        layout.addStretch()
-
-
-    def setup_spheres_tab(self): #vers 1
-        """Setup spheres tab"""
-        layout = QVBoxLayout(self.spheres_tab)
-
-        # Spheres table
-        self.spheres_table = QTableWidget()
-        self.spheres_table.setColumnCount(5)
-        self.spheres_table.setHorizontalHeaderLabels([
-            "Center X", "Center Y", "Center Z", "Radius", "Material"
-        ])
-        layout.addWidget(self.spheres_table)
-
-        # Spheres buttons
-        spheres_buttons = QHBoxLayout()
-
-        self.add_sphere_btn = QPushButton("➕ Add Sphere")
-        self.add_sphere_btn.clicked.connect(self.add_sphere)
-        spheres_buttons.addWidget(self.add_sphere_btn)
-
-        self.remove_sphere_btn = QPushButton("➖ Remove Sphere")
-        self.remove_sphere_btn.clicked.connect(self.remove_sphere)
-        spheres_buttons.addWidget(self.remove_sphere_btn)
-
-        spheres_buttons.addStretch()
-        layout.addLayout(spheres_buttons)
-
-
-    def setup_boxes_tab(self): #vers 1
-        """Setup boxes tab"""
-        layout = QVBoxLayout(self.boxes_tab)
-
-        # Boxes table
-        self.boxes_table = QTableWidget()
-        self.boxes_table.setColumnCount(7)
-        self.boxes_table.setHorizontalHeaderLabels([
-            "Min X", "Min Y", "Min Z", "Max X", "Max Y", "Max Z", "Material"
-        ])
-        layout.addWidget(self.boxes_table)
-
-        # Boxes buttons
-        boxes_buttons = QHBoxLayout()
-
-        self.add_box_btn = QPushButton("➕ Add Box")
-        self.add_box_btn.clicked.connect(self.add_box)
-        boxes_buttons.addWidget(self.add_box_btn)
-
-        self.remove_box_btn = QPushButton("➖ Remove Box")
-        self.remove_box_btn.clicked.connect(self.remove_box)
-        boxes_buttons.addWidget(self.remove_box_btn)
-
-        boxes_buttons.addStretch()
-        layout.addLayout(boxes_buttons)
-
-
-    def setup_mesh_tab(self): #vers 1
-        """Setup mesh tab"""
-        layout = QVBoxLayout(self.mesh_tab)
-
-        # Mesh info
-        info_layout = QFormLayout()
-
-        self.vertices_count_label = QLabel("0")
-        info_layout.addRow("Vertices:", self.vertices_count_label)
-
-        self.faces_count_label = QLabel("0")
-        info_layout.addRow("Faces:", self.faces_count_label)
-
-        layout.addLayout(info_layout)
-
-        # Mesh buttons
-        mesh_buttons = QHBoxLayout()
-
-        self.import_mesh_btn = QPushButton("Import Mesh")
-        self.import_mesh_btn.clicked.connect(self.import_mesh)
-        mesh_buttons.addWidget(self.import_mesh_btn)
-
-        self.export_mesh_btn = QPushButton("Export Mesh")
-        self.export_mesh_btn.clicked.connect(self.export_mesh)
-        mesh_buttons.addWidget(self.export_mesh_btn)
-
-        mesh_buttons.addStretch()
-        layout.addLayout(mesh_buttons)
-
-        layout.addStretch()
-
-
-    def set_current_model(self, model: COLModel): #vers 1
-        """Set current model for editing"""
-        self.current_model = model
-        self.update_properties()
-
-
-    def update_properties(self): #vers 1
-        """Update property displays"""
-        if not self.current_model:
-            self.clear_properties()
-            return
-
-        try:
-            # Update model properties
-            if hasattr(self.current_model, 'name'):
-                self.model_name_edit.setText(self.current_model.name)
-
-            if hasattr(self.current_model, 'version'):
-                version_index = list(COLVersion).index(self.current_model.version)
-                self.model_version_combo.setCurrentIndex(version_index)
-
-            if hasattr(self.current_model, 'model_id'):
-                self.model_id_spin.setValue(self.current_model.model_id)
-
-            # Update bounding box
-            if hasattr(self.current_model, 'bounding_box') and self.current_model.bounding_box:
-                bbox = self.current_model.bounding_box
-                if hasattr(bbox, 'center'):
-                    self.center_x_spin.setValue(bbox.center.x)
-                    self.center_y_spin.setValue(bbox.center.y)
-                    self.center_z_spin.setValue(bbox.center.z)
-                if hasattr(bbox, 'radius'):
-                    self.radius_spin.setValue(bbox.radius)
-
-            # Update spheres table
-            self.update_spheres_table()
-
-            # Update boxes table
-            self.update_boxes_table()
-
-            # Update mesh info
-            self.update_mesh_info()
-
-        except Exception as e:
-            img_debugger.error(f"Error updating properties: {str(e)}")
-
-
-    def clear_properties(self): #vers 1
-        """Clear all property displays"""
-        self.model_name_edit.clear()
-        self.model_version_combo.setCurrentIndex(0)
-        self.model_id_spin.setValue(0)
-        self.center_x_spin.setValue(0)
-        self.center_y_spin.setValue(0)
-        self.center_z_spin.setValue(0)
-        self.radius_spin.setValue(0)
-        self.spheres_table.setRowCount(0)
-        self.boxes_table.setRowCount(0)
-        self.vertices_count_label.setText("0")
-        self.faces_count_label.setText("0")
-
-
-    def update_spheres_table(self): #vers 1
-        """Update spheres table"""
-        if not hasattr(self.current_model, 'spheres'):
-            self.spheres_table.setRowCount(0)
-            return
-
-        spheres = self.current_model.spheres
-        self.spheres_table.setRowCount(len(spheres))
-
-        for i, sphere in enumerate(spheres):
-            if hasattr(sphere, 'center'):
-                self.spheres_table.setItem(i, 0, QTableWidgetItem(f"{sphere.center.x:.3f}"))
-                self.spheres_table.setItem(i, 1, QTableWidgetItem(f"{sphere.center.y:.3f}"))
-                self.spheres_table.setItem(i, 2, QTableWidgetItem(f"{sphere.center.z:.3f}"))
-            if hasattr(sphere, 'radius'):
-                self.spheres_table.setItem(i, 3, QTableWidgetItem(f"{sphere.radius:.3f}"))
-            if hasattr(sphere, 'material'):
-                self.spheres_table.setItem(i, 4, QTableWidgetItem(str(sphere.material)))
-
-
-    def update_boxes_table(self): #vers 1
-        """Update boxes table"""
-        if not hasattr(self.current_model, 'boxes'):
-            self.boxes_table.setRowCount(0)
-            return
-
-        boxes = self.current_model.boxes
-        self.boxes_table.setRowCount(len(boxes))
-
-        for i, box in enumerate(boxes):
-            if hasattr(box, 'min_point'):
-                self.boxes_table.setItem(i, 0, QTableWidgetItem(f"{box.min_point.x:.3f}"))
-                self.boxes_table.setItem(i, 1, QTableWidgetItem(f"{box.min_point.y:.3f}"))
-                self.boxes_table.setItem(i, 2, QTableWidgetItem(f"{box.min_point.z:.3f}"))
-            if hasattr(box, 'max_point'):
-                self.boxes_table.setItem(i, 3, QTableWidgetItem(f"{box.max_point.x:.3f}"))
-                self.boxes_table.setItem(i, 4, QTableWidgetItem(f"{box.max_point.y:.3f}"))
-                self.boxes_table.setItem(i, 5, QTableWidgetItem(f"{box.max_point.z:.3f}"))
-            if hasattr(box, 'material'):
-                self.boxes_table.setItem(i, 6, QTableWidgetItem(str(box.material)))
-
-
-    def update_mesh_info(self): #vers 1
-        """Update mesh information"""
-        if not self.current_model:
-            return
-
-        vertices_count = len(getattr(self.current_model, 'vertices', []))
-        faces_count = len(getattr(self.current_model, 'faces', []))
-
-        self.vertices_count_label.setText(str(vertices_count))
-        self.faces_count_label.setText(str(faces_count))
-
-
-    def on_version_changed(self): #vers 1
-        """Handle version change"""
-        if self.current_model:
-            new_version = self.model_version_combo.currentData()
-            self.property_changed.emit('version', new_version)
-
-
-    def add_sphere(self): #vers 1
-        """Add new sphere"""
-        img_debugger.info("Add sphere - not yet implemented")
-
-
-    def remove_sphere(self): #vers 1
-        """Remove selected sphere"""
-        img_debugger.info("Remove sphere - not yet implemented")
-
-
-    def add_box(self): #vers 1
-        """Add new box"""
-        img_debugger.info("Add box - not yet implemented")
-
-
-    def remove_box(self): #vers 1
-        """Remove selected box"""
-        img_debugger.info("Remove box - not yet implemented")
-
-
-    def import_mesh(self): #vers 1
-        """Import mesh from file"""
-        img_debugger.info("Import mesh - not yet implemented")
-
-
-    def export_mesh(self): #vers 1
-        """Export mesh to file"""
-        img_debugger.info("Export mesh - not yet implemented")
 
 
 class COLWorkshop(QWidget): #vers 3
@@ -586,12 +772,26 @@ class COLWorkshop(QWidget): #vers 3
             print(App_name + " Initializing ...")
 
         super().__init__(parent)
+        self.setWindowTitle(App_name)
+        self.setWindowIcon(SVGIconFactory.col_workshop_icon())
+        self.icon_factory = SVGIconFactory()
 
         self.main_window = main_window
 
         self.undo_stack = []
         self.button_display_mode = 'both'
         self.last_save_directory = None
+        # Thumbnail spin animation state
+        self._spin_timer  = None
+        self._spin_row    = None
+        self._spin_model  = None
+        self._spin_yaw    = 0.0
+        self._spin_pitch  = 0.0
+        self._spin_dyaw   = 1.0
+        self._spin_dpitch = 0.2
+        # Thumbnail view axis (applied to all static thumbnails)
+        self._thumb_yaw   = 0.0    # top-down (XY plane) by default
+        self._thumb_pitch = 0.0
 
         # Set default fonts
         from PyQt6.QtGui import QFont
@@ -610,15 +810,12 @@ class COLWorkshop(QWidget): #vers 3
             try:
                 from apps.utils.app_settings_system import AppSettings
                 self.app_settings = AppSettings()
-                img_debugger.debug("AppSettings initialized for standalone COL Workshop")
             except Exception as e:
-                img_debugger.warning(f"Could not initialize AppSettings: {e}")
+                print(f"Could not initialize AppSettings: {e}")
                 self.app_settings = None
+        if hasattr(self.app_settings, 'theme_changed'):
+            self.app_settings.theme_changed.connect(self._refresh_icons)
 
-
-        # Preview settings
-        self._show_checkerboard = True
-        self._show_spheres = True
         self._show_boxes = True
         self._show_mesh = True
 
@@ -671,33 +868,24 @@ class COLWorkshop(QWidget): #vers 3
         # Apply theme ONCE at the end
         self._apply_theme()
 
-        if hasattr(self, '_update_dock_button_visibility'):
-            self._update_dock_button_visibility()
 
-        if self.main_window and hasattr(self.main_window, 'app_settings'):
-            self.update()  # Force widget repaint
-
-        # Enable mouse tracking
-        self.setMouseTracking(True)
-
-        if DEBUG_STANDALONE and self.standalone_mode:
-            print(App_name + " initialized")
-
-
-    def setup_ui(self): #vers 7
+    def setup_ui(self): #vers 8
         """Setup the main UI layout"""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(5, 5, 5, 5)
         main_layout.setSpacing(5)
 
-        # Toolbar
+        # Toolbar - hidden when embedded in main window tab
         toolbar = self._create_toolbar()
+        self._workshop_toolbar = toolbar
+        if not self.standalone_mode:
+            toolbar.setVisible(False)
         main_layout.addWidget(toolbar)
 
         # Tab bar for multiple col files
         self.col_tabs = QTabWidget()
         self.col_tabs.setTabsClosable(True)
-        #self.col_tabs.tabCloseRequested.connect(self._close_col_tab)
+        self.col_tabs.tabCloseRequested.connect(self._close_col_tab)
 
 
         # Create initial tab with main content
@@ -707,7 +895,7 @@ class COLWorkshop(QWidget): #vers 3
 
 
         # Main splitter
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Create all panels first
         left_panel = self._create_left_panel()
@@ -716,27 +904,426 @@ class COLWorkshop(QWidget): #vers 3
 
         # Add panels to splitter based on mode
         if left_panel is not None:  # IMG Factory mode
-            main_splitter.addWidget(left_panel)
-            main_splitter.addWidget(middle_panel)
-            main_splitter.addWidget(right_panel)
+            self._main_splitter.addWidget(left_panel)
+            self._main_splitter.addWidget(middle_panel)
+            self._main_splitter.addWidget(right_panel)
             # Set proportions (2:3:5)
-            main_splitter.setStretchFactor(0, 2)
-            main_splitter.setStretchFactor(1, 3)
-            main_splitter.setStretchFactor(2, 5)
+            self._main_splitter.setStretchFactor(0, 2)
+            self._main_splitter.setStretchFactor(1, 3)
+            self._main_splitter.setStretchFactor(2, 5)
         else:  # Standalone mode
-            main_splitter.addWidget(middle_panel)
-            main_splitter.addWidget(right_panel)
+            self._main_splitter.addWidget(middle_panel)
+            self._main_splitter.addWidget(right_panel)
             # Set proportions (1:1)
-            main_splitter.setStretchFactor(0, 1)
-            main_splitter.setStretchFactor(1, 1)
+            self._main_splitter.setStretchFactor(0, 1)
+            self._main_splitter.setStretchFactor(1, 1)
 
-        main_layout.addWidget(main_splitter)
+        main_layout.addWidget(self._main_splitter)
+        self._main_splitter.splitterMoved.connect(self._on_splitter_moved)
 
-        # Status indicators if available
+        # Status indicators - hidden when embedded in main window tab
         if hasattr(self, '_setup_status_indicators'):
             status_frame = self._setup_status_indicators()
+            if not self.standalone_mode:
+                status_frame.setVisible(False)
             main_layout.addWidget(status_frame)
 
+        # Apply theme colours to all icons now that UI is fully built
+        self._refresh_icons()
+        self._connect_all_buttons()
+
+
+    def _connect_all_buttons(self): #vers 2
+        """Wire flip/rotate transform buttons to preview_widget.
+        Called once from setup_ui after all panels are built."""
+        pw = getattr(self, 'preview_widget', None)
+        if not (pw and isinstance(pw, COL3DViewport)):
+            return
+
+        def _safe(btn_name, fn):
+            btn = getattr(self, btn_name, None)
+            if not btn: return
+            try: btn.clicked.disconnect()
+            except Exception: pass
+            btn.clicked.connect(fn)
+
+        _safe('flip_vert_btn',  pw.flip_vertical)
+        _safe('flip_horz_btn',  pw.flip_horizontal)
+        _safe('rotate_cw_btn',  pw.rotate_cw)
+        _safe('rotate_ccw_btn', pw.rotate_ccw)
+
+
+    # ── Stub implementations (log until fully implemented) ──────────────────
+
+    def _create_new_model(self): #vers 1
+        from PyQt6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "New Model", "Model name:")
+        if not ok or not name.strip(): return
+        from apps.methods.col_workshop_classes import COLModel, COLHeader, COLVersion, COLBounds
+        m = COLModel()
+        m.name = name.strip(); m.version = COLVersion.COL_1
+        if not self.current_col_file: return
+        self.current_col_file.models.append(m)
+        self._populate_collision_list()
+        self.collision_list.selectRow(self.collision_list.rowCount()-1)
+
+    def _delete_selected_model(self): #vers 1
+        rows = self.collision_list.selectionModel().selectedRows()
+        if not rows or not self.current_col_file: return
+        row = rows[0].row()
+        item = self.collision_list.item(row, 1)
+        if not item: return
+        idx = item.data(Qt.ItemDataRole.UserRole)
+        if idx is None: return
+        from PyQt6.QtWidgets import QMessageBox
+        name = self.current_col_file.models[idx].name
+        if QMessageBox.question(self, "Delete", f"Delete '{name}'?",
+           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        del self.current_col_file.models[idx]
+        self._populate_collision_list()
+
+    def _duplicate_selected_model(self): #vers 1
+        rows = self.collision_list.selectionModel().selectedRows()
+        if not rows or not self.current_col_file: return
+        row = rows[0].row()
+        item = self.collision_list.item(row, 1)
+        if not item: return
+        idx = item.data(Qt.ItemDataRole.UserRole)
+        if idx is None: return
+        import copy
+        m = copy.deepcopy(self.current_col_file.models[idx])
+        m.name = m.name + "_copy"
+        self.current_col_file.models.insert(idx+1, m)
+        self._populate_collision_list()
+        self.collision_list.selectRow(row+1)
+
+    def _copy_model_to_clipboard(self): #vers 1
+        rows = self.collision_list.selectionModel().selectedRows()
+        if not rows or not self.current_col_file: return
+        row = rows[0].row()
+        item = self.collision_list.item(row, 1)
+        if not item: return
+        idx = item.data(Qt.ItemDataRole.UserRole)
+        if idx is None: return
+        import copy
+        self._clipboard_model = copy.deepcopy(self.current_col_file.models[idx])
+        if hasattr(self, 'paste_btn') and self.paste_btn:
+            self.paste_btn.setEnabled(True)
+
+    def _paste_model_from_clipboard(self): #vers 1
+        if not hasattr(self, '_clipboard_model') or not self._clipboard_model: return
+        if not self.current_col_file: return
+        import copy
+        m = copy.deepcopy(self._clipboard_model)
+        m.name = m.name + "_paste"
+        self.current_col_file.models.append(m)
+        self._populate_collision_list()
+        self.collision_list.selectRow(self.collision_list.rowCount()-1)
+
+    def _open_surface_paint_dialog(self): #vers 1
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Paint", "Surface paint editor — coming soon.")
+
+    def _open_surface_type_dialog(self): #vers 1
+        """Show surface material type picker for selected model."""
+        rows = self.collision_list.selectionModel().selectedRows()
+        if not rows or not self.current_col_file: return
+        row = rows[0].row()
+        item = self.collision_list.item(row, 1)
+        if not item: return
+        idx = item.data(Qt.ItemDataRole.UserRole)
+        if idx is None: return
+        model = self.current_col_file.models[idx]
+        types = {0:"Default",1:"Tarmac",2:"Gravel",3:"Grass",4:"Sand",5:"Water",
+                 6:"Metal",7:"Wood",8:"Concrete",63:"Obstacle"}
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QDialogButtonBox
+        dlg = QDialog(self); dlg.setWindowTitle(f"Surface Type — {model.name}")
+        lay = QVBoxLayout(dlg)
+        lst = QListWidget()
+        for k,v in types.items(): lst.addItem(f"{k:3d}  {v}")
+        lay.addWidget(lst)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+        dlg.exec()
+
+    def _cycle_view_render_style(self): #vers 1
+        """Cycle viewport render: wireframe -> semi -> solid."""
+        pw = getattr(self, 'preview_widget', None)
+        if not pw: return
+        modes = ['wireframe','semi','solid']
+        cur = getattr(pw, '_render_style', 'semi')
+        pw._render_style = modes[(modes.index(cur)+1) % 3] if cur in modes else 'semi'
+        pw.update()
+
+    def _open_paint_editor(self): #vers 1
+        """Paint material colours on collision surface."""
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Material Paint",
+            "Use Mesh Editor (Surface Edit) to assign materials per-face.")
+
+    def _create_new_surface(self): #vers 1
+        """Add a new empty COL model to the loaded file."""
+        if not self.current_col_file:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "No File", "Load a COL file first.")
+            return
+        from apps.methods.col_workshop_classes import COLModel, COLHeader, COLBounds, COLVersion
+        from apps.methods.col_core_classes import Vector3
+        hdr = COLHeader(fourcc=b'COLL', size=0, name='new_model',
+                        model_id=0, version=COLVersion.COL_1)
+        bnd = COLBounds(radius=1.0, center=Vector3(0,0,0),
+                        min=Vector3(-1,-1,-1), max=Vector3(1,1,1))
+        model = COLModel(header=hdr, bounds=bnd,
+                         spheres=[], boxes=[], vertices=[], faces=[])
+        self.current_col_file.models.append(model)
+        self._populate_compact_col_list()
+        self._populate_collision_list()
+        new_row = len(self.current_col_file.models) - 1
+        active = (self.col_compact_list
+                  if self._col_view_mode == 'detail' else self.collision_list)
+        if active.rowCount() > new_row:
+            active.selectRow(new_row)
+
+    def _open_surface_edit_dialog(self): #vers 2
+        """Open the COL Mesh Editor for the currently selected model."""
+        try:
+            from apps.components.Col_Editor.col_mesh_editor import open_col_mesh_editor
+            open_col_mesh_editor(self, parent=self)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Mesh Editor Error", str(e))
+    def _build_col_from_txd(self): #vers 1
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Build COL", "Build COL from TXD names — coming soon.")
+
+    def _cycle_render_mode(self): #vers 1
+        modes = ['wireframe','solid','painted']
+        cur   = getattr(self, '_render_mode', 'wireframe')
+        self._render_mode = modes[(modes.index(cur)+1) % len(modes)] if cur in modes else 'wireframe'
+        if hasattr(self, 'preview_widget') and self.preview_widget:
+            self.preview_widget._refresh()
+
+    def _convert_surface(self): #vers 1
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Convert", "COL version conversion — coming soon.")
+
+    def _show_shadow_mesh(self): #vers 1
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Shadow Mesh", "Shadow mesh viewer — coming soon.")
+
+    def _create_shadow_mesh(self): #vers 1
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Shadow Mesh", "Shadow mesh creation — coming soon.")
+
+    def _remove_shadow_mesh(self): #vers 1
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Shadow Mesh", "Shadow mesh removal — coming soon.")
+
+    def _compress_col(self): #vers 1
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Compress", "COL compression — coming soon.")
+
+    def _uncompress_col(self): #vers 1
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Uncompress", "COL decompression — coming soon.")
+
+    def _open_render_settings_dialog(self): #vers 1
+        """Render & background settings dialog."""
+        from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                                     QComboBox, QSlider, QPushButton, QColorDialog,
+                                     QGroupBox, QDialogButtonBox, QCheckBox)
+        from PyQt6.QtGui import QColor
+        from PyQt6.QtCore import Qt
+
+        pw = getattr(self, 'preview_widget', None)
+        if not pw: return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Render Settings")
+        dlg.setMinimumWidth(360)
+        lay = QVBoxLayout(dlg)
+
+        # Object rendering style
+        style_grp = QGroupBox("Object Rendering")
+        sg = QHBoxLayout(style_grp)
+        sg.addWidget(QLabel("Style:"))
+        style_combo = QComboBox()
+        style_combo.addItems(["Wireframe", "Semi-transparent", "Solid"])
+        mapping = {"wireframe":"Wireframe","semi":"Semi-transparent","solid":"Solid"}
+        style_combo.setCurrentText(mapping.get(pw._render_style, "Semi-transparent"))
+        sg.addWidget(style_combo)
+        lay.addWidget(style_grp)
+
+        # Background
+        bg_grp = QGroupBox("Background")
+        bg = QHBoxLayout(bg_grp)
+        r,g,b = pw._bg_color
+        bg_preview = QPushButton("  ")
+        bg_preview.setFixedSize(60, 28)
+        bg_preview.setStyleSheet(f"background-color: rgb({r},{g},{b});")
+        def _pick_bg():
+            c = QColorDialog.getColor(QColor(r,g,b), dlg, "Background Colour")
+            if c.isValid():
+                bg_preview.setStyleSheet(f"background-color: {c.name()};")
+                bg_preview.setProperty("chosen", (c.red(), c.green(), c.blue()))
+        bg_preview.clicked.connect(_pick_bg)
+        bg.addWidget(QLabel("Colour:"))
+        bg.addWidget(bg_preview)
+
+        scene_cb = QComboBox()
+        scene_cb.addItems(["Dark", "Mid", "Light"])
+        bg.addWidget(scene_cb)
+        lay.addWidget(bg_grp)
+
+        # Buttons
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
+                                QDialogButtonBox.StandardButton.Cancel)
+        btns.rejected.connect(dlg.reject)
+        def _apply():
+            s = style_combo.currentText()
+            rev = {"Wireframe":"wireframe","Semi-transparent":"semi","Solid":"solid"}
+            pw.set_render_style(rev.get(s,"semi"))
+            chosen = bg_preview.property("chosen")
+            if chosen:
+                pw.set_background_color(chosen)
+            dlg.accept()
+        btns.accepted.connect(_apply)
+        lay.addWidget(btns)
+        dlg.exec()
+
+
+    # ── Method aliases and stubs (auto-generated Build 121) ────────────
+    def _compress_surface(self, *a, **kw): return self._compress_col(*a, **kw)
+    def _copy_surface(self, *a, **kw): return self._copy_model_to_clipboard(*a, **kw)
+    def _delete_surface(self, *a, **kw): return self._delete_selected_model(*a, **kw)
+    def _duplicate_surface(self, *a, **kw): return self._duplicate_selected_model(*a, **kw)
+    def _force_save_col(self, *a, **kw): return self._save_file(*a, **kw)
+    def _import_selected(self, *a, **kw): return self._import_col_data(*a, **kw)
+    def _import_surface(self, *a, **kw): return self._import_col_data(*a, **kw)
+    def _open_col_file(self, *a, **kw): return self._open_file(*a, **kw)
+    def _open_mipmap_manager(self, *a, **kw): return self._show_shadow_mesh(*a, **kw)
+    def _paste_surface(self, *a, **kw): return self._paste_model_from_clipboard(*a, **kw)
+    def _reload_surface_table(self, *a, **kw): return self._populate_collision_list(*a, **kw)
+    def _remove_shadow(self, *a, **kw): return self._remove_shadow_mesh(*a, **kw)
+    def _save_as_col_file(self, *a, **kw): return self._save_file(*a, **kw)
+    def _save_col_file(self, *a, **kw): return self._save_file(*a, **kw)
+    def _saveall_file(self, *a, **kw): return self._save_file(*a, **kw)
+    def _uncompress_surface(self, *a, **kw): return self._uncompress_col(*a, **kw)
+    def export_all(self, *a, **kw): return self._export_col_data(*a, **kw)
+    def export_all_surfaces(self, *a, **kw): return self._export_col_data(*a, **kw)
+    def export_selected(self, *a, **kw): return self._export_col_data(*a, **kw)
+    def export_selected_surface(self, *a, **kw): return self._export_col_data(*a, **kw)
+    def refresh(self, *a, **kw): return self._populate_collision_list(*a, **kw)
+    def reload_surface_table(self, *a, **kw): return self._populate_collision_list(*a, **kw)
+    def save_col_file(self, *a, **kw): return self._save_file(*a, **kw)
+    def shadow_dialog(self, *a, **kw): return self._create_shadow_mesh(*a, **kw)
+    def switch_surface_view(self, *a, **kw): return self._cycle_render_mode(*a, **kw)
+
+    def _change_format(self, *a, **kw): pass
+    def _close_col_tab(self, *a, **kw): pass
+    def _edit_main_surface(self, *a, **kw): pass
+    def _focus_search(self, *a, **kw): pass
+    def _rename_shadow_shortcut(self, *a, **kw): pass
+    def _save_surface_name(self, *a, **kw): pass
+    def _show_detailed_info(self, *a, **kw): pass
+    def _show_surface_info(self, *a, **kw): pass
+    def show_help(self, *a, **kw): pass
+    def show_settings_dialog(self, *a, **kw): pass
+
+    def _set_thumbnail_view(self, yaw, pitch, label="Custom"): #vers 1
+        """Change the view angle for all thumbnails and regenerate them."""
+        self._thumb_yaw   = float(yaw)
+        self._thumb_pitch = float(pitch)
+        self._stop_thumbnail_spin()
+        self._regenerate_all_thumbnails()
+        if hasattr(self, 'main_window') and self.main_window:
+            self.main_window.log_message(f"Thumbnail view: {label}")
+
+    def _regenerate_all_thumbnails(self): #vers 1
+        """Redraw every thumbnail in both lists at current _thumb_yaw/pitch."""
+        if not self.current_col_file:
+            return
+        models = getattr(self.current_col_file, 'models', [])
+        # Compact list
+        for row in range(self.col_compact_list.rowCount()):
+            item = self.col_compact_list.item(row, 0)
+            if item and row < len(models):
+                thumb = self._generate_collision_thumbnail(
+                    models[row], 64, 64,
+                    yaw=self._thumb_yaw, pitch=self._thumb_pitch)
+                item.setData(Qt.ItemDataRole.DecorationRole, thumb)
+                item.setData(Qt.ItemDataRole.UserRole + 1, True)
+        # Detail list
+        for row in range(self.collision_list.rowCount()):
+            item = self.collision_list.item(row, 0)
+            if item and row < len(models):
+                thumb = self._generate_collision_thumbnail(
+                    models[row], 64, 64,
+                    yaw=self._thumb_yaw, pitch=self._thumb_pitch)
+                item.setData(Qt.ItemDataRole.DecorationRole, thumb)
+                item.setData(Qt.ItemDataRole.UserRole + 1, True)
+
+    def _start_thumbnail_spin(self, row, model): #vers 1
+        """Start slowly rotating the thumbnail of the selected row."""
+        self._stop_thumbnail_spin()
+        self._spin_row   = row
+        self._spin_model = model
+        self._spin_yaw   = 0.0
+        # Random slow axis: yaw + slight pitch drift
+        import random
+        self._spin_dyaw   = random.uniform(0.8, 1.4)
+        self._spin_dpitch = random.uniform(-0.3, 0.3)
+        self._spin_pitch  = random.uniform(-20.0, 20.0)
+        from PyQt6.QtCore import QTimer
+        self._spin_timer = QTimer(self)
+        self._spin_timer.setInterval(50)   # 20 fps
+        self._spin_timer.timeout.connect(self._tick_thumbnail_spin)
+        self._spin_timer.start()
+
+    def _stop_thumbnail_spin(self): #vers 1
+        """Stop any running thumbnail rotation."""
+        t = getattr(self, '_spin_timer', None)
+        if t:
+            t.stop()
+            t.deleteLater()
+            self._spin_timer = None
+        self._spin_row   = None
+        self._spin_model = None
+
+    def _tick_thumbnail_spin(self): #vers 1
+        """Advance the spin angle and update the thumbnail."""
+        model = getattr(self, '_spin_model', None)
+        row   = getattr(self, '_spin_row',   None)
+        if model is None or row is None:
+            self._stop_thumbnail_spin()
+            return
+        # Advance angles
+        self._spin_yaw   = (self._spin_yaw + self._spin_dyaw) % 360
+        self._spin_pitch = max(-35.0, min(35.0,
+            self._spin_pitch + self._spin_dpitch))
+        # Flip pitch direction at limits
+        if abs(self._spin_pitch) >= 35.0:
+            self._spin_dpitch *= -1
+
+        # Only spin if model has geometry
+        has_geo = (getattr(model, 'vertices', []) or
+                   getattr(model, 'spheres',  []) or
+                   getattr(model, 'boxes',    []))
+        if not has_geo:
+            self._stop_thumbnail_spin()
+            return
+
+        # Render thumbnail at current angle
+        thumb = self._generate_collision_thumbnail(
+            model, 64, 64,
+            yaw=self._spin_yaw, pitch=self._spin_pitch)
+
+        # [T] view no longer has thumbnails — spin does nothing visible there
+        # The viewport itself rotates via _yaw/_pitch so just stop the timer
+        self._stop_thumbnail_spin()
 
     def _enable_name_edit(self, event, is_alpha): #vers 1
         """Enable name editing on click"""
@@ -771,32 +1358,6 @@ class COLWorkshop(QWidget): #vers 3
             else:
                 self.status_modified.setText("")
                 self.status_modified.setStyleSheet("")
-
-
-    def select_col_by_name(self, col_name): #vers 1
-        """Select a specific COL model by name in the list"""
-        try:
-            if not hasattr(self, 'model_list'):
-                return False
-
-            # Search through model list for matching name
-            for i in range(self.model_list.count()):
-                item = self.model_list.item(i)
-                item_text = item.text()
-                # Extract model name from display text (format: "name (version - stats)")
-                if item_text.startswith(col_name):
-                    self.model_list.setCurrentRow(i)
-                    img_debugger.success(f"Auto-selected COL: {col_name}")
-                    return True
-
-            img_debugger.warning(f"COL not found in list: {col_name}")
-            return False
-
-        except Exception as e:
-            img_debugger.error(f"Error selecting COL by name: {str(e)}")
-            return False
-
-
 # - Panel Creation
 
     def _create_status_bar(self): #vers 1
@@ -822,8 +1383,71 @@ class COLWorkshop(QWidget): #vers 3
 
         return status_bar
 
+    def _refresh_icons(self): #vers 2
+        """Refresh all button icons after theme change — picks up current text_primary colour."""
+        SVGIconFactory.clear_cache()
+        c = self._get_icon_color()
+        SVGIconFactory.set_theme_color(c)
+
+        # Map: attribute name → icon factory method
+        _icon_map = [
+            # Toolbar
+            ('settings_btn',       'settings_icon'),
+            ('open_btn',           'open_icon'),
+            ('save_btn',           'save_icon'),
+            ('saveall_btn',        'saveas_icon'),
+            ('export_all_btn',     'package_icon'),
+            ('undo_btn',           'undo_icon'),
+            ('info_btn',           'info_icon'),
+            ('minimize_btn',       'minimize_icon'),
+            ('maximize_btn',       'maximize_icon'),
+            ('close_btn',          'close_icon'),
+            ('open_img_btn',       'folder_icon'),
+            ('from_img_btn',       'open_icon'),
+            # Middle panel mini-toolbar
+            ('open_col_btn',       'open_icon'),
+            ('save_col_btn',       'save_icon'),
+            ('export_col_btn',     'package_icon'),
+            ('undo_col_btn',       'undo_icon'),
+            # Transform icon panel
+            ('flip_vert_btn',      'flip_vert_icon'),
+            ('flip_horz_btn',      'flip_horz_icon'),
+            ('rotate_cw_btn',      'rotate_cw_icon'),
+            ('rotate_ccw_btn',     'rotate_ccw_icon'),
+            ('analyze_btn',        'analyze_icon'),
+            ('copy_btn',           'copy_icon'),
+            ('paste_btn',          'paste_icon'),
+            ('create_surface_btn', 'add_icon'),
+            ('delete_surface_btn', 'remove_icon'),
+            ('import_btn',         'import_icon'),
+            ('export_btn',         'export_icon'),
+            # Right panel toolbar buttons
+            ('switch_btn',         'flip_vert_icon'),
+            ('convert_btn',        'convert_icon'),
+            ('properties_btn',     'settings_icon'),
+        ]
+        for attr, method in _icon_map:
+            btn = getattr(self, attr, None)
+            if btn is None:
+                continue
+            fn = getattr(self.icon_factory, method, None)
+            if fn is None:
+                continue
+            try:
+                btn.setIcon(fn(color=c))
+            except TypeError:
+                try:
+                    btn.setIcon(fn())
+                except Exception:
+                    pass
+
 
 # - Settings Reusable
+
+        # Sync mini toolbar visibility with current dock state
+        if hasattr(self, '_middle_btn_row'):
+            self._middle_btn_row.setVisible(
+                self.is_docked and not self.standalone_mode)
 
     def _show_workshop_settings(self): #vers 1
         """Show complete workshop settings dialog"""
@@ -1445,13 +2069,15 @@ class COLWorkshop(QWidget): #vers 3
             # Update dock state
             self.is_docked = True
             self._update_dock_button_visibility()
+            if hasattr(self, '_middle_btn_row'):
+                self._middle_btn_row.setVisible(True)
 
             if hasattr(self.main_window, 'log_message'):
                 self.main_window.log_message(f"{App_name} docked to main window")
 
 
         except Exception as e:
-            img_debugger.error(f"Error docking: {str(e)}")
+            print(f"Error docking: {str(e)}")
             self.show()
 
 
@@ -1475,6 +2101,8 @@ class COLWorkshop(QWidget): #vers 3
                 
             self.is_docked = False
             self._update_dock_button_visibility()
+            if hasattr(self, '_middle_btn_row'):
+                self._middle_btn_row.setVisible(False)
 
             self.show()
             self.raise_()
@@ -1483,7 +2111,7 @@ class COLWorkshop(QWidget): #vers 3
                 self.main_window.log_message(f"{App_name} undocked to standalone")
                 
         except Exception as e:
-            img_debugger.error(f"Error undocking: {str(e)}")
+            print(f"Error undocking: {str(e)}")
             # Fallback
             self.setWindowFlags(Qt.WindowType.Window)
             self.show()
@@ -1563,8 +2191,21 @@ class COLWorkshop(QWidget): #vers 3
             # Toolbar buttons
             ('open_btn', 'Open'),
             ('save_btn', 'Save'),
+            ('save_col_btn', 'Save TXD'),
         ]
 
+        # Adjust transform panel width based on mode
+        if hasattr(self, 'transform_icon_panel'):
+            if self.button_display_mode == 'icons':
+                self.transform_icon_panel.setMaximumWidth(50)
+            else:
+                self.transform_text_panel.setMaximumWidth(200)
+
+        for btn_name, btn_text in buttons_to_update:
+            if hasattr(self, btn_name):
+                button = getattr(self, btn_name)
+                self._apply_button_mode_to_button(button, btn_text)
+        self._update_dock_button_visibility()
 
     def paintEvent(self, event): #vers 2
         """Paint corner resize triangles"""
@@ -1664,7 +2305,9 @@ class COLWorkshop(QWidget): #vers 3
         if hasattr(self, 'titlebar') and self.titlebar.geometry().contains(pos):
             titlebar_pos = self.titlebar.mapFromParent(pos)
             if self._is_on_draggable_area(titlebar_pos):
-                self.windowHandle().startSystemMove()
+                handle = self.windowHandle()
+                if handle:
+                    handle.startSystemMove()
                 event.accept()
                 return
 
@@ -1827,11 +2470,61 @@ class COLWorkshop(QWidget): #vers 3
         self.drag_position = global_pos
 
 
-    def resizeEvent(self, event): #vers 1
-        '''Keep resize grip in bottom-right corner'''
+    def _on_splitter_moved(self, pos, index): #vers 1
+        """Called when main splitter is dragged — update text panel visibility."""
+        self._update_transform_text_panel_visibility()
+
+    def _update_transform_text_panel_visibility(self): #vers 2
+        """Toggle between text+icon panel (wide) and icon-only strip (narrow).
+        Reads threshold from IMG Factory settings. Also collapses bottom buttons."""
+        tp   = getattr(self, '_transform_text_panel_ref', None)
+        ip   = getattr(self, '_transform_icon_panel_ref', None)
+        mode = getattr(self, 'button_display_mode', 'both')
+
+        if mode == 'icons':
+            if tp: tp.setVisible(False)
+            if ip: ip.setVisible(True)
+            return
+        if mode == 'text':
+            if tp: tp.setVisible(True)
+            if ip: ip.setVisible(False)
+            return
+
+        # Measure right panel width directly
+        rp = getattr(self, '_right_panel_ref', None)
+        if rp:
+            ref_w = rp.width()
+        else:
+            splitter = getattr(self, '_main_splitter', None)
+            ref_w = self.width()
+            if splitter and tp:
+                w = tp
+                while w and w.parent() is not splitter:
+                    w = w.parent() if hasattr(w, 'parent') else None
+                if w:
+                    ref_w = w.width()
+
+        try:
+            from apps.methods.imgfactory_ui_settings import get_collapse_threshold
+            threshold = get_collapse_threshold(getattr(self, 'main_window', None))
+        except Exception:
+            threshold = 550
+        wide = ref_w >= threshold
+        if tp: tp.setVisible(wide)
+        if ip: ip.setVisible(not wide)
+
+        # Toggle bottom panel rows the same way
+        btr = getattr(self, '_bottom_text_row', None)
+        bir = getattr(self, '_bottom_icon_row', None)
+        if btr: btr.setVisible(wide)
+        if bir: bir.setVisible(not wide)
+
+    def resizeEvent(self, event): #vers 3
+        """Keep resize grip in corner; auto-collapse text transform panel when narrow."""
         super().resizeEvent(event)
         if hasattr(self, 'size_grip'):
             self.size_grip.move(self.width() - 16, self.height() - 16)
+        self._update_transform_text_panel_visibility()
 
 
     def mouseDoubleClickEvent(self, event): #vers 2
@@ -1898,7 +2591,7 @@ class COLWorkshop(QWidget): #vers 3
         # Settings button
         self.settings_btn = QPushButton()
         self.settings_btn.setFont(self.button_font)
-        self.settings_btn.setIcon(self._create_settings_icon())
+        self.settings_btn.setIcon(self.icon_factory.settings_icon(color=icon_color))
         self.settings_btn.setText("Settings")
         self.settings_btn.setIconSize(QSize(20, 20))
         self.settings_btn.clicked.connect(self._show_workshop_settings)
@@ -1920,15 +2613,25 @@ class COLWorkshop(QWidget): #vers 3
         if not self.standalone_mode:
             self.open_img_btn = QPushButton("OpenIMG")
             self.open_img_btn.setFont(self.button_font)
-            self.open_img_btn.setIcon(self._create_folder_icon())
+            self.open_img_btn.setIcon(self.icon_factory.folder_icon(color=icon_color))
             self.open_img_btn.setIconSize(QSize(20, 20))
             self.open_img_btn.clicked.connect(self.open_img_archive)
+            self.open_img_btn.setToolTip("Open an IMG archive and browse its COL entries")
             layout.addWidget(self.open_img_btn)
+
+            # "From IMG" — pick a COL entry from the currently loaded IMG in IMG Factory
+            self.from_img_btn = QPushButton("From IMG")
+            self.from_img_btn.setFont(self.button_font)
+            self.from_img_btn.setIcon(self.icon_factory.open_icon(color=icon_color))
+            self.from_img_btn.setIconSize(QSize(20, 20))
+            self.from_img_btn.clicked.connect(self._pick_col_from_current_img)
+            self.from_img_btn.setToolTip("Pick a COL entry from the currently loaded IMG")
+            layout.addWidget(self.from_img_btn)
 
         # Open button
         self.open_btn = QPushButton()
         self.open_btn.setFont(self.button_font)
-        self.open_btn.setIcon(self._create_open_icon())
+        self.open_btn.setIcon(self.icon_factory.open_icon(color=icon_color))
         self.open_btn.setText("Open")
         self.open_btn.setIconSize(QSize(20, 20))
         self.open_btn.setShortcut("Ctrl+O")
@@ -1941,13 +2644,13 @@ class COLWorkshop(QWidget): #vers 3
         # Save button
         self.save_btn = QPushButton()
         self.save_btn.setFont(self.button_font)
-        self.save_btn.setIcon(self._create_save_icon())
+        self.save_btn.setIcon(self.icon_factory.save_icon(color=icon_color))
         self.save_btn.setText("Save")
         self.save_btn.setIconSize(QSize(20, 20))
         self.save_btn.setShortcut("Ctrl+S")
         if self.button_display_mode == 'icons':
             self.save_btn.setFixedSize(40, 40)
-        self.save_btn.setEnabled(False)  # Enable when modified
+        self.save_btn.setEnabled(True)
         self.save_btn.setToolTip("Save COL file (Ctrl+S)")
         self.save_btn.clicked.connect(self._save_file)
         layout.addWidget(self.save_btn)
@@ -1955,55 +2658,45 @@ class COLWorkshop(QWidget): #vers 3
         # Save button
         self.saveall_btn = QPushButton()
         self.saveall_btn.setFont(self.button_font)
-        self.saveall_btn.setIcon(self._create_saveas_icon())
+        self.saveall_btn.setIcon(self.icon_factory.saveas_icon(color=icon_color))
         self.saveall_btn.setText("Save All")
         self.saveall_btn.setIconSize(QSize(20, 20))
         self.saveall_btn.setShortcut("Ctrl+S")
         if self.button_display_mode == 'icons':
             self.saveall_btn.setFixedSize(40, 40)
-        self.saveall_btn.setEnabled(False)  # Enable when modified
+        self.saveall_btn.setEnabled(True)
         self.saveall_btn.setToolTip("Save COL file (Ctrl+S)")
-        #self.saveall_btn.clicked.connect(self._saveall_file)
+        self.saveall_btn.clicked.connect(self._saveall_file)
         #layout.addWidget(self.saveall_btn)
 
         self.export_all_btn = QPushButton("Extract")
         self.export_all_btn.setFont(self.button_font)
-        self.export_all_btn.setIcon(self._create_package_icon())
+        self.export_all_btn.setIcon(self.icon_factory.package_icon(color=icon_color))
         self.export_all_btn.setIconSize(QSize(20, 20))
         self.export_all_btn.setToolTip("Export all as col, cst or 3ds files")
-        #self.export_all_btn.clicked.connect(self.export_all)
-        self.export_all_btn.setEnabled(False)
+        self.export_all_btn.clicked.connect(self.export_all)
+        self.export_all_btn.setEnabled(True)
         layout.addWidget(self.export_all_btn)
 
         self.undo_btn = QPushButton()
         self.undo_btn.setFont(self.button_font)
-        self.undo_btn.setIcon(self._create_undo_icon())
+        self.undo_btn.setIcon(self.icon_factory.undo_icon(color=icon_color))
         self.undo_btn.setText("Undo")
         self.undo_btn.setIconSize(QSize(20, 20))
-        #self.undo_btn.clicked.connect(self._undo_last_action)
-        self.undo_btn.setEnabled(False)
+        self.undo_btn.clicked.connect(self._undo_last_action)
+        self.undo_btn.setEnabled(True)
         self.undo_btn.setToolTip("Undo last change")
         layout.addWidget(self.undo_btn)
 
         # Info button
         self.info_btn = QPushButton("")
         self.info_btn.setText("")  # CHANGED from "Info"
-        self.info_btn.setIcon(self._create_info_icon())
+        self.info_btn.setIcon(self.icon_factory.info_icon(color=icon_color))
         self.info_btn.setMinimumWidth(40)
         self.info_btn.setMaximumWidth(40)
         self.info_btn.setMinimumHeight(30)
         self.info_btn.setToolTip("Information")
-        self.info_btn.setStyleSheet("""
-            QPushButton {
-                font-weight: bold;
-                background-color: #4a4a4a;
-                border: 1px solid #5a5a5a;
-                border-radius: 3px;
-            }
-            QPushButton:hover {
-                background-color: #5a5a5a;
-            }
-        """)
+
         self.info_btn.setIconSize(QSize(20, 20))
         self.info_btn.setFixedWidth(35)
         self.info_btn.clicked.connect(self._show_col_info)
@@ -2027,21 +2720,11 @@ class COLWorkshop(QWidget): #vers 3
         self.dock_btn.setMaximumWidth(40)
         self.dock_btn.setMinimumHeight(30)
         self.dock_btn.setToolTip("Dock")
-        self.dock_btn.setStyleSheet("""
-            QPushButton {
-                font-weight: bold;
-                background-color: #4a4a4a;
-                border: 1px solid #5a5a5a;
-                border-radius: 3px;
-            }
-            QPushButton:hover {
-                background-color: #5a5a5a;
-            }
-        """)
+
         self.dock_btn.clicked.connect(self.toggle_dock_mode)
         layout.addWidget(self.dock_btn)
 
-                # Tear-off button [T] - only in IMG Factory mode
+        # Tear-off button [T] - only in IMG Factory mode
         if not self.standalone_mode:
             self.tearoff_btn = QPushButton("T")
             #self.tearoff_btn.setFont(self.button_font)
@@ -2050,22 +2733,12 @@ class COLWorkshop(QWidget): #vers 3
             self.tearoff_btn.setMinimumHeight(30)
             self.tearoff_btn.clicked.connect(self._toggle_tearoff)
             self.tearoff_btn.setToolTip("TXD Workshop - Tearoff window")
-            self.tearoff_btn.setStyleSheet("""
-                QPushButton {
-                    font-weight: bold;
-                    background-color: #4a4a4a;
-                    border: 1px solid #5a5a5a;
-                    border-radius: 3px;
-                }
-                QPushButton:hover {
-                    background-color: #5a5a5a;
-                }
-            """)
+
             layout.addWidget(self.tearoff_btn)
 
         # Window controls
         self.minimize_btn = QPushButton()
-        self.minimize_btn.setIcon(self._create_minimize_icon())
+        self.minimize_btn.setIcon(self.icon_factory.minimize_icon(color=icon_color))
         self.minimize_btn.setIconSize(QSize(20, 20))
         self.minimize_btn.setMinimumWidth(40)
         self.minimize_btn.setMaximumWidth(40)
@@ -2075,7 +2748,7 @@ class COLWorkshop(QWidget): #vers 3
         layout.addWidget(self.minimize_btn)
 
         self.maximize_btn = QPushButton()
-        self.maximize_btn.setIcon(self._create_maximize_icon())
+        self.maximize_btn.setIcon(self.icon_factory.maximize_icon(color=icon_color))
         self.maximize_btn.setIconSize(QSize(20, 20))
         self.maximize_btn.setMinimumWidth(40)
         self.maximize_btn.setMaximumWidth(40)
@@ -2085,7 +2758,7 @@ class COLWorkshop(QWidget): #vers 3
         layout.addWidget(self.maximize_btn)
 
         self.close_btn = QPushButton()
-        self.close_btn.setIcon(self._create_close_icon())
+        self.close_btn.setIcon(self.icon_factory.close_icon(color=icon_color))
         self.close_btn.setIconSize(QSize(20, 20))
         self.close_btn.setMinimumWidth(40)
         self.close_btn.setMaximumWidth(40)
@@ -2096,211 +2769,342 @@ class COLWorkshop(QWidget): #vers 3
 
         return self.toolbar
 
+    #Left side vertical panel
+    def _create_transform_icon_panel(self): #vers 12
+        """Create transform panel with icons - aligned with text panel"""
+        icon_color = self._get_icon_color()
+        self.transform_icon_panel = QFrame()
+        self.transform_icon_panel.setFrameStyle(QFrame.Shape.StyledPanel)
+        self.transform_icon_panel.setMinimumWidth(45)
+        self.transform_icon_panel.setMaximumWidth(45)
 
-    def _create_transform_panel(self): #vers 11
-        """Create transform panel with variable width - no headers"""
-        self.transform_panel = QFrame()
-        self.transform_panel.setFrameStyle(QFrame.Shape.StyledPanel)
-        self.transform_panel.setMinimumWidth(30)
-        self.transform_panel.setMaximumWidth(200)
-        if self.button_display_mode == 'icons':
-            self.transform_panel.setMaximumWidth(40)
-            self.transform_panel.setMinimumWidth(40)
-            layout.addSpacing(5)
+        layout = QVBoxLayout(self.transform_icon_panel)
+        layout.setContentsMargins(3, 5, 3, 5)
+        layout.setSpacing(1)
 
-        layout = QVBoxLayout(self.transform_panel)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(5)
+        btn_height = 32
+        btn_width = 40
+        icon_size = QSize(20, 20)
+        spacer = 3
+
+        layout.addSpacing(2)
 
         # Flip Vertical
         self.flip_vert_btn = QPushButton()
-        self.flip_vert_btn.setFont(self.button_font)
-        self.flip_vert_btn.setIcon(self._create_flip_vert_icon())
-        self.flip_vert_btn.setText("Flip Vertical")
-        self.flip_vert_btn.setIconSize(QSize(20, 20))
-        if self.button_display_mode == 'icons':
-            self.flip_vert_btn.setFixedSize(40, 40)
-        #self.flip_vert_btn.clicked.connect(self._flip_vertical)
+        self.flip_vert_btn.setIcon(self.icon_factory.flip_vert_icon(color=icon_color))
+        self.flip_vert_btn.setIconSize(icon_size)
+        self.flip_vert_btn.setFixedHeight(btn_height)
+        self.flip_vert_btn.setMinimumWidth(btn_width)
         self.flip_vert_btn.setEnabled(False)
         self.flip_vert_btn.setToolTip("Flip col vertically")
+        self.flip_vert_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.flip_vertical())
         layout.addWidget(self.flip_vert_btn)
+        layout.addSpacing(spacer)
 
         # Flip Horizontal
         self.flip_horz_btn = QPushButton()
-        self.flip_horz_btn.setFont(self.button_font)
-        self.flip_horz_btn.setIcon(self._create_flip_horz_icon())
-        self.flip_horz_btn.setText("Flip Horizontal")
-        self.flip_horz_btn.setIconSize(QSize(20, 20))
-        if self.button_display_mode == 'icons':
-            self.flip_horz_btn.setFixedSize(40, 40)
-        #self.flip_horz_btn.clicked.connect(self._flip_horizontal)
+        self.flip_horz_btn.setIcon(self.icon_factory.flip_horz_icon(color=icon_color))
+        self.flip_horz_btn.setIconSize(icon_size)
+        self.flip_horz_btn.setFixedHeight(btn_height)
+        self.flip_horz_btn.setMinimumWidth(btn_width)
         self.flip_horz_btn.setEnabled(False)
         self.flip_horz_btn.setToolTip("Flip col horizontally")
+        self.flip_horz_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.flip_horizontal())
         layout.addWidget(self.flip_horz_btn)
-
-        layout.addSpacing(5)
+        layout.addSpacing(spacer)
 
         # Rotate Clockwise
         self.rotate_cw_btn = QPushButton()
-        self.rotate_cw_btn.setFont(self.button_font)
-        self.rotate_cw_btn.setIcon(self._create_rotate_cw_icon())
-        self.rotate_cw_btn.setText("Rotate 90° CW")
-        self.rotate_cw_btn.setIconSize(QSize(20, 20))
-        if self.button_display_mode == 'icons':
-            self.rotate_cw_btn.setFixedSize(40, 40)
-        #self.rotate_cw_btn.clicked.connect(self._rotate_clockwise)
+        self.rotate_cw_btn.setIcon(self.icon_factory.rotate_cw_icon(color=icon_color))
+        self.rotate_cw_btn.setIconSize(icon_size)
+        self.rotate_cw_btn.setFixedHeight(btn_height)
+        self.rotate_cw_btn.setMinimumWidth(btn_width)
         self.rotate_cw_btn.setEnabled(False)
         self.rotate_cw_btn.setToolTip("Rotate 90 degrees clockwise")
+        self.rotate_cw_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.rotate_cw())
         layout.addWidget(self.rotate_cw_btn)
+        layout.addSpacing(spacer)
 
         # Rotate Counter-Clockwise
         self.rotate_ccw_btn = QPushButton()
-        self.rotate_ccw_btn.setFont(self.button_font)
-        self.rotate_ccw_btn.setIcon(self._create_rotate_ccw_icon())
-        self.rotate_ccw_btn.setText("Rotate 90° CCW")
-        self.rotate_ccw_btn.setIconSize(QSize(20, 20))
-        if self.button_display_mode == 'icons':
-            self.rotate_ccw_btn.setFixedSize(40, 40)
-        #self.rotate_ccw_btn.clicked.connect(self._rotate_counterclockwise)
+        self.rotate_ccw_btn.setIcon(self.icon_factory.rotate_ccw_icon(color=icon_color))
+        self.rotate_ccw_btn.setIconSize(icon_size)
+        self.rotate_ccw_btn.setFixedHeight(btn_height)
+        self.rotate_ccw_btn.setMinimumWidth(btn_width)
         self.rotate_ccw_btn.setEnabled(False)
         self.rotate_ccw_btn.setToolTip("Rotate 90 degrees counter-clockwise")
+        self.rotate_ccw_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.rotate_ccw())
         layout.addWidget(self.rotate_ccw_btn)
+        layout.addSpacing(spacer)
 
-        layout.addSpacing(5)
-
-        # Analyze button
+        # Analyze
         self.analyze_btn = QPushButton()
-        self.analyze_btn.setFont(self.button_font)
-        self.analyze_btn.setIcon(self._create_analyze_icon())
-        self.analyze_btn.setText("Analyze")
-        self.analyze_btn.setIconSize(QSize(20, 20))
-        if self.button_display_mode == 'icons':
-            self.analyze_btn.setFixedSize(40, 40)
+        self.analyze_btn.setIcon(self.icon_factory.analyze_icon(color=icon_color))
+        self.analyze_btn.setIconSize(icon_size)
+        self.analyze_btn.setFixedHeight(btn_height)
+        self.analyze_btn.setMinimumWidth(btn_width)
         self.analyze_btn.clicked.connect(self._analyze_collision)
-        self.analyze_btn.setEnabled(False)  # Enable when COL loaded
+        self.analyze_btn.setEnabled(False)
         self.analyze_btn.setToolTip("Analyze collision data")
         layout.addWidget(self.analyze_btn)
-
-        layout.addStretch()
+        layout.addSpacing(spacer)
 
         # Copy
         self.copy_btn = QPushButton()
-        self.copy_btn.setFont(self.button_font)
-        self.copy_btn.setIcon(self._create_copy_icon())
-        self.copy_btn.setText("Copy")
-        self.copy_btn.setIconSize(QSize(20, 20))
-        if self.button_display_mode == 'icons':
-            self.copy_btn.setFixedSize(40, 40)
-        #self.copy_btn.clicked.connect(self._copy_surface)
+        self.copy_btn.setIcon(self.icon_factory.copy_icon(color=icon_color))
+        self.copy_btn.setIconSize(icon_size)
+        self.copy_btn.setFixedHeight(btn_height)
+        self.copy_btn.setMinimumWidth(btn_width)
         self.copy_btn.setEnabled(False)
         self.copy_btn.setToolTip("Copy col to clipboard")
+        self.copy_btn.clicked.connect(self._copy_surface)
         layout.addWidget(self.copy_btn)
+        layout.addSpacing(spacer)
 
         # Paste
         self.paste_btn = QPushButton()
-        self.paste_btn.setFont(self.button_font)
-        self.paste_btn.setIcon(self._create_paste_icon())
-        self.paste_btn.setText("Paste")
-        self.paste_btn.setIconSize(QSize(20, 20))
-        if self.button_display_mode == 'icons':
-            self.paste_btn.setFixedSize(40, 40)
-        #self.paste_btn.clicked.connect(self._paste_surface)
+        self.paste_btn.setIcon(self.icon_factory.paste_icon(color=icon_color))
+        self.paste_btn.setIconSize(icon_size)
+        self.paste_btn.setFixedHeight(btn_height)
+        self.paste_btn.setMinimumWidth(btn_width)
         self.paste_btn.setEnabled(False)
         self.paste_btn.setToolTip("Paste col from clipboard")
+        self.paste_btn.clicked.connect(self._paste_surface)
         layout.addWidget(self.paste_btn)
+        layout.addSpacing(spacer)
 
-        # Create Collision
+        # Create
         self.create_surface_btn = QPushButton()
-        self.create_surface_btn.setFont(self.button_font)
-        self.create_surface_btn.setIcon(self._create_create_icon())
-        self.create_surface_btn.setText("Create")
-        self.create_surface_btn.setIconSize(QSize(20, 20))
-        if self.button_display_mode == 'icons':
-            self.create_surface_btn.setFixedSize(40, 40)
-        #self.create_surface_btn.clicked.connect(self._create_new_surface_entry)
+        self.create_surface_btn.setIcon(self.icon_factory.add_icon(color=icon_color))
+        self.create_surface_btn.setIconSize(icon_size)
+        self.create_surface_btn.setFixedHeight(btn_height)
+        self.create_surface_btn.setMinimumWidth(btn_width)
         self.create_surface_btn.setToolTip("Create new blank Collision")
+        self.create_surface_btn.clicked.connect(self._create_new_surface)
         layout.addWidget(self.create_surface_btn)
+        layout.addSpacing(spacer)
 
-        # Delete collision
+        # Delete
         self.delete_surface_btn = QPushButton()
-        self.delete_surface_btn.setFont(self.button_font)
-        self.delete_surface_btn.setIcon(self._create_delete_icon())
-        self.delete_surface_btn.setText("Delete")
-        self.delete_surface_btn.setIconSize(QSize(20, 20))
-        if self.button_display_mode == 'icons':
-            self.delete_surface_btn.setFixedSize(40, 40)
-        #self.delete_surface_btn.clicked.connect(self._delete_surface)
+        self.delete_surface_btn.setIcon(self.icon_factory.delete_icon(color=icon_color))
+        self.delete_surface_btn.setIconSize(icon_size)
+        self.delete_surface_btn.setFixedHeight(btn_height)
+        self.delete_surface_btn.setMinimumWidth(btn_width)
         self.delete_surface_btn.setEnabled(False)
         self.delete_surface_btn.setToolTip("Remove selected Collision")
+        self.delete_surface_btn.clicked.connect(self._delete_surface)
         layout.addWidget(self.delete_surface_btn)
+        layout.addSpacing(spacer)
 
-        # Duplicate Collision
+        # Duplicate
         self.duplicate_surface_btn = QPushButton()
-        self.duplicate_surface_btn.setFont(self.button_font)
-        self.duplicate_surface_btn.setIcon(self._create_duplicate_icon())
-        self.duplicate_surface_btn.setText("Duplicate")
-        self.duplicate_surface_btn.setIconSize(QSize(20, 20))
-        if self.button_display_mode == 'icons':
-            self.duplicate_surface_btn.setFixedSize(40, 40)
-        #self.duplicate_surface_btn.clicked.connect(self._duplicate_surface)
+        self.duplicate_surface_btn.setIcon(self.icon_factory.duplicate_icon(color=icon_color))
+        self.duplicate_surface_btn.setIconSize(icon_size)
+        self.duplicate_surface_btn.setFixedHeight(btn_height)
+        self.duplicate_surface_btn.setMinimumWidth(btn_width)
         self.duplicate_surface_btn.setEnabled(False)
         self.duplicate_surface_btn.setToolTip("Clone selected Collision")
+        self.duplicate_surface_btn.clicked.connect(self._duplicate_surface)
         layout.addWidget(self.duplicate_surface_btn)
+        layout.addSpacing(spacer)
 
+        # Paint
         self.paint_btn = QPushButton()
-        self.paint_btn.setFont(self.button_font)
-        self.paint_btn.setIcon(self._create_paint_icon())
-        self.paint_btn.setText("Paint")
-        self.paint_btn.setIconSize(QSize(20, 20))
-        if self.button_display_mode == 'icons':
-            self.paint_btn.setFixedSize(40, 40)
-        #self.paint_btn.clicked.connect(self._open_paint_editor)
+        self.paint_btn.setIcon(self.icon_factory.paint_icon(color=icon_color))
+        self.paint_btn.setIconSize(icon_size)
+        self.paint_btn.setFixedHeight(btn_height)
+        self.paint_btn.setMinimumWidth(btn_width)
         self.paint_btn.setEnabled(False)
-        self.paint_btn.setToolTip("Paint free hand on surface")
+        self.paint_btn.setToolTip("Paint free hand on surface — assign materials")
+        self.paint_btn.clicked.connect(self._open_paint_editor)
         layout.addWidget(self.paint_btn)
+        layout.addSpacing(spacer)
 
-        layout.addSpacing(5)
-
-        # Check col vs DFF
+        # Surface Type
         self.surface_type_btn = QPushButton()
-        self.surface_type_btn.setFont(self.button_font)
-        self.surface_type_btn.setIcon(self._create_check_icon())
-        self.surface_type_btn.setText("Surface type")
-        self.surface_type_btn.setIconSize(QSize(20, 20))
-        if self.button_display_mode == 'icons':
-            self.surface_type_btn.setFixedSize(40, 40)
-        #self.surface_type_btn.clicked.connect(self._check_col_type)
+        self.surface_type_btn.setIcon(self.icon_factory.checkerboard_icon(color=icon_color))
+        self.surface_type_btn.setIconSize(icon_size)
+        self.surface_type_btn.setFixedHeight(btn_height)
+        self.surface_type_btn.setMinimumWidth(btn_width)
         self.surface_type_btn.setToolTip("Surface types")
         layout.addWidget(self.surface_type_btn)
+        layout.addSpacing(spacer)
 
-        # Check col vs DFF
+        # Surface Edit
         self.surface_edit_btn = QPushButton()
-        self.surface_edit_btn.setFont(self.button_font)
-        self.surface_edit_btn.setIcon(self._create_check_icon())
-        self.surface_edit_btn.setText("Surface Edit")
-        self.surface_edit_btn.setIconSize(QSize(20, 20))
-        if self.button_display_mode == 'icons':
-            self.surface_edit_btn.setFixedSize(40, 40)
-        #self.surface_type_btn.clicked.connect(self._col_edit)
-        self.surface_edit_btn.setToolTip("Surface Editor")
+        self.surface_edit_btn.setIcon(self.icon_factory.surfaceedit_icon(color=icon_color))
+        self.surface_edit_btn.setIconSize(icon_size)
+        self.surface_edit_btn.setFixedHeight(btn_height)
+        self.surface_edit_btn.setMinimumWidth(btn_width)
+        self.surface_edit_btn.setToolTip("Surface Editor — edit mesh faces and vertices")
+        self.surface_edit_btn.clicked.connect(self._open_surface_edit_dialog)
         layout.addWidget(self.surface_edit_btn)
+        layout.addSpacing(spacer)
 
+        # Build from TXD
         self.build_from_txd_btn = QPushButton()
-        self.build_from_txd_btn.setFont(self.button_font)
-        self.build_from_txd_btn.setIcon(self._create_build_icon())
-        self.build_from_txd_btn.setText("Build col via")
-        self.build_from_txd_btn.setIconSize(QSize(20, 20))
-        if self.button_display_mode == 'icons':
-            self.build_from_txd_btn.setFixedSize(40, 40)
-        #self.build_from_dff_btn.clicked.connect(self._build_col_from_dff)
+        self.build_from_txd_btn.setIcon(self.icon_factory.build_icon(color=icon_color))
+        self.build_from_txd_btn.setIconSize(icon_size)
+        self.build_from_txd_btn.setFixedHeight(btn_height)
+        self.build_from_txd_btn.setMinimumWidth(btn_width)
         self.build_from_txd_btn.setToolTip("Create col surface from txd texture names")
         layout.addWidget(self.build_from_txd_btn)
 
-        layout.addSpacing(5)
+        layout.addStretch()
+        return self.transform_icon_panel
+
+
+    def _create_transform_text_panel(self): #vers 12
+        """Create transform panel with text - aligned with icon panel"""
+        self.transform_text_panel = QFrame()
+        self.transform_text_panel.setFrameStyle(QFrame.Shape.StyledPanel)
+        self.transform_text_panel.setMinimumWidth(140)
+        self.transform_text_panel.setMaximumWidth(140)
+
+        layout = QVBoxLayout(self.transform_text_panel)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(1)
+
+        btn_height = 32
+        spacer = 3
+
+        layout.addSpacing(2)
+
+        # Flip Vertical
+        self.flip_vert_btn = QPushButton("Flip Vertical")
+        self.flip_vert_btn.setFont(self.button_font)
+        self.flip_vert_btn.setFixedHeight(btn_height)
+        self.flip_vert_btn.setEnabled(False)
+        self.flip_vert_btn.setToolTip("Flip col vertically")
+        self.flip_vert_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.flip_vertical())
+        layout.addWidget(self.flip_vert_btn)
+        layout.addSpacing(spacer)
+
+        # Flip Horizontal
+        self.flip_horz_btn = QPushButton("Flip Horizontal")
+        self.flip_horz_btn.setFont(self.button_font)
+        self.flip_horz_btn.setFixedHeight(btn_height)
+        self.flip_horz_btn.setEnabled(False)
+        self.flip_horz_btn.setToolTip("Flip col horizontally")
+        self.flip_horz_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.flip_horizontal())
+        layout.addWidget(self.flip_horz_btn)
+        layout.addSpacing(spacer)
+
+        # Rotate Clockwise
+        self.rotate_cw_btn = QPushButton("Rotate 90° CW")
+        self.rotate_cw_btn.setFont(self.button_font)
+        self.rotate_cw_btn.setFixedHeight(btn_height)
+        self.rotate_cw_btn.setEnabled(False)
+        self.rotate_cw_btn.setToolTip("Rotate 90 degrees clockwise")
+        self.rotate_cw_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.rotate_cw())
+        layout.addWidget(self.rotate_cw_btn)
+        layout.addSpacing(spacer)
+
+        # Rotate Counter-Clockwise
+        self.rotate_ccw_btn = QPushButton("Rotate 90° CCW")
+        self.rotate_ccw_btn.setFont(self.button_font)
+        self.rotate_ccw_btn.setFixedHeight(btn_height)
+        self.rotate_ccw_btn.setEnabled(False)
+        self.rotate_ccw_btn.setToolTip("Rotate 90 degrees counter-clockwise")
+        self.rotate_ccw_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.rotate_ccw())
+        layout.addWidget(self.rotate_ccw_btn)
+        layout.addSpacing(spacer)
+
+        # Analyze
+        self.analyze_btn = QPushButton("Analyze")
+        self.analyze_btn.setFont(self.button_font)
+        self.analyze_btn.setFixedHeight(btn_height)
+        self.analyze_btn.clicked.connect(self._analyze_collision)
+        self.analyze_btn.setEnabled(False)
+        self.analyze_btn.setToolTip("Analyze collision data")
+        layout.addWidget(self.analyze_btn)
+        layout.addSpacing(spacer)
+
+        # Copy
+        self.copy_btn = QPushButton("Copy")
+        self.copy_btn.setFont(self.button_font)
+        self.copy_btn.setFixedHeight(btn_height)
+        self.copy_btn.setEnabled(False)
+        self.copy_btn.setToolTip("Copy col to clipboard")
+        self.copy_btn.clicked.connect(self._copy_surface)
+        layout.addWidget(self.copy_btn)
+        layout.addSpacing(spacer)
+
+        # Paste
+        self.paste_btn = QPushButton("Paste")
+        self.paste_btn.setFont(self.button_font)
+        self.paste_btn.setFixedHeight(btn_height)
+        self.paste_btn.setEnabled(False)
+        self.paste_btn.setToolTip("Paste col from clipboard")
+        self.paste_btn.clicked.connect(self._paste_surface)
+        layout.addWidget(self.paste_btn)
+        layout.addSpacing(spacer)
+
+        # Create
+        self.create_surface_btn = QPushButton("Create")
+        self.create_surface_btn.setFont(self.button_font)
+        self.create_surface_btn.setFixedHeight(btn_height)
+        self.create_surface_btn.setToolTip("Create new blank Collision")
+        self.create_surface_btn.clicked.connect(self._create_new_surface)
+        layout.addWidget(self.create_surface_btn)
+        layout.addSpacing(spacer)
+
+        # Delete
+        self.delete_surface_btn = QPushButton("Delete")
+        self.delete_surface_btn.setFont(self.button_font)
+        self.delete_surface_btn.setFixedHeight(btn_height)
+        self.delete_surface_btn.setEnabled(False)
+        self.delete_surface_btn.setToolTip("Remove selected Collision")
+        self.delete_surface_btn.clicked.connect(self._delete_surface)
+        layout.addWidget(self.delete_surface_btn)
+        layout.addSpacing(spacer)
+
+        # Duplicate
+        self.duplicate_surface_btn = QPushButton("Duplicate")
+        self.duplicate_surface_btn.setFont(self.button_font)
+        self.duplicate_surface_btn.setFixedHeight(btn_height)
+        self.duplicate_surface_btn.setEnabled(False)
+        self.duplicate_surface_btn.setToolTip("Clone selected Collision")
+        self.duplicate_surface_btn.clicked.connect(self._duplicate_surface)
+        layout.addWidget(self.duplicate_surface_btn)
+        layout.addSpacing(spacer)
+
+        # Paint
+        self.paint_btn = QPushButton("Paint")
+        self.paint_btn.setFont(self.button_font)
+        self.paint_btn.setFixedHeight(btn_height)
+        self.paint_btn.setEnabled(False)
+        self.paint_btn.setToolTip("Paint free hand on surface — assign materials")
+        self.paint_btn.clicked.connect(self._open_paint_editor)
+        layout.addWidget(self.paint_btn)
+        layout.addSpacing(spacer)
+
+        # Surface Type
+        self.surface_type_btn = QPushButton("Surface type")
+        self.surface_type_btn.setFont(self.button_font)
+        self.surface_type_btn.setFixedHeight(btn_height)
+        self.surface_type_btn.setToolTip("Surface types")
+        layout.addWidget(self.surface_type_btn)
+        layout.addSpacing(spacer)
+
+        # Surface Edit
+        self.surface_edit_btn = QPushButton("Surface Edit")
+        self.surface_edit_btn.setFont(self.button_font)
+        self.surface_edit_btn.setFixedHeight(btn_height)
+        self.surface_edit_btn.setToolTip("Surface Editor — edit mesh faces and vertices")
+        self.surface_edit_btn.clicked.connect(self._open_surface_edit_dialog)
+        layout.addWidget(self.surface_edit_btn)
+        layout.addSpacing(spacer)
+
+        # Build from TXD
+        self.build_from_txd_btn = QPushButton("Build col via")
+        self.build_from_txd_btn.setFont(self.button_font)
+        self.build_from_txd_btn.setFixedHeight(btn_height)
+        self.build_from_txd_btn.setToolTip("Create col surface from txd texture names")
+        layout.addWidget(self.build_from_txd_btn)
 
         layout.addStretch()
-
-        return self.transform_panel
+        return self.transform_text_panel
 
 
     def _create_left_panel(self): #vers 5
@@ -2334,57 +3138,159 @@ class COLWorkshop(QWidget): #vers 3
         return panel
 
 
-    def _create_middle_panel(self): #vers 4
-        """Create middle panel with COL models table - theme-aware"""
-        panel = QGroupBox("COL Models")
-
-        # Get theme colors
-        if self.app_settings:
-            colors = self.app_settings.get_theme_colors()
-            bg_color = colors.get('panel_bg', '#2b2b2b')
-            border_color = colors.get('border', '#3a3a3a')
-            text_color = colors.get('text_primary', '#e0e0e0')
-        else:
-            bg_color = '#2b2b2b'
-            border_color = '#3a3a3a'
-            text_color = '#e0e0e0'
+    def _create_middle_panel(self): #vers 6
+        """Create middle panel with COL models table — mini toolbar + view toggle."""
+        panel = QFrame()
+        panel.setFrameStyle(QFrame.Shape.StyledPanel)
+        panel.setMinimumWidth(250)
 
         layout = QVBoxLayout(panel)
-        layout.setSpacing(5)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(4)
 
-        # Model table widget (like TXD Workshop texture_table)
+        # ── Header row: title + [T] view-toggle ──────────────────────────
+        hdr_row = QHBoxLayout()
+        header = QLabel("COL Models")
+        header.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        hdr_row.addWidget(header)
+        hdr_row.addStretch()
+
+        self._col_view_mode = 'detail'   # start in compact thumbnail view
+        self.col_view_toggle_btn = QPushButton("[=]")
+        self.col_view_toggle_btn.setFont(self.button_font)
+        self.col_view_toggle_btn.setFixedWidth(32)
+        self.col_view_toggle_btn.setFixedHeight(22)
+        self.col_view_toggle_btn.setToolTip(
+            "Toggle view: compact list ↔ full details table")
+        self.col_view_toggle_btn.clicked.connect(self._toggle_col_view)
+        hdr_row.addWidget(self.col_view_toggle_btn)
+        layout.addLayout(hdr_row)
+
+        # ── Mini toolbar: Open / Save / Extract / Undo ───────────────────
+        icon_color = self._get_icon_color()
+        self._middle_btn_row = QFrame()
+        btn_layout = QHBoxLayout(self._middle_btn_row)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(3)
+
+        self.open_col_btn = QPushButton("Open")
+        self.open_col_btn.setFont(self.button_font)
+        self.open_col_btn.setIcon(self.icon_factory.open_icon(color=icon_color))
+        self.open_col_btn.setIconSize(QSize(20, 20))
+        self.open_col_btn.setToolTip("Open COL file")
+        self.open_col_btn.clicked.connect(self._open_file)
+        btn_layout.addWidget(self.open_col_btn)
+
+        self.save_col_btn = QPushButton("Save")
+        self.save_col_btn.setFont(self.button_font)
+        self.save_col_btn.setIcon(self.icon_factory.save_icon(color=icon_color))
+        self.save_col_btn.setIconSize(QSize(20, 20))
+        self.save_col_btn.setToolTip("Save COL file")
+        self.save_col_btn.clicked.connect(self._save_file)
+        self.save_col_btn.setEnabled(True)
+        btn_layout.addWidget(self.save_col_btn)
+
+        self.export_col_btn = QPushButton("Extract")
+        self.export_col_btn.setFont(self.button_font)
+        self.export_col_btn.setIcon(self.icon_factory.package_icon(color=icon_color))
+        self.export_col_btn.setIconSize(QSize(20, 20))
+        self.export_col_btn.setToolTip("Export all COL models")
+        self.export_col_btn.clicked.connect(self._export_col_data)
+        self.export_col_btn.setEnabled(True)
+        btn_layout.addWidget(self.export_col_btn)
+
+        self.undo_col_btn = QPushButton()
+        self.undo_col_btn.setFont(self.button_font)
+        self.undo_col_btn.setIcon(self.icon_factory.undo_icon(color=icon_color))
+        self.undo_col_btn.setIconSize(QSize(20, 20))
+        self.undo_col_btn.setToolTip("Undo last change")
+        self.undo_col_btn.clicked.connect(self._undo_last_action)
+        self.undo_col_btn.setEnabled(True)
+        btn_layout.addWidget(self.undo_col_btn)
+
+        btn_layout.addStretch()
+        layout.addWidget(self._middle_btn_row)
+        self._middle_btn_row.setVisible(self.is_docked and not self.standalone_mode)
+
+        # ── Model table (detail view) ────────────────────────────────────
         self.collision_list = QTableWidget()
-        self.collision_list.setColumnCount(2)
-        self.collision_list.setHorizontalHeaderLabels(["Preview", "Details"])
-        self.collision_list.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.collision_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+
+        class _GuiLayout:
+            def __init__(self, table):
+                self.table = table
+        self.gui_layout = _GuiLayout(self.collision_list)
+
+        self.collision_list.setColumnCount(8)
+        self.collision_list.setHorizontalHeaderLabels([
+            "Model Name", "Type", "Version", "Size",
+            "Spheres", "Boxes", "Vertices", "Faces"])
+        self.collision_list.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows)
+        self.collision_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection)
         self.collision_list.setAlternatingRowColors(True)
         self.collision_list.itemSelectionChanged.connect(self._on_collision_selected)
-        self.collision_list.setIconSize(QSize(64, 64))
-        self.collision_list.setColumnWidth(0, 80)  # Thumbnail column
-        self.collision_list.horizontalHeader().setStretchLastSection(True)  # Details column stretches
+        self.collision_list.horizontalHeader().setStretchLastSection(True)
+        self.collision_list.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
+        self.collision_list.customContextMenuRequested.connect(
+            self._show_collision_context_menu)
+        self.collision_list.setVisible(False)  # hidden at startup — compact view is default
         layout.addWidget(self.collision_list)
-        self.collision_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.collision_list.customContextMenuRequested.connect(self._show_collision_context_menu)
+
+        # ── Compact list (thumbnail + name/version/counts, single row) ───
+        self.col_compact_list = QTableWidget()
+        self.col_compact_list.setColumnCount(2)
+        self.col_compact_list.setHorizontalHeaderLabels(["Preview", "Details"])
+        self.col_compact_list.horizontalHeader().setStretchLastSection(True)
+        self.col_compact_list.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows)
+        self.col_compact_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection)
+        self.col_compact_list.setAlternatingRowColors(True)
+        self.col_compact_list.setIconSize(QSize(64, 64))
+        self.col_compact_list.itemSelectionChanged.connect(
+            self._on_compact_col_selected)
+        self.col_compact_list.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
+        self.col_compact_list.customContextMenuRequested.connect(
+            self._show_collision_context_menu)
+        self.col_compact_list.setVisible(True)    # start in compact view
+        self.col_compact_list.setRowCount(0)      # populated on first file load
+        layout.addWidget(self.col_compact_list)
+
         return panel
 
 
-    def _create_right_panel(self): #vers 10
+    def _create_right_panel(self): #vers 11
         """Create right panel with editing controls - compact layout"""
+        icon_color = self._get_icon_color()
         panel = QFrame()
         panel.setFrameStyle(QFrame.Shape.StyledPanel)
-        panel.setMinimumWidth(400)
+        panel.setMinimumWidth(200)
+        self._right_panel_ref = panel
         has_bumpmap = False
         main_layout = QVBoxLayout(panel)
-        main_layout.setContentsMargins(5, 5, 5, 5)
+        #main_layout.setContentsMargins(5, 5, 5, 5)
         top_layout = QHBoxLayout()
 
-        # Transform panel (left)
-        transform_panel = self._create_transform_panel()
-        top_layout.addWidget(transform_panel, stretch=1)
+        # Transform panel (icon) — shown when narrow
+        transform_icon_panel = self._create_transform_icon_panel()
+        self._transform_icon_panel_ref = transform_icon_panel
+        top_layout.setSpacing(2)
+        top_layout.addWidget(transform_icon_panel)
+        transform_icon_panel.setVisible(False)  # hidden until panel is narrow
+
+        # Transform panel (text) — shown when wide
+        transform_text_panel = self._create_transform_text_panel()
+        self._transform_text_panel_ref = transform_text_panel
+        top_layout.setSpacing(2)
+        top_layout.addWidget(transform_text_panel)
+        transform_text_panel.setVisible(True)
 
         # Preview area (center) - 3D Viewport
         self.preview_widget = COL3DViewport()
+        self.preview_widget._workshop_ref = self  # direct ref — no parent-chain walk needed
         top_layout.addWidget(self.preview_widget, stretch=2)
 
         # Preview controls (right side, vertical)
@@ -2415,273 +3321,156 @@ class COLWorkshop(QWidget): #vers 3
         name_layout.addWidget(self.info_name, stretch=1)
         info_layout.addLayout(name_layout)
 
-        # === LINES 2 & 3: Adaptive based on display mode ===
-        if self.button_display_mode == 'icons':
-            # MERGED: Single compact line for icon mode
-            merged_line = self._create_merged_icons_line()
-            info_layout.addLayout(merged_line)
-        else:
-            # SEPARATE: Original two-line layout for text/both modes
-            # Line 2: Format controls
-            format_layout = QHBoxLayout()
-            format_layout.setSpacing(5)
+        # === LINES 2 & 3: Build BOTH rows, show/hide based on panel width ===
+        # ── Text+label row (wide) ────────────────────────────────────────
+        self._bottom_text_row = QWidget()
+        tr_lay = QVBoxLayout(self._bottom_text_row)
+        tr_lay.setContentsMargins(0, 0, 0, 0)
+        tr_lay.setSpacing(2)
 
-            self.format_combo = QComboBox()
-            self.format_combo.setFont(self.panel_font)
-            self.format_combo.addItems(["COL", "COL2", "COL3", "COL4"])
-            #self.format_combo.currentTextChanged.connect(self._change_format)
-            self.format_combo.setEnabled(False)
-            self.format_combo.setMaximumWidth(100)
-            format_layout.addWidget(self.format_combo)
+        fmt_lay = QHBoxLayout()
+        fmt_lay.setSpacing(5)
+        self.format_combo = QComboBox()
+        self.format_combo.setFont(self.panel_font)
+        self.format_combo.addItems(["COL", "COL2", "COL3", "COL4"])
+        self.format_combo.currentTextChanged.connect(self._change_format)
+        self.format_combo.setMaximumWidth(100)
+        fmt_lay.addWidget(self.format_combo)
+        fmt_lay.addStretch()
+        for attr, label, icon_fn, tip, slot in [
+            ('switch_btn',     'Mesh',       'flip_vert_icon',  'Cycle render mode',   'switch_surface_view'),
+            ('convert_btn',    'Convert',    'convert_icon',    'Convert format',      '_convert_surface'),
+            ('compress_btn',   'Compress',   'compress_icon',   'Compress',            '_compress_surface'),
+            ('uncompress_btn', 'Uncompress', 'uncompress_icon', 'Uncompress',          '_uncompress_surface'),
+            ('import_btn',     'Import',     'import_icon',     'Import col/cst/3ds',  '_import_selected'),
+            ('export_btn',     'Export',     'export_icon',     'Export col/cst/3ds',  'export_selected'),
+        ]:
+            b = QPushButton(label)
+            b.setFont(self.button_font)
+            b.setIcon(getattr(self.icon_factory, icon_fn)(color=icon_color))
+            b.setIconSize(QSize(20, 20))
+            b.setToolTip(tip)
+            b.clicked.connect(getattr(self, slot))
+            b.setEnabled(False)
+            setattr(self, attr, b)
+            fmt_lay.addWidget(b)
+        tr_lay.addLayout(fmt_lay)
 
-            format_layout.addStretch()
+        shd_lay = QHBoxLayout()
+        shd_lay.setSpacing(5)
+        self.info_format = QLabel("Shadow Mesh: ")
+        self.info_format.setFont(self.panel_font)
+        self.info_format.setMinimumWidth(100)
+        shd_lay.addWidget(self.info_format)
+        for attr, label, icon_fn, tip, slot in [
+            ('show_shadow_btn',   'View',   'view_icon',   'View Shadow Mesh',   '_open_mipmap_manager'),
+            ('create_shadow_btn', 'Create', 'add_icon',    'Create Shadow Mesh', 'shadow_dialog'),
+            ('remove_shadow_btn', 'Remove', 'delete_icon', 'Remove Shadow Mesh', '_remove_shadow'),
+        ]:
+            b = QPushButton(label)
+            b.setFont(self.button_font)
+            b.setIcon(getattr(self.icon_factory, icon_fn)(color=icon_color))
+            b.setIconSize(QSize(20, 20))
+            b.setToolTip(tip)
+            b.clicked.connect(getattr(self, slot))
+            b.setEnabled(False)
+            setattr(self, attr, b)
+            shd_lay.addWidget(b)
+        tr_lay.addLayout(shd_lay)
+        info_layout.addWidget(self._bottom_text_row)
 
-            # Switch button
-            self.switch_btn = QPushButton("Mesh")
-            self.switch_btn.setFont(self.button_font)
-            self.switch_btn.setIcon(self._create_flip_vert_icon())
-            self.switch_btn.setIconSize(QSize(20, 20))
-            #self.switch_btn.clicked.connect(self.switch_surface_view)
-            self.switch_btn.setEnabled(False)
-            self.switch_btn.setToolTip("Cycle: Wireframe → Mesh → Painted → Overlay")
-            format_layout.addWidget(self.switch_btn)
-
-            # Convert
-            self.convert_btn = QPushButton("Convert")
-            self.convert_btn.setFont(self.button_font)
-            self.convert_btn.setIcon(self._create_convert_icon())
-            self.convert_btn.setIconSize(QSize(20, 20))
-            self.convert_btn.setToolTip("Convert Collision format")
-            #self.convert_btn.clicked.connect(self._convert_surface)
-            self.convert_btn.setEnabled(False)
-            format_layout.addWidget(self.convert_btn)
-
-            # Line 3: shadow + Bumpmaps
-            mipbump_layout = QHBoxLayout()
-            mipbump_layout.setSpacing(5)
-
-            self.info_format = QLabel("Shadow Mesh: ")
-            self.info_format.setFont(self.panel_font)
-            self.info_format.setMinimumWidth(100)
-            mipbump_layout.addWidget(self.info_format)
-
-            self.show_shadow_btn = QPushButton("View")
-            self.show_shadow_btn.setFont(self.button_font)
-            self.show_shadow_btn.setIcon(self._create_view_icon())
-            self.show_shadow_btn.setIconSize(QSize(20, 20))
-            self.show_shadow_btn.setToolTip("View all levels")
-            #self.show_shadow_btn.clicked.connect(self._open_mipmap_manager)
-            self.show_shadow_btn.setEnabled(False)
-            mipbump_layout.addWidget(self.show_shadow_btn)
-
-            self.create_shadow_btn = QPushButton("Create")
-            self.create_shadow_btn.setFont(self.button_font)
-            self.create_shadow_btn.setIcon(self._create_add_icon())
-            self.create_shadow_btn.setIconSize(QSize(20, 20))
-            self.create_shadow_btn.setToolTip("Generate Shadow Mesh")
-            #self.create_shadow_btn.clicked.connect(self._create_shadow_dialog)
-            self.create_shadow_btn.setEnabled(False)
-            mipbump_layout.addWidget(self.create_shadow_btn)
-
-            self.remove_shadow_btn = QPushButton("Remove")
-            self.remove_shadow_btn.setFont(self.button_font)
-            self.remove_shadow_btn.setIcon(self._create_delete_icon())
-            self.remove_shadow_btn.setIconSize(QSize(20, 20))
-            self.remove_shadow_btn.setToolTip("Remove Shodow Mesh")
-            #self.remove_shadow_btn.clicked.connect(self._remove_shadow)
-            self.remove_shadow_btn.setEnabled(False)
-            mipbump_layout.addWidget(self.remove_shadow_btn)
-
-            mipbump_layout.addSpacing(30)
-            view_layout = QHBoxLayout()
-
-            self.compress_btn = QPushButton("Compress")
-            self.compress_btn.setFont(self.button_font)
-            self.compress_btn.setIcon(self._create_compress_icon())
-            self.compress_btn.setIconSize(QSize(20, 20))
-            self.compress_btn.setToolTip("Compress Collision")
-            #self.compress_btn.clicked.connect(self._compress_surface)
-            self.compress_btn.setEnabled(False)
-            format_layout.addWidget(self.compress_btn)
-
-            self.uncompress_btn = QPushButton("Uncompress")
-            self.uncompress_btn.setFont(self.button_font)
-            self.uncompress_btn.setIcon(self._create_uncompress_icon())
-            self.uncompress_btn.setIconSize(QSize(20, 20))
-            self.uncompress_btn.setToolTip("Uncompress Collision")
-            #self.uncompress_btn.clicked.connect(self._uncompress_surface)
-            self.uncompress_btn.setEnabled(False)
-            format_layout.addWidget(self.uncompress_btn)
-
-            self.import_btn = QPushButton("Import")
-            self.import_btn.setFont(self.button_font)
-            self.import_btn.setIcon(self._create_import_icon())
-            self.import_btn.setIconSize(QSize(20, 20))
-            self.import_btn.setToolTip("Import col, cst, 3ds files")
-            #self.import_btn.clicked.connect(self._import_selected)
-            self.import_btn.setEnabled(False)
-            format_layout.addWidget(self.import_btn)
-
-            self.export_btn = QPushButton("Export")
-            self.export_btn.setFont(self.button_font)
-            self.export_btn.setIcon(self._create_export_icon())
-            self.export_btn.setIconSize(QSize(20, 20))
-            self.export_btn.setToolTip("Export col, cst, 3ds files")
-            #self.export_btn.clicked.connect(self.export_selected)
-            self.export_btn.setEnabled(False)
-            format_layout.addWidget(self.export_btn)
-
-            info_layout.addLayout(format_layout)
-            info_layout.addLayout(view_layout)
-            info_layout.addLayout(mipbump_layout)
-
+        # ── Icon-only row (narrow) ─────────────────────────────────────────
+        self._bottom_icon_row = QWidget()
+        ir_lay = QHBoxLayout(self._bottom_icon_row)
+        ir_lay.setContentsMargins(0, 0, 0, 0)
+        ir_lay.setSpacing(2)
+        fmt_ico = QComboBox()
+        fmt_ico.addItems(["COL","COL2","COL3","COL4"])
+        fmt_ico.currentTextChanged.connect(self._change_format)
+        fmt_ico.setMaximumWidth(65)
+        ir_lay.addWidget(fmt_ico)
+        for icon_fn, tip, slot in [
+            ('flip_vert_icon',  'Cycle render mode',  'switch_surface_view'),
+            ('convert_icon',    'Convert',            '_convert_surface'),
+            ('compress_icon',   'Compress',           '_compress_surface'),
+            ('uncompress_icon', 'Uncompress',         '_uncompress_surface'),
+            ('import_icon',     'Import',             '_import_selected'),
+            ('export_icon',     'Export',             'export_selected'),
+            ('view_icon',       'View Shadow',        '_open_mipmap_manager'),
+            ('add_icon',        'Create Shadow',      'shadow_dialog'),
+            ('delete_icon',     'Remove Shadow',      '_remove_shadow'),
+        ]:
+            b = QPushButton()
+            b.setIcon(getattr(self.icon_factory, icon_fn)(color=icon_color))
+            b.setIconSize(QSize(18, 18))
+            b.setFixedSize(30, 30)
+            b.setToolTip(tip)
+            b.clicked.connect(getattr(self, slot))
+            b.setEnabled(False)
+            ir_lay.addWidget(b)
+        ir_lay.addStretch()
+        info_layout.addWidget(self._bottom_icon_row)
+        self._bottom_icon_row.setVisible(False)
         main_layout.addWidget(info_group, stretch=0)
         return panel
 
 
-    def _create_preview_controls(self): #vers 5
-        """Create preview control buttons - vertical layout on right"""
-        controls_frame = QFrame()
-        controls_frame.setFrameStyle(QFrame.Shape.StyledPanel)
-        controls_frame.setMaximumWidth(50)
-        controls_layout = QVBoxLayout(controls_frame)
-        controls_layout.setContentsMargins(5, 5, 5, 5)
-        controls_layout.setSpacing(5)
+    def _create_preview_controls(self): #vers 6
+        """Vertical button strip to the right of the preview viewport."""
+        icon_color = self._get_icon_color()
+        pw = self.preview_widget   # guaranteed to exist — called after _create_right_panel creates it
 
-        # Check if using 3D viewport or 2D preview
-        is_3d_viewport = VIEWPORT_AVAILABLE and isinstance(self.preview_widget, COL3DViewport)
+        f = QFrame()
+        f.setFrameStyle(QFrame.Shape.StyledPanel)
+        f.setMaximumWidth(50)
+        lay = QVBoxLayout(f)
+        lay.setContentsMargins(5, 5, 5, 5)
+        lay.setSpacing(4)
 
-        # Zoom In
-        zoom_in_btn = QPushButton()
-        zoom_in_btn.setIcon(self._create_zoom_in_icon())
-        zoom_in_btn.setIconSize(QSize(20, 20))
-        zoom_in_btn.setFixedSize(40, 40)
-        zoom_in_btn.setToolTip("Zoom In")
-        zoom_in_btn.clicked.connect(self.preview_widget.zoom_in)
-        controls_layout.addWidget(zoom_in_btn)
+        def btn(tip, icon_fn, callback, checkable=False, checked=False):
+            b = QPushButton()
+            b.setIcon(icon_fn(color=icon_color))
+            b.setIconSize(QSize(20, 20))
+            b.setFixedSize(40, 40)
+            b.setToolTip(tip)
+            if checkable:
+                b.setCheckable(True)
+                b.setChecked(checked)
+            b.clicked.connect(callback)
+            lay.addWidget(b)
+            return b
 
-        # Zoom Out
-        zoom_out_btn = QPushButton()
-        zoom_out_btn.setIcon(self._create_zoom_out_icon())
-        zoom_out_btn.setIconSize(QSize(20, 20))
-        zoom_out_btn.setFixedSize(40, 40)
-        zoom_out_btn.setToolTip("Zoom Out")
-        zoom_out_btn.clicked.connect(self.preview_widget.zoom_out)
-        controls_layout.addWidget(zoom_out_btn)
+        btn("Zoom In",      self.icon_factory.zoom_in_icon,   pw.zoom_in)
+        btn("Zoom Out",     self.icon_factory.zoom_out_icon,  pw.zoom_out)
+        btn("Reset View",   self.icon_factory.reset_icon,     pw.reset_view)
+        btn("Fit to Window",self.icon_factory.fit_icon,       pw.fit_to_window)
 
-        # Reset
-        reset_btn = QPushButton()
-        reset_btn.setIcon(self._create_reset_icon())
-        reset_btn.setIconSize(QSize(20, 20))
-        reset_btn.setFixedSize(40, 40)
-        reset_btn.setToolTip("Reset View")
-        reset_btn.clicked.connect(self.preview_widget.reset_view)
-        controls_layout.addWidget(reset_btn)
+        lay.addSpacing(6)
+        btn("Pan Up",    self.icon_factory.arrow_up_icon,    lambda: pw.pan( 0,  20))
+        btn("Pan Down",  self.icon_factory.arrow_down_icon,  lambda: pw.pan( 0, -20))
+        btn("Pan Left",  self.icon_factory.arrow_left_icon,  lambda: pw.pan(-20,  0))
+        btn("Pan Right", self.icon_factory.arrow_right_icon, lambda: pw.pan( 20,  0))
 
-        # Fit
-        fit_btn = QPushButton()
-        fit_btn.setIcon(self._create_fit_icon())
-        fit_btn.setIconSize(QSize(20, 20))
-        fit_btn.setFixedSize(40, 40)
-        fit_btn.setToolTip("Fit to Window")
-        fit_btn.clicked.connect(self.preview_widget.fit_to_window)
-        controls_layout.addWidget(fit_btn)
+        lay.addSpacing(6)
+        btn("Render / Background Settings",
+            self.icon_factory.color_picker_icon, self._open_render_settings_dialog)
 
-        controls_layout.addSpacing(10)
+        lay.addSpacing(6)
+        self.view_spheres_btn = btn("Toggle Spheres", self.icon_factory.sphere_icon,
+                                    lambda checked: pw.set_show_spheres(checked),
+                                    checkable=True, checked=True)
+        self.view_boxes_btn   = btn("Toggle Boxes",   self.icon_factory.box_icon,
+                                    lambda checked: pw.set_show_boxes(checked),
+                                    checkable=True, checked=True)
+        self.view_mesh_btn    = btn("Toggle Mesh",    self.icon_factory.mesh_icon,
+                                    lambda checked: pw.set_show_mesh(checked),
+                                    checkable=True, checked=True)
+        self.backface_btn     = btn("Toggle Backface",self.icon_factory.backface_icon,
+                                    lambda checked: pw.set_backface(checked),
+                                    checkable=True, checked=False)
 
-        # Pan Up
-        pan_up_btn = QPushButton()
-        pan_up_btn.setIcon(self._create_arrow_up_icon())
-        pan_up_btn.setIconSize(QSize(20, 20))
-        pan_up_btn.setFixedSize(40, 40)
-        pan_up_btn.setToolTip("Pan Up")
-        pan_up_btn.clicked.connect(lambda: self._pan_preview(0, -20))
-        controls_layout.addWidget(pan_up_btn)
-
-        # Pan Down
-        pan_down_btn = QPushButton()
-        pan_down_btn.setIcon(self._create_arrow_down_icon())
-        pan_down_btn.setIconSize(QSize(20, 20))
-        pan_down_btn.setFixedSize(40, 40)
-        pan_down_btn.setToolTip("Pan Down")
-        pan_down_btn.clicked.connect(lambda: self._pan_preview(0, 20))
-        controls_layout.addWidget(pan_down_btn)
-
-        # Pan Left
-        pan_left_btn = QPushButton()
-        pan_left_btn.setIcon(self._create_arrow_left_icon())
-        pan_left_btn.setIconSize(QSize(20, 20))
-        pan_left_btn.setFixedSize(40, 40)
-        pan_left_btn.setToolTip("Pan Left")
-        pan_left_btn.clicked.connect(lambda: self._pan_preview(-20, 0))
-        controls_layout.addWidget(pan_left_btn)
-
-        # Pan Right
-        pan_right_btn = QPushButton()
-        pan_right_btn.setIcon(self._create_arrow_right_icon())
-        pan_right_btn.setIconSize(QSize(20, 20))
-        pan_right_btn.setFixedSize(40, 40)
-        pan_right_btn.setToolTip("Pan Right")
-        pan_right_btn.clicked.connect(lambda: self._pan_preview(20, 0))
-        controls_layout.addWidget(pan_right_btn)
-
-        # Color picker
-        bg_custom_btn = QPushButton()
-        bg_custom_btn.setIcon(self._create_color_picker_icon())
-        bg_custom_btn.setIconSize(QSize(20, 20))
-        bg_custom_btn.setFixedSize(40, 40)
-        bg_custom_btn.setToolTip("Pick Background Color")
-        bg_custom_btn.clicked.connect(self._pick_background_color)
-        controls_layout.addWidget(bg_custom_btn)
-
-        controls_layout.addSpacing(5)
-
-        # View Spheres toggle
-        self.view_spheres_btn = QPushButton()
-        self.view_spheres_btn.setIcon(self._create_sphere_icon())
-        self.view_spheres_btn.setIconSize(QSize(20, 20))
-        self.view_spheres_btn.setFixedSize(40, 40)
-        self.view_spheres_btn.setCheckable(True)
-        self.view_spheres_btn.setChecked(True)
-        self.view_spheres_btn.setToolTip("Toggle Spheres")
-        self.view_spheres_btn.clicked.connect(self._toggle_spheres)
-        controls_layout.addWidget(self.view_spheres_btn)
-
-        # View Boxes toggle
-        self.view_boxes_btn = QPushButton()
-        self.view_boxes_btn.setIcon(self._create_box_icon())
-        self.view_boxes_btn.setIconSize(QSize(20, 20))
-        self.view_boxes_btn.setFixedSize(40, 40)
-        self.view_boxes_btn.setCheckable(True)
-        self.view_boxes_btn.setChecked(True)
-        self.view_boxes_btn.setToolTip("Toggle Boxes")
-        self.view_boxes_btn.clicked.connect(self._toggle_boxes)
-        controls_layout.addWidget(self.view_boxes_btn)
-
-        # View Mesh toggle
-        self.view_mesh_btn = QPushButton()
-        self.view_mesh_btn.setIcon(self._create_mesh_icon())
-        self.view_mesh_btn.setIconSize(QSize(20, 20))
-        self.view_mesh_btn.setFixedSize(40, 40)
-        self.view_mesh_btn.setCheckable(True)
-        self.view_mesh_btn.setChecked(True)
-        self.view_mesh_btn.setToolTip("Toggle Mesh")
-        self.view_mesh_btn.clicked.connect(self._toggle_mesh)
-        controls_layout.addWidget(self.view_mesh_btn)
-        controls_layout.addSpacing(5)
-
-        # Icon label
-        self.backface_btn = QPushButton()
-        self.backface_btn.setIcon(self._create_backface_icon())
-        self.backface_btn.setIconSize(QSize(20, 20))
-        self.backface_btn.setFixedSize(40, 40)
-        self.backface_btn.setCheckable(True)
-        self.backface_btn.setChecked(False)
-        self.backface_btn.setToolTip("Toggle Backface")
-        self.backface_btn.clicked.connect(self._toggle_backface_culling)
-        controls_layout.addWidget(self.backface_btn)
-
-        return controls_frame
+        lay.addStretch()
+        return f
 
 
     def _update_toolbar_for_docking_state(self): #vers 1
@@ -2751,8 +3540,13 @@ class COLWorkshop(QWidget): #vers 3
                 self.main_window.log_message(f"📋 Found {len(self.txd_list)} COL files")
         except Exception as e:
             if self.main_window and hasattr(self.main_window, 'log_message'):
-                self.main_window.log_message(f"❌ Error loading COL list: {str(e)}")
+                self.main_window.log_message(f"Error loading COL list: {str(e)}")
 
+
+  #  def setup_col_table_structure(workshop): pass
+  #  def populate_col_table(workshop, col_file):
+  #      for model in col_file.models:
+  #          print(f"Model: {model.header.name}")
 
 # - Rest of the logic for the panels
 
@@ -2822,7 +3616,7 @@ class COLWorkshop(QWidget): #vers 3
         if level_data is None:
             # Return collision preview widget for main preview area
             preview = CollisionPreviewWidget(self)
-            img_debugger.debug(f"Created CollisionPreviewWidget: {type(preview)}")  # ADD THIS
+            print(f"Created CollisionPreviewWidget: {type(preview)}")  # ADD THIS
             return preview
 
         # Original logic with level_data for mipmap/level cards (if needed)
@@ -3049,38 +3843,6 @@ class COLWorkshop(QWidget): #vers 3
 
 # - Marker 5
 
-    def _apply_title_font(self): #vers 1
-        """Apply title font to title bar labels"""
-        if hasattr(self, 'title_font'):
-            # Find all title labels
-            for label in self.findChildren(QLabel):
-                if label.objectName() == "title_label" or "🗺️" in label.text():
-                    label.setFont(self.title_font)
-
-
-    def _apply_panel_font(self): #vers 1
-        """Apply panel font to info panels and labels"""
-        if hasattr(self, 'panel_font'):
-            # Apply to info labels (shadow, Bumpmaps, status labels)
-            for label in self.findChildren(QLabel):
-                if any(x in label.text() for x in ["shadow:", "Bumpmaps:", "Status:", "Type:", "Format:"]):
-                    label.setFont(self.panel_font)
-
-
-    def _apply_button_font(self): #vers 1
-        """Apply button font to all buttons"""
-        if hasattr(self, 'button_font'):
-            for button in self.findChildren(QPushButton):
-                button.setFont(self.button_font)
-
-
-    def _apply_infobar_font(self): #vers 1
-        """Apply fixed-width font to info bar at bottom"""
-        if hasattr(self, 'infobar_font'):
-            if hasattr(self, 'info_bar'):
-                self.info_bar.setFont(self.infobar_font)
-
-
     def _toggle_tearoff(self): #vers 2
         """Toggle tear-off state (merge back to IMG Factory) - IMPROVED"""
         try:
@@ -3096,7 +3858,7 @@ class COLWorkshop(QWidget): #vers 3
                     self.main_window.log_message(f"{App_name} docked back to main window")
                     
         except Exception as e:
-            img_debugger.error(f"Error toggling tear-off: {str(e)}")
+            print(f"Error toggling tear-off: {str(e)}")
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Tear-off Error", f"Could not toggle tear-off state:\n{str(e)}")
 
@@ -3121,7 +3883,7 @@ class COLWorkshop(QWidget): #vers 3
             if not hasattr(self, 'app_settings') or self.app_settings is None:
                 self.app_settings = AppSettings()
                 if not hasattr(self.app_settings, 'current_settings'):
-                    img_debugger.error("AppSettings failed to initialize")
+                    print("AppSettings failed to initialize")
                     from PyQt6.QtWidgets import QMessageBox
                     QMessageBox.warning(self, "Error", "Could not initialize theme system")
                     return
@@ -3135,13 +3897,13 @@ class COLWorkshop(QWidget): #vers 3
             if dialog.exec():
                 # Apply theme after dialog closes
                 self._apply_theme()
-                img_debugger.success("Theme settings applied")
+                print("Theme settings applied")
                 if hasattr(self, 'main_window') and self.main_window:
                     if hasattr(self.main_window, 'log_message'):
                         self.main_window.log_message("Theme settings updated")
 
         except Exception as e:
-            img_debugger.error(f"Theme settings error: {e}")
+            print(f"Theme settings error: {e}")
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Theme Error", f"Could not load theme system:\n{e}")
 
@@ -3725,13 +4487,9 @@ class COLWorkshop(QWidget): #vers 3
 
     def _enable_move_mode(self): #vers 2
         """Enable move window mode using system move"""
-        # Use Qt's system move which works on Windows, Linux, etc.
-        if hasattr(self.windowHandle(), 'startSystemMove'):
-            self.windowHandle().startSystemMove()
-        else:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(self, "Move Window",
-                "Drag the titlebar to move the window")
+        handle = self.windowHandle()
+        if handle and hasattr(handle, 'startSystemMove'):
+            handle.startSystemMove()
 
     def _toggle_upscale_native(self): #vers 1
         """Toggle upscale native resolution"""
@@ -3777,12 +4535,12 @@ class COLWorkshop(QWidget): #vers 3
         menu.exec(self.mapToGlobal(pos))
 
 
-    def _get_icon_color(self): #vers 1
-        """Get icon color from current theme"""
+    def _get_icon_color(self): #vers 2
+        """Get icon colour from current theme — returns text_primary."""
         if APPSETTINGS_AVAILABLE and self.app_settings:
             colors = self.app_settings.get_theme_colors()
-            return colors.get('text_primary', '#ffffff')
-        return '#ffffff'
+            return colors.get('text_primary', '#000000')
+        return '#000000'
 
 
     def _apply_fonts_to_widgets(self): #vers 1
@@ -3838,7 +4596,7 @@ class COLWorkshop(QWidget): #vers 3
                 # Force update
                 self.update()
 
-                img_debugger.success(f"Theme applied: {theme_name}")
+                print(f"Theme applied: {theme_name}")
                 if self.main_window and hasattr(self.main_window, 'log_message'):
                     self.main_window.log_message(f"Theme applied: {theme_name}")
             else:
@@ -3853,9 +4611,9 @@ class COLWorkshop(QWidget): #vers 3
                         border: 1px solid #3a3a3a;
                     }
                 """)
-                img_debugger.warning("No app_settings found, using fallback theme")
+                print("No app_settings found, using fallback theme")
         except Exception as e:
-            img_debugger.error(f"Theme application error: {e}")
+            print(f"Theme application error: {e}")
 
 
     def _apply_settings(self, dialog): #vers 5
@@ -3921,9 +4679,203 @@ class COLWorkshop(QWidget): #vers 3
                 self.open_col_file(file_path)
 
         except Exception as e:
-            img_debugger.error(f"Error in open file dialog: {str(e)}")
+            print(f"Error in open file dialog: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to open file:\n{str(e)}")
 
+
+
+    def _toggle_col_view(self): #vers 1
+        """Toggle between detail table and compact thumbnail+name list."""
+        if self._col_view_mode == 'list':
+            self._col_view_mode = 'detail'
+            self.collision_list.setVisible(False)
+            self.col_compact_list.setVisible(True)
+            self.col_view_toggle_btn.setText("[=]")
+            self.col_view_toggle_btn.setToolTip("Switch to detail table view")
+            if (self.col_compact_list.rowCount() == 0
+                    and self.collision_list.rowCount() > 0
+                    and self.current_col_file):
+                self._populate_compact_col_list()
+        else:
+            self._col_view_mode = 'list'
+            self.col_compact_list.setVisible(False)
+            self.collision_list.setVisible(True)
+            self.col_view_toggle_btn.setText("[T]")
+            self.col_view_toggle_btn.setToolTip("Switch to compact thumbnail view")
+
+    def _populate_compact_col_list(self): #vers 1
+        """Fill compact two-column list (icon + name/version/counts)."""
+        try:
+            self.col_compact_list.setRowCount(0)
+            models = getattr(self.current_col_file, 'models', [])
+            for i, model in enumerate(models):
+                self.col_compact_list.insertRow(i)
+
+                # Col 0: real collision thumbnail
+                icon_item = QTableWidgetItem()
+                pm = self._generate_collision_thumbnail(model, 64, 64,
+                                yaw=self._thumb_yaw, pitch=self._thumb_pitch)
+                icon_item.setData(Qt.ItemDataRole.DecorationRole, pm)
+                self.col_compact_list.setItem(i, 0, icon_item)
+
+                # Col 1: name + stats
+                name = getattr(model, 'name', '') or f'model_{i}'
+                ver  = getattr(model, 'version', None)
+                ver_str = ver.name if hasattr(ver, 'name') else str(ver) if ver else '?'
+                spheres = len(getattr(model, 'spheres',  []))
+                boxes   = len(getattr(model, 'boxes',    []))
+                verts   = len(getattr(model, 'vertices', []))
+                faces   = len(getattr(model, 'faces',    []))
+
+                line1 = name
+                line2 = "Version: " + ver_str
+                line3 = "Spheres: " + str(spheres) + "  Boxes: " + str(boxes)
+                line4 = "Verts: "   + str(verts)   + "  Faces: " + str(faces)
+                details = line1 + "\n" + line2 + "\n" + line3 + "\n" + line4
+
+                det_item = QTableWidgetItem(details)
+                det_item.setToolTip(details)
+                self.col_compact_list.setItem(i, 1, det_item)
+                self.col_compact_list.setRowHeight(i, 72)
+
+            self.col_compact_list.setColumnWidth(0, 72)
+        except Exception as e:
+            print("_populate_compact_col_list error: " + str(e))
+
+    def _on_compact_col_selected(self): #vers 3
+        """Handle compact [=] list selection."""
+        try:
+            rows = self.col_compact_list.selectionModel().selectedRows()
+            if rows:
+                self._select_model_by_row(rows[0].row())
+        except Exception as e:
+            print("_on_compact_col_selected error: " + str(e))
+
+    def _push_undo(self, model_index, description=""): #vers 1
+        """Deep-copy model[model_index] onto undo stack before any edit."""
+        import copy
+        if not self.current_col_file:
+            return
+        models = getattr(self.current_col_file, 'models', [])
+        if model_index < 0 or model_index >= len(models):
+            return
+        self.undo_stack.append({
+            'description': description,
+            'model_index': model_index,
+            'model_data':  copy.deepcopy(models[model_index]),
+        })
+        if len(self.undo_stack) > 50:
+            self.undo_stack.pop(0)
+        if hasattr(self, 'undo_col_btn'):
+            self.undo_col_btn.setEnabled(True)
+
+    def _undo_last_action(self): #vers 2
+        """Restore the last deep-copied model from the undo stack."""
+        try:
+            if not self.undo_stack:
+                return
+            entry = self.undo_stack.pop()
+            idx   = entry['model_index']
+            saved = entry['model_data']
+            desc  = entry.get('description', '')
+            if self.current_col_file:
+                models = getattr(self.current_col_file, 'models', [])
+                if idx < len(models):
+                    models[idx] = saved
+                    self._populate_collision_list()
+                    self._populate_compact_col_list()
+                    if hasattr(self, 'preview_widget'):
+                        self.preview_widget.set_current_model(saved, idx)
+            if hasattr(self, 'undo_col_btn'):
+                self.undo_col_btn.setEnabled(bool(self.undo_stack))
+            msg = f"Undo: {desc}" if desc else "Undo applied"
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(msg)
+        except Exception as e:
+            print(f"Undo error: {e}")
+
+    def _export_col_data(self): #vers 1
+        """Export selected COL models (or all if none selected) to individual .col files."""
+        try:
+            if not self.current_col_file:
+                QMessageBox.warning(self, "Export", "No COL file loaded.")
+                return
+
+            models = getattr(self.current_col_file, 'models', [])
+            if not models:
+                QMessageBox.warning(self, "Export", "No collision models to export.")
+                return
+
+            # Determine which rows to export
+            selected_rows = self.collision_list.selectionModel().selectedRows()
+            if selected_rows:
+                indices = [r.row() for r in selected_rows if r.row() < len(models)]
+            else:
+                indices = list(range(len(models)))
+
+            if not indices:
+                return
+
+            # Single model — save directly
+            if len(indices) == 1:
+                model = models[indices[0]]
+                name = getattr(model, 'name', f'model_{indices[0]}')
+                default = name.lower().replace(' ', '_') + '.col'
+                path, _ = QFileDialog.getSaveFileName(
+                    self, "Export COL Model", default,
+                    "COL Files (*.col);;All Files (*)")
+                if not path:
+                    return
+                paths = [(indices[0], path)]
+            else:
+                # Multiple — ask for a folder
+                from PyQt6.QtWidgets import QFileDialog as _QFD
+                folder = _QFD.getExistingDirectory(
+                    self, f"Export {len(indices)} COL Models to Folder")
+                if not folder:
+                    return
+                import os
+                paths = []
+                for i in indices:
+                    name = getattr(models[i], 'name', f'model_{i}')
+                    fname = name.lower().replace(' ', '_') + '.col'
+                    paths.append((i, os.path.join(folder, fname)))
+
+            # Write each model
+            import os
+            from apps.methods.col_workshop_loader import COLFile
+            ok = 0
+            for idx, out_path in paths:
+                try:
+                    model = models[idx]
+                    out_col = COLFile()
+                    out_col.models = [model]
+                    raw = getattr(model, '_raw_bytes', None)
+                    if hasattr(out_col, 'save') and out_col.save(out_path):
+                        ok += 1
+                    elif raw:
+                        with open(out_path, 'wb') as f:
+                            f.write(raw)
+                        ok += 1
+                    else:
+                        print(f"Could not serialise model {idx} ({getattr(model,'name','')})")
+                except Exception as e:
+                    print(f"Export model {idx} failed: {e}")
+
+            msg = (f"Exported {ok} of {len(paths)} model(s)."
+                   if len(paths) > 1 else
+                   f"Exported {os.path.basename(paths[0][1])}")
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(msg)
+            if ok:
+                QMessageBox.information(self, "Export Complete", msg)
+            else:
+                QMessageBox.warning(self, "Export Failed",
+                    "No models could be serialised.\n"
+                    "Export from right-click → Export Model for individual models.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", str(e))
 
     def _save_file(self): #vers 1
         """Save current COL file"""
@@ -3937,20 +4889,30 @@ class COLWorkshop(QWidget): #vers 3
                 self._save_file_as()
                 return
 
-            # Save to current path
-            if self.current_col_file.save():
+            # Save to current path — write raw_data back (COLFile has no serialiser yet)
+            raw = getattr(self.current_col_file, 'raw_data', None)
+            if not raw:
+                QMessageBox.warning(self, "Save",
+                    "No raw COL data available to save.\n"
+                    "The file can only be saved if it was loaded from disk.")
+                return
+            try:
+                with open(self.current_file_path, 'wb') as f:
+                    f.write(raw)
                 if self.main_window and hasattr(self.main_window, 'log_message'):
-                    self.main_window.log_message(f"✅ Saved COL: {os.path.basename(self.current_file_path)}")
-
-                QMessageBox.information(self, "Save", f"COL file saved successfully:\n{os.path.basename(self.current_file_path)}")
-                img_debugger.success(f"Saved COL file: {self.current_file_path}")
-            else:
-                error_msg = self.current_col_file.save_error if hasattr(self.current_col_file, 'save_error') else "Unknown error"
-                QMessageBox.critical(self, "Save Error", f"Failed to save COL file:\n{error_msg}")
-                img_debugger.error(f"Save failed: {error_msg}")
+                    self.main_window.log_message(
+                        f"Saved COL: {os.path.basename(self.current_file_path)}")
+                QMessageBox.information(self, "Save",
+                    f"Saved:\n{os.path.basename(self.current_file_path)}")
+                if hasattr(self, 'save_col_btn'):
+                    self.save_col_btn.setEnabled(True)
+                if hasattr(self, 'save_btn'):
+                    self.save_btn.setEnabled(True)
+            except Exception as write_err:
+                QMessageBox.critical(self, "Save Error", str(write_err))
 
         except Exception as e:
-            img_debugger.error(f"Error saving file: {str(e)}")
+            print(f"Error saving file: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to save file:\n{str(e)}")
 
 
@@ -3970,7 +4932,7 @@ class COLWorkshop(QWidget): #vers 3
                 self._save_file()
 
         except Exception as e:
-            img_debugger.error(f"Error in save as dialog: {str(e)}")
+            print(f"Error in save as dialog: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to save file:\n{str(e)}")
 
 
@@ -4017,15 +4979,20 @@ class COLWorkshop(QWidget): #vers 3
     def open_col_file(self, file_path): #vers 3
         """Open standalone COL file - supports COL1, COL2, COL3"""
         try:
-            from apps.methods.col_core_classes import COLFile
+            from apps.methods.col_workshop_loader import COLFile
 
             # Create and load COL file
-            col_file = COLFile()
-            col_file.load_from_file(file_path)
+            # col_file = COLFile()
+            # col_file.load_from_file(file_path)
 
-            if not col_file.load_from_file(file_path):
-                error_msg = col_file.load_error if hasattr(col_file, 'load_error') else "Unknown error"
-                QMessageBox.warning(self, "Open Failed", f"Failed to load COL file:\n{error_msg}")
+            #from apps.methods.col_workshop_loader import load_col_with_progress
+            #col_file = load_col_with_progress(file_path, self)
+
+            #if not col_file:  # Just check if None
+            #    return False
+
+            col_file = COLFile(debug=True)
+            if not col_file.load(file_path):
                 return False
 
             # Store loaded file
@@ -4037,47 +5004,185 @@ class COLWorkshop(QWidget): #vers 3
             version_str = f"COL ({model_count} models)"
             self.setWindowTitle(f"{App_name} - {os.path.basename(file_path)} - {version_str}")
 
-            # Populate UI
-            self._populate_collision_list()  # ADD THIS LINE
+            # Populate UI — compact view is default, also populate detail table
+            self._populate_compact_col_list()
+            self._populate_collision_list()
 
             # Select first model by default
-            if self.collision_list.rowCount() > 0:
-                self.collision_list.selectRow(0)
-                self._on_collision_selected()
+            active_list = (self.col_compact_list
+                          if self._col_view_mode == 'detail'
+                          else self.collision_list)
+            if active_list.rowCount() > 0:
+                active_list.selectRow(0)
+                self._select_model_by_row(0)
 
 
-            # Enable buttons
-            if hasattr(self, 'save_btn'):
-                self.save_btn.setEnabled(True)
-            if hasattr(self, 'analyze_btn'):
-                self.analyze_btn.setEnabled(True)
+            # Enable all buttons that require a loaded file
+            for btn_name in [
+                'save_btn', 'save_col_btn', 'saveall_btn',
+                'export_col_btn', 'export_all_btn', 'export_btn',
+                'import_btn', 'analyze_btn', 'undo_btn', 'undo_col_btn',
+                'flip_vert_btn', 'flip_horz_btn', 'rotate_cw_btn', 'rotate_ccw_btn',
+                'copy_btn', 'create_surface_btn', 'delete_surface_btn',
+                'duplicate_surface_btn', 'paint_btn', 'surface_type_btn',
+                'surface_edit_btn', 'build_from_txd_btn',
+                'switch_btn', 'convert_btn',
+                'show_shadow_btn', 'create_shadow_btn', 'remove_shadow_btn',
+                'compress_btn', 'uncompress_btn',
+            ]:
+                btn = getattr(self, btn_name, None)
+                if btn:
+                    btn.setEnabled(True)
+
+
 
             if self.main_window and hasattr(self.main_window, 'log_message'):
                 self.main_window.log_message(f"✅ Loaded COL: {os.path.basename(file_path)} ({model_count} models)")
 
-            img_debugger.success(f"Opened COL file: {file_path} with {model_count} models")
+            print(f"Opened COL file: {file_path} with {model_count} models")
             return True
 
         except Exception as e:
-            img_debugger.error(f"Error opening COL file: {str(e)}")
+            print(f"Error opening COL file: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to open COL file:\n{str(e)}")
             return False
 
 
-    def load_from_img_archive(self, img_path): #vers 1
-        """Load COL files from IMG archive"""
+    def _pick_col_from_current_img(self): #vers 1
+        """Pick a COL entry from the IMG currently loaded in IMG Factory and open it."""
         try:
-            # TODO: Implement IMG archive COL loading
-            # This would extract COL files from the IMG and populate the list
+            # Get the main IMG Factory window and its loaded IMG
+            mw = self.main_window
+            img = getattr(mw, 'current_img', None) if mw else None
 
-            if self.main_window and hasattr(self.main_window, 'log_message'):
-                self.main_window.log_message(f"Loading COL files from IMG: {os.path.basename(img_path)}")
+            if not img or not getattr(img, 'entries', None):
+                QMessageBox.information(self, "No IMG Loaded",
+                    "No IMG archive is currently open in IMG Factory.\n"
+                    "Open an IMG file first, then use From IMG.")
+                return
 
-            img_debugger.info(f"IMG archive COL loading - not yet implemented: {img_path}")
-            return False
+            col_entries = [e for e in img.entries
+                           if getattr(e, 'name', '').lower().endswith('.col')]
+
+            if not col_entries:
+                QMessageBox.information(self, "No COL Entries",
+                    f"No .col entries found in {os.path.basename(img.file_path)}.")
+                return
+
+            # Show a picker dialog
+            from PyQt6.QtWidgets import QDialog, QListWidget, QDialogButtonBox, QVBoxLayout, QLabel
+            dlg = QDialog(self)
+            dlg.setWindowTitle(f"Pick COL — {os.path.basename(img.file_path)}")
+            dlg.setMinimumSize(320, 400)
+            v = QVBoxLayout(dlg)
+            v.addWidget(QLabel(f"{len(col_entries)} COL entries in {os.path.basename(img.file_path)}:"))
+            lst = QListWidget()
+            for e in col_entries:
+                lst.addItem(e.name)
+            lst.setCurrentRow(0)
+            v.addWidget(lst)
+            btns = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Open |
+                QDialogButtonBox.StandardButton.Cancel)
+            btns.accepted.connect(dlg.accept)
+            btns.rejected.connect(dlg.reject)
+            v.addWidget(btns)
+            lst.doubleClicked.connect(dlg.accept)
+
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            row = lst.currentRow()
+            if row < 0:
+                return
+
+            entry = col_entries[row]
+            self._open_col_from_img_entry(img, entry)
 
         except Exception as e:
-            img_debugger.error(f"Error loading from IMG archive: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to pick COL from IMG:\n{e}")
+
+    def _open_col_from_img_entry(self, img, entry): #vers 1
+        """Extract a COL entry from an IMGFile and load it into the workshop."""
+        try:
+            import tempfile
+            data = img.read_entry_data(entry)
+            if not data:
+                QMessageBox.warning(self, "Extract Failed",
+                    f"Could not extract {entry.name} from IMG.")
+                return
+
+            stem = os.path.splitext(entry.name)[0]
+            tmp = tempfile.NamedTemporaryFile(
+                delete=False, suffix='.col', prefix=stem + '_')
+            tmp.write(data)
+            tmp.close()
+
+            self.open_col_file(tmp.name)
+            # Retitle with original name
+            self.setWindowTitle(
+                f"COL Workshop — {entry.name} (from {os.path.basename(img.file_path)})")
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(
+                    f"COL Workshop: opened {entry.name} from {os.path.basename(img.file_path)}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open {entry.name}:\n{e}")
+
+    def open_img_archive(self): #vers 1
+        """Open file dialog to select an IMG archive and load COL entries from it"""
+        try:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Open IMG Archive",
+                "",
+                "IMG Archives (*.img);;All Files (*)"
+            )
+            if file_path:
+                self.load_from_img_archive(file_path)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open IMG:\n{str(e)}")
+
+
+    def load_from_img_archive(self, img_path): #vers 2
+        """Load all COL entries from an IMG archive and populate the collision list"""
+        try:
+            from apps.methods.img_core_classes import IMGFile
+            from apps.methods.col_workshop_loader import COLFile
+
+            img = IMGFile(img_path)
+            img.open()
+            self.current_img = img
+
+            img_name = os.path.basename(img_path)
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(f"Scanning {img_name} for COL entries...")
+
+            col_entries = [e for e in img.entries
+                           if getattr(e, 'name', '').lower().endswith('.col')]
+
+            if not col_entries:
+                QMessageBox.information(self, "No COL Files",
+                    f"No .col entries found in {img_name}")
+                return False
+
+            # Populate the collision list widget with COL entries
+            if hasattr(self, 'collision_list'):
+                self.collision_list.clear()
+                for entry in col_entries:
+                    item = QListWidgetItem(entry.name)
+                    item.setData(Qt.ItemDataRole.UserRole, entry)
+                    self.collision_list.addItem(item)
+
+            count = len(col_entries)
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(
+                    f"Loaded {count} COL entr{'ies' if count != 1 else 'y'} from {img_name}")
+
+            self.setWindowTitle(f"COL Workshop: {img_name}")
+            return True
+
+        except Exception as e:
+            print(f"Error loading from IMG archive: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to load from IMG:\n{str(e)}")
             return False
 
@@ -4107,7 +5212,7 @@ class COLWorkshop(QWidget): #vers 3
                 self.main_window.log_message(f"✅ Analyzed COL: {os.path.basename(self.current_file_path)}")
 
         except Exception as e:
-            img_debugger.error(f"Error analyzing file: {str(e)}")
+            print(f"Error analyzing file: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to analyze file:\n{str(e)}")
 
 
@@ -4123,7 +5228,7 @@ class COLWorkshop(QWidget): #vers 3
                     self._load_col_files(col_data, entry.name)
         except Exception as e:
             if self.main_window and hasattr(self.main_window, 'log_message'):
-                self.main_window.log_message(f"❌ Error selecting COL: {str(e)}")
+                self.main_window.log_message(f"Error selecting COL: {str(e)}")
 
 
     def _extract_col_from_img(self, entry): #vers 2
@@ -4134,92 +5239,693 @@ class COLWorkshop(QWidget): #vers 3
             return self.current_img.read_entry_data(entry)
         except Exception as e:
             if self.main_window and hasattr(self.main_window, 'log_message'):
-                self.main_window.log_message(f"❌ Extract error: {str(e)}")
+                self.main_window.log_message(f"Extract error: {str(e)}")
             return None
 
 
-    def _on_collision_selected(self): #vers 6
-        """Handle COL model selection from table"""
+
+    def _paint_model_onto(self, painter, model, W, H,
+                          yaw, pitch, zoom, pan_x, pan_y,
+                          flip_h, flip_v,
+                          show_spheres, show_boxes, show_mesh,
+                          backface, render_style, bg_color,
+                          gizmo_mode='translate', viewport=None): #vers 4
+        """Paint COL model: grid → geometry → gizmo → HUD.
+        Uses viewport's own projection when available (consistent coords)."""
+        from PyQt6.QtGui import QPen, QBrush, QColor, QFont, QPolygonF
+        from PyQt6.QtCore import QPointF
+        import math
+
+        # ── Use viewport's projection if available ────────────────────────
+        if viewport is not None:
+            vp = viewport
+        else:
+            vp = getattr(self, 'preview_widget', None)
+
+        if vp is not None:
+            scale, ox, oy = vp._get_scale_origin()
+            def proj3(x,y,z): return vp._proj(x,y,z)
+            def to_screen(x,y,z):
+                px,py = proj3(x,y,z)
+                return px*scale+ox, py*scale+oy
+        else:
+            # Fallback standalone projection
+            yr = math.radians(yaw);   cy, sy = math.cos(yr), math.sin(yr)
+            pr = math.radians(pitch); cp, sp = math.cos(pr), math.sin(pr)
+            def proj3(x,y,z):
+                rx=x*cy-y*sy; ry=x*sy+y*cy
+                return rx, ry*cp-z*sp
+            scale, ox, oy, _ = self._project_model_2d(model, W, H, padding=20,
+                                                        yaw=yaw, pitch=pitch)
+            def to_screen(x,y,z):
+                px,py=proj3(x,y,z); return px*scale+ox, py*scale+oy
+
+        # ── Model geometry extent for grid sizing ─────────────────────────
+        verts = getattr(model, 'vertices', [])
+        if verts:
+            xs=[v.x for v in verts]; ys=[v.y for v in verts]; zs=[v.z for v in verts]
+            extent = max(max(abs(x) for x in xs+ys+zs), 1.0)
+        else:
+            extent = 5.0
+
+        # ── Reference grid (XY plane Z=0) ────────────────────────────────
+        raw_step = extent / 4.0
+        mag  = 10 ** math.floor(math.log10(max(raw_step, 0.001)))
+        step = round(raw_step / mag) * mag; step = max(step, 0.01)
+        half = math.ceil(extent / step + 1) * step
+        n    = int(half / step)
+
+        painter.setRenderHint(painter.renderHints().__class__.Antialiasing, False)
+        for i in range(-n, n+1):
+            v2 = i * step
+            col = QColor(75, 80, 105) if i == 0 else QColor(50, 55, 72)
+            painter.setPen(QPen(col, 1))
+            x0,y0 = to_screen(-half, v2, 0); x1,y1 = to_screen(half, v2, 0)
+            painter.drawLine(int(x0),int(y0),int(x1),int(y1))
+            x0,y0 = to_screen(v2, -half, 0); x1,y1 = to_screen(v2, half, 0)
+            painter.drawLine(int(x0),int(y0),int(x1),int(y1))
+        painter.setRenderHint(painter.renderHints().__class__.Antialiasing, True)
+
+        # ── Model geometry (uses viewport's to_screen — zoom/pan consistent) ──
+        from PyQt6.QtGui import QPolygonF as _PF
+        from PyQt6.QtCore import QPointF as _P, QRectF as _R
+
+        def g3(obj):
+            """Get (x,y,z) from vertex, sphere centre, or tuple."""
+            if hasattr(obj,'x'):        return obj.x, obj.y, obj.z
+            if hasattr(obj,'position'): return obj.position.x,obj.position.y,obj.position.z
+            return float(obj[0]),float(obj[1]),float(obj[2])
+
+        # Mesh faces
+        if show_mesh:
+            _verts = getattr(model,'vertices',[])
+            _faces = getattr(model,'faces',[])
+            if _verts and _faces:
+                painter.setPen(QPen(QColor(120,180,120,180), 0.5))
+                painter.setBrush(QBrush(QColor(60,120,60,80)))
+                for face in _faces:
+                    idx = getattr(face,'vertex_indices',None)
+                    if idx is None:
+                        fa = getattr(face,'a',None)
+                        if fa is not None: idx=(fa,face.b,face.c)
+                    if idx and len(idx)==3:
+                        try:
+                            pts=[_P(*to_screen(*g3(_verts[i]))) for i in idx]
+                            painter.drawPolygon(_PF(pts))
+                        except (IndexError,AttributeError):
+                            pass
+
+        # Boxes
+        if show_boxes:
+            painter.setPen(QPen(QColor(220,180,50),1.5))
+            painter.setBrush(QBrush(QColor(220,180,50,40)))
+            for box in getattr(model,'boxes',[]):
+                bmin = box.min_point if hasattr(box,'min_point') else box.min
+                bmax = box.max_point if hasattr(box,'max_point') else box.max
+                x1,y1=to_screen(*g3(bmin)); x2,y2=to_screen(*g3(bmax))
+                painter.drawRect(_R(min(x1,x2),min(y1,y2),abs(x2-x1) or 2,abs(y2-y1) or 2))
+
+        # Spheres
+        if show_spheres:
+            painter.setPen(QPen(QColor(80,200,220),1.5))
+            painter.setBrush(QBrush(QColor(80,200,220,40)))
+            for sph in getattr(model,'spheres',[]):
+                cx,cy,cz=g3(sph.center) if hasattr(sph,'center') else (0,0,0)
+                r = sph.radius * scale
+                sx,sy=to_screen(cx,cy,cz)
+                painter.drawEllipse(_R(sx-r,sy-r,r*2 or 2,r*2 or 2))
+
+        # ── Gizmo at model centroid ───────────────────────────────────────
+        if verts:
+            cx3=sum(v.x for v in verts)/len(verts)
+            cy3=sum(v.y for v in verts)/len(verts)
+            cz3=sum(v.z for v in verts)/len(verts)
+        else:
+            cx3=cy3=cz3=0.0
+        gx, gy = to_screen(cx3, cy3, cz3)
+        arm = max(45, min(W,H) * 0.15)
+
+        axes = [((1,0,0),QColor(220,60,60),'X'),
+                ((0,1,0),QColor(60,200,60),'Y'),
+                ((0,0,1),QColor(60,120,220),'Z')]
+        sorted_axes = sorted(axes, key=lambda a: proj3(*a[0])[1], reverse=True)
+
+        if gizmo_mode == 'translate':
+            for (dx,dy,dz), color, label in sorted_axes:
+                px,py = proj3(dx,dy,dz)
+                tx,ty = gx+px*arm, gy+py*arm
+                painter.setPen(QPen(color,2))
+                painter.drawLine(int(gx),int(gy),int(tx),int(ty))
+                ang = math.atan2(ty-gy, tx-gx); aw,ah = 12,6
+                tip  = QPointF(tx,ty)
+                lpt  = QPointF(tx-aw*math.cos(ang)+ah*math.sin(ang), ty-aw*math.sin(ang)-ah*math.cos(ang))
+                rpt  = QPointF(tx-aw*math.cos(ang)-ah*math.sin(ang), ty-aw*math.sin(ang)+ah*math.cos(ang))
+                painter.setBrush(QBrush(color)); painter.setPen(QPen(color,1))
+                painter.drawPolygon(QPolygonF([tip,lpt,rpt]))
+                lx=tx+(9 if tx>=gx else -14); ly=ty+(5 if ty>=gy else -3)
+                painter.setFont(QFont('Arial',8,QFont.Weight.Bold))
+                painter.setPen(color); painter.drawText(int(lx),int(ly),label)
+        else:
+            # Rotate rings
+            N = 64
+            rings = [((1,0,0),(0,1,0),(0,0,1),QColor(220,60,60),'X'),
+                     ((0,1,0),(1,0,0),(0,0,1),QColor(60,200,60),'Y'),
+                     ((0,0,1),(1,0,0),(0,1,0),QColor(60,120,220),'Z')]
+            for (_,t1,t2,color,label) in sorted(rings, key=lambda r: proj3(*r[0])[1], reverse=True):
+                t1x,t1y,t1z=t1; t2x,t2y,t2z=t2
+                pts=[]
+                for i in range(N+1):
+                    a2=2*math.pi*i/N
+                    wx=math.cos(a2)*t1x+math.sin(a2)*t2x
+                    wy=math.cos(a2)*t1y+math.sin(a2)*t2y
+                    wz=math.cos(a2)*t1z+math.sin(a2)*t2z
+                    px2,py2=proj3(wx,wy,wz)
+                    pts.append(QPointF(gx+px2*arm, gy+py2*arm))
+                painter.setPen(QPen(color,2)); painter.setBrush(Qt.BrushStyle.NoBrush)
+                for i in range(len(pts)-1): painter.drawLine(pts[i],pts[i+1])
+                p45x=math.cos(math.pi/4)*t1x+math.sin(math.pi/4)*t2x
+                p45y=math.cos(math.pi/4)*t1y+math.sin(math.pi/4)*t2y
+                p45z=math.cos(math.pi/4)*t1z+math.sin(math.pi/4)*t2z
+                lp,lq=proj3(p45x,p45y,p45z)
+                painter.setFont(QFont('Arial',8,QFont.Weight.Bold)); painter.setPen(color)
+                painter.drawText(int(gx+lp*arm+(6 if lp>=0 else -12)),
+                                 int(gy+lq*arm+(5 if lq>=0 else -3)), label)
+
+        # Gizmo centre dot
+        painter.setBrush(QBrush(QColor(230,230,230))); painter.setPen(QPen(QColor(160,160,160),1))
+        painter.drawEllipse(int(gx)-5,int(gy)-5,10,10)
+
+        # ── Toggle button (top-right) ─────────────────────────────────────
+        bx,by,bw,bh = W-70,4,66,22
+        painter.setBrush(QBrush(QColor(40,44,62)))
+        painter.setPen(QPen(QColor(80,90,130),1))
+        painter.drawRoundedRect(bx,by,bw,bh,4,4)
+        painter.setFont(QFont('Arial',8)); painter.setPen(QColor(200,200,220))
+        lbl = '↕ Move [G]' if gizmo_mode=='translate' else '↻ Rotate [R]'
+        painter.drawText(bx+4,by+15,lbl)
+
+        # ── HUD ───────────────────────────────────────────────────────────
+        painter.setFont(QFont('Arial',8)); painter.setPen(QColor(200,200,200))
+        painter.drawText(6,14,getattr(model,'name',''))
+        y2=H-54
+        spheres=getattr(model,'spheres',[]); boxes=getattr(model,'boxes',[])
+        faces=getattr(model,'faces',[])
+        for col_c,txt in [(QColor(100,180,100),f"Mesh  F:{len(faces)} V:{len(verts)}"),
+                          (QColor(220,180,50), f"Boxes  {len(boxes)}"),
+                          (QColor(80,200,220), f"Spheres  {len(spheres)}")]:
+            painter.setPen(col_c); painter.drawText(6,y2,txt); y2+=14
+        painter.setPen(QColor(120,125,140)); painter.setFont(QFont('Arial',7))
+        painter.drawText(6,H-4,f"Y:{yaw:.0f}° P:{pitch:.0f}° Z:{zoom:.2f}x")
+        painter.drawText(W-68,H-4,f"grid {step:.3g}")
+
+
+    def _get_view_coords(self, model, view='xy'): #vers 1
+        """Get all geometry points projected to 2D using the selected view axis."""
+        def vc(v):
+            if hasattr(v, 'position'): return (v.position.x, v.position.y, v.position.z)
+            return (v.x, v.y, v.z)
+        def sc(s):
+            c = s.center
+            if hasattr(c, 'x'): return (c.x, c.y, c.z)
+            return (c[0], c[1], c[2])
+        def bc(b, which):
+            pt = b.min_point if which=='min' else b.max_point if hasattr(b,'min_point') else (b.min if which=='min' else b.max)
+            if hasattr(pt, 'x'): return (pt.x, pt.y, pt.z)
+            return (pt[0], pt[1], pt[2])
+
+        # Map view to (horiz_idx, vert_idx) in 3D coords
+        axes = {'xy': (0,1), 'xz': (0,2), 'yz': (1,2)}
+        hi, vi = axes.get(view, (0,1))
+
+        pts = []
+        for s in getattr(model, 'spheres', []):
+            x,y,z = sc(s); r = s.radius
+            coords = (x,y,z); px,py = coords[hi], coords[vi]
+            pts += [(px-r,py-r),(px+r,py+r)]
+        for b in getattr(model, 'boxes', []):
+            mn = bc(b,'min'); mx = bc(b,'max')
+            pts += [(mn[hi],mn[vi]),(mx[hi],mx[vi])]
+        for v in getattr(model, 'vertices', []):
+            x,y,z = vc(v)
+            coords = (x,y,z)
+            pts.append((coords[hi], coords[vi]))
+        return pts
+
+    def _project_model_2d(self, model, width, height, padding=8,
+                          yaw=0.0, pitch=0.0,
+                          flip_h=False, flip_v=False): #vers 3
+        """Project COL model geometry to 2D canvas using yaw/pitch rotation."""
+        import math
+        def _rot(pts3):
+            result = []
+            yr = math.radians(yaw)
+            pr = math.radians(pitch)
+            cy, sy = math.cos(yr), math.sin(yr)
+            cp, sp = math.cos(pr), math.sin(pr)
+            for x, y, z in pts3:
+                # yaw around Z axis
+                rx = x*cy - y*sy
+                ry = x*sy + y*cy
+                rz = z
+                # pitch around X axis
+                rx2 = rx
+                ry2 = ry*cp - rz*sp
+                rz2 = ry*sp + rz*cp
+                result.append((rx2, ry2))  # project onto screen plane
+            return result
+
+        def _pts3(model):
+            def vc(v):
+                if hasattr(v,'position'): return (v.position.x,v.position.y,v.position.z)
+                return (v.x,v.y,v.z)
+            def sc(s):
+                c = s.center
+                if hasattr(c,'x'): return (c.x,c.y,c.z)
+                return (c[0],c[1],c[2])
+            def bc(b, mn):
+                pt = (b.min_point if mn else b.max_point) if hasattr(b,'min_point') else (b.min if mn else b.max)
+                if hasattr(pt,'x'): return (pt.x,pt.y,pt.z)
+                return (pt[0],pt[1],pt[2])
+            pts = []
+            for s in getattr(model,'spheres',[]): x,y,z=sc(s); r=s.radius; pts+=[(x-r,y-r,z-r),(x+r,y+r,z+r)]
+            for b in getattr(model,'boxes',  []): pts+=[bc(b,True),bc(b,False)]
+            for v in getattr(model,'vertices',[]): pts.append(vc(v))
+            return pts
+
+        pts_3d = _pts3(model)
+        pts_2d = _rot(pts_3d) if pts_3d else []
+        if not pts_2d:
+            return 1.0, width//2, height//2, []
+        xs = [p[0] for p in pts_2d]
+        ys = [p[1] for p in pts_2d]
+        mn_x, mx_x = min(xs), max(xs)
+        mn_y, mx_y = min(ys), max(ys)
+        rng_x = mx_x - mn_x or 1.0
+        rng_y = mx_y - mn_y or 1.0
+        scale = min((width - padding*2) / rng_x, (height - padding*2) / rng_y)
+        cx = (mn_x + mx_x) / 2
+        cy = (mn_y + mx_y) / 2
+        ox = width  / 2 - cx * scale
+        oy = height / 2 - cy * scale
+
+        result = []
+        for px, py in pts_2d:
+            sx = px * scale + ox
+            sy = py * scale + oy
+            if flip_h: sx = width - sx
+            if flip_v: sy = height - sy
+            result.append((sx, sy))
+        return scale, ox, oy, result
+
+    def _draw_col_model(self, painter, model, width, height, padding=4,
+                       yaw=0.0, pitch=0.0,
+                       flip_h=False, flip_v=False): #vers 3
+        """Draw COL model onto a QPainter — used by both thumbnail and preview."""
+        from PyQt6.QtGui import QPen, QBrush, QColor
+        from PyQt6.QtCore import QRectF, QPointF
+        import math
+
+        import math
+        scale, ox, oy, _ = self._project_model_2d(
+            model, width, height, padding,
+            yaw=yaw, pitch=pitch, flip_h=flip_h, flip_v=flip_v)
+
+        yr = math.radians(yaw);  cy, sy = math.cos(yr), math.sin(yr)
+        pr = math.radians(pitch); cp, sp = math.cos(pr), math.sin(pr)
+
+        def _to2d(x, y, z):
+            rx  = x*cy - y*sy
+            ry  = x*sy + y*cy
+            rx2 = rx
+            ry2 = ry*cp - z*sp
+            sx = rx2 * scale + ox
+            sy2 = ry2 * scale + oy
+            if flip_h: sx  = width  - sx
+            if flip_v: sy2 = height - sy2
+            return sx, sy2
+
+        def _get3(obj):
+            if hasattr(obj,'x'):        return obj.x, obj.y, obj.z
+            elif hasattr(obj,'position'): return obj.position.x, obj.position.y, obj.position.z
+            else: return float(obj[0]), float(obj[1]), float(obj[2])
+
+        def proj_pt(obj):
+            return _to2d(*_get3(obj))
+
+        def wx(v): return (width  - (v*scale+ox)) if flip_h else (v*scale+ox)
+        def wy(v): return (height - (v*scale+oy)) if flip_v else (v*scale+oy)
+
+        # Mesh faces — filled triangles (grey)
+        verts = getattr(model, 'vertices', [])
+        faces = getattr(model, 'faces', [])
+        if verts and faces:
+            painter.setPen(QPen(QColor(120, 180, 120, 180), 0.5))
+            painter.setBrush(QBrush(QColor(60, 120, 60, 80)))
+            from PyQt6.QtGui import QPolygonF
+            for face in faces:
+                idx = getattr(face, 'vertex_indices', None)
+                if idx is None:
+                    fa = getattr(face, 'a', None)
+                    if fa is not None:
+                        idx = (fa, face.b, face.c)
+                if idx and len(idx) == 3:
+                    try:
+                        p0x, p0y = proj_pt(verts[idx[0]])
+                        p1x, p1y = proj_pt(verts[idx[1]])
+                        p2x, p2y = proj_pt(verts[idx[2]])
+                        poly = QPolygonF([
+                            QPointF(p0x, p0y),
+                            QPointF(p1x, p1y),
+                            QPointF(p2x, p2y),
+                        ])
+                        painter.drawPolygon(poly)
+                    except (IndexError, AttributeError):
+                        pass
+
+        # Boxes — yellow outline
+        painter.setPen(QPen(QColor(220, 180, 50), max(1.0, scale * 0.05)))
+        painter.setBrush(QBrush(QColor(220, 180, 50, 40)))
+        for box in getattr(model, 'boxes', []):
+            bmin_obj = box.min_point if hasattr(box, 'min_point') else box.min
+            bmax_obj = box.max_point if hasattr(box, 'max_point') else box.max
+            x1, y1 = proj_pt(bmin_obj)
+            x2, y2 = proj_pt(bmax_obj)
+            painter.drawRect(QRectF(min(x1,x2), min(y1,y2),
+                                    abs(x2-x1) or 2, abs(y2-y1) or 2))
+
+        # Spheres — cyan outline
+        painter.setPen(QPen(QColor(80, 200, 220), max(1.0, scale * 0.05)))
+        painter.setBrush(QBrush(QColor(80, 200, 220, 40)))
+        for sph in getattr(model, 'spheres', []):
+            r = sph.radius * scale
+            cx, cy = proj_pt(sph.center)
+            painter.drawEllipse(QRectF(cx - r, cy - r, r * 2 or 2, r * 2 or 2))
+
+    def _generate_collision_thumbnail(self, model, width=64, height=64,
+                                      yaw=0.0, pitch=0.0): #vers 2
+        """Generate a small QPixmap thumbnail of a COL model."""
+        from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen
+        pixmap = QPixmap(width, height)
+        pixmap.fill(QColor(30, 30, 40))
+        has_data = (getattr(model, 'spheres', []) or
+                    getattr(model, 'boxes', []) or
+                    getattr(model, 'vertices', []))
+        if not has_data:
+            painter = QPainter(pixmap)
+            painter.setPen(QPen(QColor(80, 80, 80), 1))
+            painter.drawLine(4, 4, width-4, height-4)
+            painter.drawLine(width-4, 4, 4, height-4)
+            painter.end()
+            return pixmap
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._draw_col_model(painter, model, width, height, padding=4,
+                             yaw=yaw, pitch=pitch)
+        painter.end()
+        return pixmap
+
+    def _render_collision_preview(self, model, width=400, height=400,
+                                  yaw=0.0, pitch=0.0,
+                                  flip_h=False, flip_v=False): #vers 3
+        """Render a full-size QPixmap preview of a COL model.
+        yaw/pitch are Euler angles in degrees for free rotation.
+        """
+        from PyQt6.QtGui import QPixmap, QPainter, QColor, QFont
+        from PyQt6.QtCore import Qt
+        pixmap = QPixmap(width, height)
+        pixmap.fill(QColor(25, 25, 35))
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        has_data = (getattr(model, 'spheres', []) or
+                    getattr(model, 'boxes', []) or
+                    getattr(model, 'vertices', []))
+
+        if not has_data:
+            painter.setPen(QColor(120, 120, 120))
+            painter.setFont(QFont('Arial', 11))
+            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "No geometry data")
+            painter.end()
+            return pixmap
+
+        self._draw_col_model(painter, model, width, height, padding=20,
+                            yaw=yaw, pitch=pitch,
+                            flip_h=flip_h, flip_v=flip_v)
+
+        # Legend
+        painter.setFont(QFont('Arial', 8))
+        y = height - 52
+        for color, label in [
+            (QColor(60, 120, 60),   f"Mesh  F:{len(getattr(model,'faces',[]))} V:{len(getattr(model,'vertices',[]))}"),
+            (QColor(220, 180, 50),  f"Boxes  {len(getattr(model,'boxes',[]))}"),
+            (QColor(80, 200, 220),  f"Spheres  {len(getattr(model,'spheres',[]))}"),
+        ]:
+            painter.setPen(color)
+            painter.drawText(6, y, label)
+            y += 14
+
+        # Model name
+        name = getattr(model, 'name', '')
+        if name:
+            painter.setPen(QColor(200, 200, 200))
+            painter.setFont(QFont('Arial', 9))
+            painter.drawText(6, 14, name)
+
+        painter.end()
+        return pixmap
+
+    def _on_collision_selected(self): #vers 8
+        """Handle [T] detail table selection."""
         try:
-            selected_rows = self.collision_list.selectionModel().selectedRows()
-            if not selected_rows:
-                img_debugger.debug("No rows selected")
+            rows = self.collision_list.selectionModel().selectedRows()
+            if rows:
+                self._select_model_by_row(rows[0].row())
+        except Exception as e:
+            print("_on_collision_selected error: " + str(e))
+
+    def _select_model_by_row(self, row): #vers 2
+        """Load model by row index into preview — works for both list views."""
+        try:
+            if not self.current_col_file:
                 return
-
-            row = selected_rows[0].row()
-            details_item = self.collision_list.item(row, 1)
-
-            if not details_item:
-                img_debugger.debug("No details item found")
+            models = getattr(self.current_col_file, 'models', [])
+            if row < 0 or row >= len(models):
                 return
+            model = models[row]
+            model_name = getattr(model, 'name', f'Model_{row}')
 
-            model_index = details_item.data(Qt.ItemDataRole.UserRole)
-            img_debugger.debug(f"Selected row {row}, model index {model_index}")
+            # Debug counts
+            nb = len(getattr(model,'boxes',[]));  ns = len(getattr(model,'spheres',[]))
+            nv = len(getattr(model,'vertices',[])); nf = len(getattr(model,'faces',[]))
+            print(f"SELECT [{row}] {model_name}: V={nv} F={nf} B={nb} S={ns}")
 
-            if not self.current_col_file or not hasattr(self.current_col_file, 'models'):
-                img_debugger.debug("No COL file or models")
-                return
-
-            if model_index is None or model_index < 0 or model_index >= len(self.current_col_file.models):
-                img_debugger.debug(f"Invalid model index: {model_index}")
-                return
-
-            # Get selected model
-            model = self.current_col_file.models[model_index]
-            model_name = getattr(model, 'name', f'Model_{model_index}')
-
-            # Update info display
+            # Name field
             if hasattr(self, 'info_name'):
                 self.info_name.setText(model_name)
 
-            # Update preview widget
-            if hasattr(self, 'preview_widget'):
-                if VIEWPORT_AVAILABLE and isinstance(self.preview_widget, COL3DViewport):
-                    # Use 3D viewport
-                    self.preview_widget.set_current_model(model, model_index)
-                    img_debugger.success(f"3D viewport updated for {model_name}")
+            # Push model into viewport
+            pw = getattr(self, 'preview_widget', None)
+            if pw:
+                if VIEWPORT_AVAILABLE and isinstance(pw, COL3DViewport):
+                    pw.set_current_model(model, row)
                 else:
-                    # Use 2D preview fallback
-                    width = max(400, self.preview_widget.width())
-                    height = max(400, self.preview_widget.height())
-                    img_debugger.debug(f"Rendering 2D preview: {width}x{height} for {model_name}")
-                    preview_pixmap = self._render_collision_preview(model, width, height)
-                    self.preview_widget.setPixmap(preview_pixmap)
-                    self.preview_widget.setScaledContents(False)
-                    img_debugger.success(f"2D preview updated for {model_name}")
-            else:
-                img_debugger.warning("No preview_widget attribute found")
+                    w = max(400, pw.width()); h = max(400, pw.height())
+                    pw.setPixmap(self._render_collision_preview(model, w, h))
+                    pw.setScaledContents(False)
+
+            # Spin thumbnail in detail list
+            self._start_thumbnail_spin(row, model)
 
         except Exception as e:
-            img_debugger.error(f"Error selecting model: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            import traceback; traceback.print_exc()
+            print(f"_select_model_by_row error: {e}")
 
 
-    def _show_collision_context_menu(self, position): #vers 1
-        """Show context menu for collision list"""
-        item = self.collision_list.itemAt(position)
+    def _show_collision_context_menu(self, position): #vers 4
+        """Right-click context menu for both collision model lists."""
+        # Work out which list sent the signal and find the row
+        sender = self.sender()
+        if sender is self.col_compact_list:
+            source_list = self.col_compact_list
+        else:
+            source_list = self.collision_list
+
+        item = source_list.itemAt(position)
         if not item:
-            return
+            # Still show thumbnail-view submenu even on empty area
+            row, model = -1, None
+        else:
+            row = source_list.row(item)
+            if row < 0: row = -1
+            models = getattr(self.current_col_file, 'models', []) if self.current_col_file else []
+            model = models[row] if 0 <= row < len(models) else None
 
         menu = QMenu(self)
 
-        # Get model index
-        row = self.collision_list.row(item)
-        if row < 0 or not self.current_col_file:
-            return
+        # ── Thumbnail view submenu (always shown) ─────────────────────────
+        view_menu = menu.addMenu("Thumbnail View")
+        axes = [
+            ("Top  (XY — Z up)",    0,   0),
+            ("Front (XZ — Y fwd)", 0,  90),
+            ("Side  (YZ — X right)",90,  0),
+            ("Isometric",          45,  35),
+            ("Bottom",              0, 180),
+            ("Back",              180,  90),
+        ]
+        for label, yaw, pitch in axes:
+            # Tick current selection
+            is_current = (abs(self._thumb_yaw - yaw) < 0.5 and
+                          abs(self._thumb_pitch - pitch) < 0.5)
+            act = view_menu.addAction(("✓ " if is_current else "    ") + label)
+            act.triggered.connect(
+                lambda _=False, y=yaw, p=pitch, l=label:
+                    self._set_thumbnail_view(y, p, l))
 
-        model = self.current_col_file.models[row]
+        if model is not None:
+            menu.addSeparator()
 
-        # Show Details action
-        details_action = menu.addAction("📋 Show Details")
-        details_action.triggered.connect(lambda: self._show_model_details(model, row))
+            # ── Info ──────────────────────────────────────────────────────
+            details_action = menu.addAction("Show Details")
+            details_action.triggered.connect(lambda: self._show_model_details(model, row))
 
-        # Copy Info action
-        copy_action = menu.addAction("Copy Info to Clipboard")
-        copy_action.triggered.connect(lambda: self._copy_model_info(model, row))
+            copy_action = menu.addAction("Copy Info to Clipboard")
+            copy_action.triggered.connect(lambda: self._copy_model_info(model, row))
 
-        menu.exec(self.collision_list.mapToGlobal(position))
+            menu.addSeparator()
+
+            # ── Rename ────────────────────────────────────────────────────
+            rename_action = menu.addAction("Rename Model...")
+            rename_action.triggered.connect(lambda: self._rename_col_model(model, row))
+
+            menu.addSeparator()
+
+            # ── Export / Replace ──────────────────────────────────────────
+            export_action = menu.addAction("Export Model as COL...")
+            export_action.triggered.connect(lambda: self._export_col_model(model, row))
+
+            import_action = menu.addAction("Replace with COL file...")
+            import_action.triggered.connect(lambda: self._import_replace_col_model(row))
+
+        menu.exec(source_list.mapToGlobal(position))
+
+    def _rename_col_model(self, model, row): #vers 1
+        """Rename a collision model entry in the list."""
+        try:
+            from PyQt6.QtWidgets import QInputDialog
+            old_name = getattr(model, 'name', f'Model_{row}')
+            new_name, ok = QInputDialog.getText(
+                self, "Rename Model", "New model name:", text=old_name)
+            if not ok or not new_name.strip():
+                return
+            new_name = new_name.strip()
+            model.name = new_name
+            # Update table cell
+            name_item = self.collision_list.item(row, 0)
+            if name_item:
+                name_item.setText(new_name)
+            # Mark file as modified
+            if hasattr(self, 'save_btn'):
+                self.save_btn.setEnabled(True)
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(
+                    f"Renamed model {row}: '{old_name}' → '{new_name}'")
+        except Exception as e:
+            QMessageBox.critical(self, "Rename Error", str(e))
+
+    def _export_col_model(self, model, row): #vers 1
+        """Export a single collision model as a standalone COL file."""
+        try:
+            model_name = getattr(model, 'name', f'model_{row}')
+            default_name = model_name.lower().replace(' ', '_') + '.col'
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Export COL Model",
+                default_name, "COL Files (*.col);;All Files (*)")
+            if not file_path:
+                return
+
+            # Build a minimal COL file containing just this model
+            from apps.methods.col_workshop_loader import COLFile
+            out = COLFile()
+            out.models = [model]
+            if hasattr(out, 'save'):
+                if not out.save(file_path):
+                    QMessageBox.warning(self, "Export Failed",
+                        "Could not save COL model — save() returned False.")
+                    return
+            else:
+                # Fallback: write the raw bytes of the model
+                raw = getattr(model, '_raw_bytes', None)
+                if raw:
+                    with open(file_path, 'wb') as f:
+                        f.write(raw)
+                else:
+                    QMessageBox.warning(self, "Export Failed",
+                        "No serialisation method available for this model.")
+                    return
+
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(
+                    f"Exported model '{model_name}' → {os.path.basename(file_path)}")
+            QMessageBox.information(self, "Export OK",
+                f"Model '{model_name}' exported to:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", str(e))
+
+    def _import_replace_col_model(self, row): #vers 1
+        """Replace a collision model entry from an external COL file."""
+        try:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Import COL to Replace Model",
+                "", "COL Files (*.col);;All Files (*)")
+            if not file_path:
+                return
+
+            from apps.methods.col_workshop_loader import COLFile
+            new_col = COLFile()
+            if not new_col.load(file_path):
+                QMessageBox.warning(self, "Import Failed",
+                    f"Could not load {os.path.basename(file_path)}")
+                return
+
+            new_models = getattr(new_col, 'models', [])
+            if not new_models:
+                QMessageBox.warning(self, "No Models",
+                    f"No collision models found in {os.path.basename(file_path)}")
+                return
+
+            # If multiple models in the source, ask which one to use
+            src_model = new_models[0]
+            if len(new_models) > 1:
+                from PyQt6.QtWidgets import QInputDialog
+                names = [f"[{i}] {getattr(m,'name',f'Model_{i}')}"
+                         for i, m in enumerate(new_models)]
+                choice, ok = QInputDialog.getItem(
+                    self, "Choose Model",
+                    f"{len(new_models)} models in file — pick one to import:",
+                    names, 0, False)
+                if not ok:
+                    return
+                idx = names.index(choice)
+                src_model = new_models[idx]
+
+            old_name = getattr(
+                self.current_col_file.models[row], 'name', f'Model_{row}')
+            src_model.name = old_name  # preserve existing name
+            self.current_col_file.models[row] = src_model
+
+            # Refresh the table row
+            from apps.methods.populate_col_table import populate_col_table
+            populate_col_table(self, self.current_col_file)
+            self.collision_list.selectRow(row)
+
+            if hasattr(self, 'save_btn'):
+                self.save_btn.setEnabled(True)
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(
+                    f"Replaced model {row} ('{old_name}') from "
+                    f"{os.path.basename(file_path)}")
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", str(e))
 
 
     def _show_model_details(self, model, index): #vers 1
@@ -4256,7 +5962,10 @@ class COLWorkshop(QWidget): #vers 3
             info_text += "\nVertices:\n"
             for i in range(min(30000, len(model.vertices))):
                 v = model.vertices[i]
-                info_text += f"  [{i}] ({v.position.x:.3f}, {v.position.y:.3f}, {v.position.z:.3f})\n"
+                if hasattr(v, 'position'):
+                    info_text += f"  [{i}] ({v.position.x:.3f}, {v.position.y:.3f}, {v.position.z:.3f})\n"
+                else:
+                    info_text += f"  [{i}] ({v.x:.3f}, {v.y:.3f}, {v.z:.3f})\n"
 
         # Add material info from faces
         if len(model.faces) > 0:
@@ -4301,57 +6010,114 @@ class COLWorkshop(QWidget): #vers 3
         clipboard.setText(text)
 
 
-    def _populate_collision_list(self): #vers 4
-        """Populate collision table with models - matches TXD Workshop style"""
+    def _populate_collision_list(self): #vers 7
+        """Populate [T] detail table — 8 columns, icon badges on counts > 0."""
         try:
             self.collision_list.setRowCount(0)
-
             if not self.current_col_file or not hasattr(self.current_col_file, 'models'):
                 return
 
-            for i, model in enumerate(self.current_col_file.models):
-                # Get model info
-                name = getattr(model, 'name', f'Model_{i}')
-                version = getattr(model, 'version', COLVersion.COL_1)
+            # Build icon pixmaps once (16px, themed colour)
+            icon_color = self._get_icon_color()
+            from apps.methods.imgfactory_svg_icons import SVGIconFactory as _SVG
+            from PyQt6.QtGui import QPixmap
 
-                # Count collision elements
-                spheres = len(getattr(model, 'spheres', []))
-                boxes = len(getattr(model, 'boxes', []))
-                faces = len(getattr(model, 'faces', []))
+            def _px(icon_fn, color=None):
+                """Get 14px QPixmap from an SVG icon factory method."""
+                try:
+                    ico = icon_fn(size=14, color=color or icon_color)
+                    return ico.pixmap(14, 14)
+                except Exception:
+                    return QPixmap()
+
+            sphere_px = _px(_SVG.sphere_icon, '#50c8e0')   # cyan
+            box_px    = _px(_SVG.box_icon,    '#dcb432')   # yellow
+            face_px   = _px(_SVG.mesh_icon,   '#6496dc')   # blue
+            # No dedicated vert icon — draw a tiny dot pixmap inline
+            vert_px   = QPixmap(14, 14)
+            from PyQt6.QtGui import QPainter, QColor, QBrush
+            from PyQt6.QtCore import QRectF
+            vert_px.fill(QColor(0, 0, 0, 0))
+            vp = QPainter(vert_px)
+            vp.setRenderHint(QPainter.RenderHint.Antialiasing)
+            vp.setBrush(QBrush(QColor(100, 200, 120)))
+            vp.setPen(QColor(100, 200, 120))
+            for ox, oy in [(2,2),(8,2),(5,9)]:
+                vp.drawEllipse(QRectF(ox, oy, 4, 4))
+            vp.end()
+
+            icon_map = {4: sphere_px, 5: box_px, 6: vert_px, 7: face_px}
+
+            models = self.current_col_file.models
+            self.collision_list.setUpdatesEnabled(False)
+
+            for i, model in enumerate(models):
+                name     = getattr(model, 'name', '') or f'model_{i}'
+                version  = getattr(model, 'version', None)
+                ver_str  = version.name if hasattr(version,'name') else str(version) if version else '?'
+                ver_short = ver_str.replace('COL_','COL').replace('COLVersion.','')
+                # Type = fourcc string, Version = game target label
+                header   = getattr(model, 'header', None)
+                fourcc   = getattr(header, 'fourcc', b'') if header else b''
+                try:    type_str = fourcc.decode('ascii').rstrip('\x00')
+                except Exception: type_str = str(fourcc)
+                ver_label = {'COL1':'GTA III/VC','COL2':'SA PS2',
+                             'COL3':'SA PC/Xbox','COL4':'SA (unused)'
+                             }.get(ver_short, ver_short)
+                spheres  = len(getattr(model, 'spheres',  []))
+                boxes    = len(getattr(model, 'boxes',    []))
                 vertices = len(getattr(model, 'vertices', []))
+                faces    = len(getattr(model, 'faces',    []))
+                bounds   = getattr(model, 'bounds', None)
+                radius   = getattr(bounds, 'radius', 0.0) if bounds else 0.0
 
-                # Add row
                 row = self.collision_list.rowCount()
                 self.collision_list.insertRow(row)
 
-                # Create thumbnail item
-                thumb_item = QTableWidgetItem()
-                thumbnail = self._generate_collision_thumbnail(model, 64, 64)
-                thumb_item.setData(Qt.ItemDataRole.DecorationRole, thumbnail)
-                thumb_item.setFlags(thumb_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                def _item(text, col=None, idx=None):
+                    it = QTableWidgetItem(str(text))
+                    it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    it.setTextAlignment(Qt.AlignmentFlag.AlignCenter |
+                                        Qt.AlignmentFlag.AlignVCenter)
+                    if idx is not None:
+                        it.setData(Qt.ItemDataRole.UserRole, idx)
+                    # Add icon if count > 0 and we have a pixmap for this col
+                    if col in icon_map and isinstance(text, int) and text > 0:
+                        it.setIcon(QIcon(icon_map[col]))
+                    return it
 
-                # Create details text
-                details = f"Name: {name}\n"
-                details += f"Version: {version.name}\n"
-                details += f"Spheres: {spheres} | Boxes: {boxes}\n"
-                details += f"Faces: {faces} | Vertices: {vertices}"
+                from PyQt6.QtGui import QIcon
 
-                details_item = QTableWidgetItem(details)
-                details_item.setFlags(details_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                details_item.setData(Qt.ItemDataRole.UserRole, i)  # Store model index
+                name_it = QTableWidgetItem(name)
+                name_it.setFlags(name_it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                name_it.setTextAlignment(Qt.AlignmentFlag.AlignLeft |
+                                         Qt.AlignmentFlag.AlignVCenter)
+                name_it.setData(Qt.ItemDataRole.UserRole, i)
 
-                # Set items
-                self.collision_list.setItem(row, 0, thumb_item)
-                self.collision_list.setItem(row, 1, details_item)
+                self.collision_list.setItem(row, 0, name_it)
+                self.collision_list.setItem(row, 1, _item(type_str))
+                self.collision_list.setItem(row, 2, _item(ver_label))
+                self.collision_list.setItem(row, 3, _item(f"{radius:.2f}"))
+                self.collision_list.setItem(row, 4, _item(spheres,  col=4))
+                self.collision_list.setItem(row, 5, _item(boxes,    col=5))
+                self.collision_list.setItem(row, 6, _item(vertices, col=6))
+                self.collision_list.setItem(row, 7, _item(faces,    col=7))
+                self.collision_list.setRowHeight(row, 22)
 
-                # Set row height
-                self.collision_list.setRowHeight(row, 100)
+            # Column widths
+            self.collision_list.setIconSize(QSize(14, 14))
+            hdr = self.collision_list.horizontalHeader()
+            hdr.resizeSection(0, 160)
+            for c in range(1, 8):
+                hdr.resizeSection(c, 68)
+            hdr.setStretchLastSection(True)
 
-            img_debugger.debug(f"Populated collision table with {len(self.current_col_file.models)} models")
+            self.collision_list.setUpdatesEnabled(True)
+            self.collision_list.viewport().update()
 
         except Exception as e:
-            img_debugger.error(f"Error populating collision table: {str(e)}")
-
+            import traceback; traceback.print_exc()
+            print(f"Error populating collision table: {str(e)}")
 
     def _create_preview_widget(self, level_data=None): #vers 3
         """Create preview widget - large collision preview like TXD Workshop"""
@@ -4377,9 +6143,9 @@ class COLWorkshop(QWidget): #vers 3
         try:
             if hasattr(self, 'viewer_3d'):
                 self.viewer_3d.set_view_options(show_spheres=checked)
-            img_debugger.debug(f"Spheres visibility: {checked}")
+            print(f"Spheres visibility: {checked}")
         except Exception as e:
-            img_debugger.error(f"Error toggling spheres: {str(e)}")
+            print(f"Error toggling spheres: {str(e)}")
 
 
     def _toggle_boxes(self, checked): #vers 3
@@ -4387,9 +6153,9 @@ class COLWorkshop(QWidget): #vers 3
         try:
             if hasattr(self, 'viewer_3d'):
                 self.viewer_3d.set_view_options(show_boxes=checked)
-            img_debugger.debug(f"Boxes visibility: {checked}")
+            print(f"Boxes visibility: {checked}")
         except Exception as e:
-            img_debugger.error(f"Error toggling boxes: {str(e)}")
+            print(f"Error toggling boxes: {str(e)}")
 
 
     def _toggle_mesh(self, checked): #vers 3
@@ -4397,438 +6163,19 @@ class COLWorkshop(QWidget): #vers 3
         try:
             if hasattr(self, 'viewer_3d'):
                 self.viewer_3d.set_view_options(show_mesh=checked)
-            img_debugger.debug(f"Mesh visibility: {checked}")
+            print(f"Mesh visibility: {checked}")
         except Exception as e:
-            img_debugger.error(f"Error toggling mesh: {str(e)}")
+            print(f"Error toggling mesh: {str(e)}")
 
 
 # ----- Render functions
 
-    def update_display(self): #vers 2
-        """Update 3D viewer display with 2D wireframe rendering"""
-        try:
-            # Create a pixmap to draw on
-            pixmap = QPixmap(self.size())
-            pixmap.fill(QColor(30, 30, 30))  # Dark background
 
-            painter = QPainter(pixmap)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-            if not self.current_model:
-                # No model loaded
-                painter.setPen(QColor(150, 150, 150))
-                painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                            "3D Viewer\n\nNo COL model selected")
-                painter.end()
-                self.setPixmap(pixmap)
-                return
 
-            # Get model data
-            spheres = getattr(self.current_model, 'spheres', [])
-            boxes = getattr(self.current_model, 'boxes', [])
-            vertices = getattr(self.current_model, 'vertices', [])
-            faces = getattr(self.current_model, 'faces', [])
 
-            # Calculate view bounds and scale
-            scale, offset_x, offset_y = self._calculate_view_transform()
 
-            # Draw grid
-            self._draw_grid(painter, scale, offset_x, offset_y)
 
-            # Draw collision elements
-            if self.show_spheres and spheres:
-                self._draw_spheres(painter, spheres, scale, offset_x, offset_y)
-
-            if self.show_boxes and boxes:
-                self._draw_boxes(painter, boxes, scale, offset_x, offset_y)
-
-            if self.show_mesh and vertices and faces:
-                self._draw_mesh(painter, vertices, faces, scale, offset_x, offset_y)
-
-            # Draw legend
-            self._draw_legend(painter)
-
-            painter.end()
-            self.setPixmap(pixmap)
-
-        except Exception as e:
-            img_debugger.error(f"Error updating 3D viewer: {str(e)}")
-
-
-    def _generate_collision_thumbnail(self, model, width, height): #vers 2
-        """Generate thumbnail preview of collision model"""
-        try:
-            pixmap = QPixmap(width, height)
-            pixmap.fill(QColor(40, 40, 40))
-
-            painter = QPainter(pixmap)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-            # Get collision data
-            spheres = getattr(model, 'spheres', [])
-            boxes = getattr(model, 'boxes', [])
-            vertices = getattr(model, 'vertices', [])
-            faces = getattr(model, 'faces', [])
-
-            if not spheres and not boxes and not vertices:
-                # Empty model
-                painter.setPen(QColor(100, 100, 100))
-                painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "Empty")
-                painter.end()
-                return pixmap
-
-            # Calculate bounds and scale for thumbnail
-            all_points = []
-
-            for sphere in spheres:
-                if hasattr(sphere, 'center'):
-                    all_points.append((sphere.center.x, sphere.center.z))
-
-            for box in boxes:
-                if hasattr(box, 'min_point') and hasattr(box, 'max_point'):
-                    all_points.append((box.min_point.x, box.min_point.z))
-                    all_points.append((box.max_point.x, box.max_point.z))
-
-            for vertex in vertices:
-                if hasattr(vertex, 'position'):
-                    all_points.append((vertex.position.x, vertex.position.z))
-
-            if not all_points:
-                painter.setPen(QColor(100, 100, 100))
-                painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "No Data")
-                painter.end()
-                return pixmap
-
-            # Calculate bounds with safety checks
-            xs = [p[0] for p in all_points if abs(p[0]) < 10000]
-            zs = [p[1] for p in all_points if abs(p[1]) < 10000]
-
-            if not xs or not zs:
-                painter.setPen(QColor(100, 100, 100))
-                painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "Invalid")
-                painter.end()
-                return pixmap
-
-            min_x, max_x = min(xs), max(xs)
-            min_z, max_z = min(zs), max(zs)
-
-            # Calculate scale to fit in thumbnail
-            range_x = max_x - min_x if max_x != min_x else 1
-            range_z = max_z - min_z if max_z != min_z else 1
-
-            # Prevent extreme scaling
-            if range_x > 10000 or range_z > 10000 or range_x < 0.001 or range_z < 0.001:
-                painter.setPen(QColor(100, 100, 100))
-                painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "Too Large")
-                painter.end()
-                return pixmap
-
-            scale = min((width - 20) / range_x, (height - 20) / range_z)
-
-            # Clamp scale to reasonable values
-            scale = max(0.1, min(scale, 100))
-
-            offset_x = width / 2 - (min_x + max_x) / 2 * scale
-            offset_y = height / 2 - (min_z + max_z) / 2 * scale
-
-            # Helper function to clamp coordinates
-            def clamp_coord(val):
-                return max(-10000, min(10000, int(val)))
-
-            # Draw spheres
-            painter.setPen(QPen(QColor(100, 150, 255), 1))
-            painter.setBrush(QBrush(QColor(100, 150, 255, 50)))
-            for sphere in spheres[:50]:  # Limit to first 50
-                if hasattr(sphere, 'center') and hasattr(sphere, 'radius'):
-                    x = clamp_coord(sphere.center.x * scale + offset_x)
-                    y = clamp_coord(sphere.center.z * scale + offset_y)
-                    r = clamp_coord(sphere.radius * scale)
-
-                    if 0 <= x <= width and 0 <= y <= height and r > 0 and r < 1000:
-                        painter.drawEllipse(QPoint(x, y), r, r)
-
-            # Draw boxes
-            painter.setPen(QPen(QColor(255, 150, 100), 1))
-            painter.setBrush(QBrush(QColor(255, 150, 100, 50)))
-            for box in boxes[:50]:  # Limit to first 50
-                if hasattr(box, 'min_point') and hasattr(box, 'max_point'):
-                    x1 = clamp_coord(box.min_point.x * scale + offset_x)
-                    y1 = clamp_coord(box.min_point.z * scale + offset_y)
-                    x2 = clamp_coord(box.max_point.x * scale + offset_x)
-                    y2 = clamp_coord(box.max_point.z * scale + offset_y)
-
-                    w = abs(x2 - x1)
-                    h = abs(y2 - y1)
-
-                    if w > 0 and h > 0 and w < 1000 and h < 1000:
-                        painter.drawRect(min(x1, x2), min(y1, y2), w, h)
-
-            # Draw mesh wireframe
-            if faces and vertices:
-                painter.setPen(QPen(QColor(150, 255, 150), 1))
-                for face in faces[:50]:  # Limit to first 50 faces
-                    if hasattr(face, 'vertex_indices') and len(face.vertex_indices) >= 3:
-                        try:
-                            idx0 = face.vertex_indices[0]
-                            idx1 = face.vertex_indices[1]
-                            idx2 = face.vertex_indices[2]
-
-                            if idx0 < len(vertices) and idx1 < len(vertices) and idx2 < len(vertices):
-                                v1 = vertices[idx0].position
-                                v2 = vertices[idx1].position
-                                v3 = vertices[idx2].position
-
-                                x1 = clamp_coord(v1.x * scale + offset_x)
-                                y1 = clamp_coord(v1.z * scale + offset_y)
-                                x2 = clamp_coord(v2.x * scale + offset_x)
-                                y2 = clamp_coord(v2.z * scale + offset_y)
-                                x3 = clamp_coord(v3.x * scale + offset_x)
-                                y3 = clamp_coord(v3.z * scale + offset_y)
-
-                                painter.drawLine(x1, y1, x2, y2)
-                                painter.drawLine(x2, y2, x3, y3)
-                                painter.drawLine(x3, y3, x1, y1)
-                        except:
-                            pass
-
-            painter.end()
-            return pixmap
-
-        except Exception as e:
-            img_debugger.error(f"Error generating thumbnail: {str(e)}")
-            # Return error thumbnail
-            pixmap = QPixmap(width, height)
-            pixmap.fill(QColor(60, 60, 60))
-            painter = QPainter(pixmap)
-            painter.setPen(QColor(150, 150, 150))
-            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "Error")
-            painter.end()
-            return pixmap
-
-
-    def _toggle_backface_culling(self): #vers 1
-        """Toggle backface culling on/off"""
-        if hasattr(self, 'preview_widget'):
-            enabled = self.backface_btn.isChecked()
-            self.preview_widget.set_view_options(backface_culling=enabled)
-
-            state = "ON" if enabled else "OFF"
-            self.backface_btn.setToolTip(f"Backface Culling: {state}")
-
-            if hasattr(self, 'log_message'):
-                self.log_message(f"Backface culling: {state}")
-
-
-    def _render_collision_preview(self, model, width, height): #vers 2
-        """Render collision model for preview panel - IMPROVED VERSION"""
-        try:
-            pixmap = QPixmap(width, height)
-            pixmap.fill(QColor(20, 20, 20))
-
-            painter = QPainter(pixmap)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-
-            # Get collision data
-            spheres = getattr(model, 'spheres', [])
-            boxes = getattr(model, 'boxes', [])
-            vertices = getattr(model, 'vertices', [])
-            faces = getattr(model, 'faces', [])
-
-            if not spheres and not boxes and not vertices:
-                painter.setPen(QColor(150, 150, 150))
-                painter.setFont(QFont("Arial", 12))
-                painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter,
-                            "No Collision Data\n\nModel is empty")
-                painter.end()
-                return pixmap
-
-            # Calculate bounds from all available collision elements
-            all_points = []
-            
-            # Add sphere centers and radii
-            for sphere in spheres:
-                if hasattr(sphere, 'center'):
-                    all_points.append((sphere.center.x, sphere.center.z))
-                    # Add points for the sphere radius to ensure proper scaling
-                    if hasattr(sphere, 'radius'):
-                        all_points.append((sphere.center.x + sphere.radius, sphere.center.z + sphere.radius))
-                        all_points.append((sphere.center.x - sphere.radius, sphere.center.z - sphere.radius))
-
-            # Add box corners
-            for box in boxes:
-                if hasattr(box, 'min_point') and hasattr(box, 'max_point'):
-                    all_points.append((box.min_point.x, box.min_point.z))
-                    all_points.append((box.max_point.x, box.max_point.z))
-                    # Add all 4 corners of the box
-                    all_points.append((box.min_point.x, box.max_point.z))
-                    all_points.append((box.max_point.x, box.min_point.z))
-
-            # Add vertex positions
-            for vertex in vertices:
-                if hasattr(vertex, 'position'):
-                    all_points.append((vertex.position.x, vertex.position.z))
-
-            if not all_points:
-                # Draw empty state
-                painter.setPen(QColor(150, 150, 150))
-                painter.setFont(QFont("Arial", 12))
-                painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter,
-                            "No Collision Data\n\nModel is empty")
-                painter.end()
-                return pixmap
-
-            # Calculate bounds with padding
-            xs = [p[0] for p in all_points]
-            zs = [p[1] for p in all_points]
-            min_x, max_x = min(xs), max(xs)
-            min_z, max_z = min(zs), max(zs)
-
-            # Add some padding to prevent elements from touching edges
-            padding = max((max_x - min_x) * 0.1, (max_z - min_z) * 0.1, 1.0)
-            min_x -= padding
-            max_x += padding
-            min_z -= padding
-            max_z += padding
-
-            range_x = max_x - min_x if max_x != min_x else 1
-            range_z = max_z - min_z if max_z != min_z else 1
-            
-            # Calculate scale with aspect ratio preservation
-            scale_x = (width * 0.8) / range_x  # Use 80% of available space
-            scale_z = (height * 0.8) / range_z
-            scale = min(scale_x, scale_z)  # Use the smaller scale to fit everything
-            
-            # Calculate center offset
-            center_x = width / 2 - (min_x + max_x) / 2 * scale
-            center_z = height / 2 - (min_z + max_z) / 2 * scale
-
-            # Draw grid background
-            painter.setPen(QPen(QColor(40, 40, 40), 1, Qt.PenStyle.DotLine))
-            # Draw grid lines based on the calculated bounds
-            grid_step = max(abs(range_x), abs(range_z)) / 20  # 20 grid lines across the range
-            if grid_step > 0:
-                start_x = int(min_x / grid_step) * grid_step
-                start_z = int(min_z / grid_step) * grid_step
-                for i in range(-20, 21):
-                    grid_x = start_x + i * grid_step
-                    grid_z = start_z + i * grid_step
-                    screen_x = grid_x * scale + center_x
-                    screen_z = grid_z * scale + center_z
-                    if 0 <= screen_x <= width:
-                        painter.drawLine(int(screen_x), 0, int(screen_x), height)
-                    if 0 <= screen_z <= height:
-                        painter.drawLine(0, int(screen_z), width, int(screen_z))
-
-            # Draw coordinate system
-            painter.setPen(QPen(QColor(80, 80, 80), 2))
-            # X axis (red)
-            painter.drawLine(width//2 - 20, height//2, width//2 + 20, height//2)
-            # Z axis (blue) 
-            painter.drawLine(width//2, height//2 - 20, width//2, height//2 + 20)
-
-            # Draw spheres (if enabled)
-            if getattr(self, '_show_spheres', True):  # Use proper show_spheres flag
-                painter.setPen(QPen(QColor(100, 180, 255), 2))
-                painter.setBrush(QBrush(QColor(100, 180, 255, 80)))
-                for sphere in spheres:
-                    if hasattr(sphere, 'center') and hasattr(sphere, 'radius'):
-                        screen_x = sphere.center.x * scale + center_x
-                        screen_y = sphere.center.z * scale + center_z
-                        screen_radius = sphere.radius * scale
-                        # Only draw if sphere is within visible area
-                        if (0 <= screen_x <= width and 0 <= screen_y <= height and screen_radius > 0.5):
-                            painter.drawEllipse(QPoint(int(screen_x), int(screen_y)), int(screen_radius), int(screen_radius))
-
-            # Draw boxes
-            if getattr(self, '_show_boxes', True):  # Use proper show_boxes flag
-                painter.setPen(QPen(QColor(255, 180, 100), 2))
-                painter.setBrush(QBrush(QColor(255, 180, 100, 80)))
-                for box in boxes:
-                    if hasattr(box, 'min_point') and hasattr(box, 'max_point'):
-                        x1 = box.min_point.x * scale + center_x
-                        y1 = box.min_point.z * scale + center_z
-                        x2 = box.max_point.x * scale + center_x
-                        y2 = box.max_point.z * scale + center_z
-                        # Only draw if box is within visible area
-                        if (min(x1, x2) <= width and max(x1, x2) >= 0 and 
-                            min(y1, y2) <= height and max(y1, y2) >= 0):
-                            painter.drawRect(int(min(x1, x2)), int(min(y1, y2)), 
-                                           int(abs(x2-x1)), int(abs(y2-y1)))
-
-            # Draw mesh wireframe
-            if getattr(self, '_show_mesh', True) and faces and vertices:  # Use proper show_mesh flag
-                painter.setPen(QPen(QColor(150, 255, 150), 1))
-                for face in faces[:500]:  # Limit faces for performance
-                    if hasattr(face, 'vertex_indices') and len(face.vertex_indices) >= 3:
-                        try:
-                            # Get first 3 vertices of the face
-                            if len(face.vertex_indices) >= 3:
-                                idx1, idx2, idx3 = face.vertex_indices[0], face.vertex_indices[1], face.vertex_indices[2]
-                                if idx1 < len(vertices) and idx2 < len(vertices) and idx3 < len(vertices):
-                                    v1 = vertices[idx1].position
-                                    v2 = vertices[idx2].position
-                                    v3 = vertices[idx3].position
-
-                                    x1 = v1.x * scale + center_x
-                                    y1 = v1.z * scale + center_z
-                                    x2 = v2.x * scale + center_x
-                                    y2 = v2.z * scale + center_z
-                                    x3 = v3.x * scale + center_x
-                                    y3 = v3.z * scale + center_z
-
-                                    # Only draw if all points are within reasonable bounds
-                                    if all(0 <= coord <= max(width, height) for coord in [x1, y1, x2, y2, x3, y3]):
-                                        painter.drawLine(int(x1), int(y1), int(x2), int(y2))
-                                        painter.drawLine(int(x2), int(y2), int(x3), int(y3))
-                                        painter.drawLine(int(x3), int(y3), int(x1), int(y1))
-                        except (IndexError, AttributeError):
-                            continue
-
-            # Draw legend with collision stats
-            painter.setPen(QColor(220, 220, 220))
-            painter.setFont(QFont("Arial", 10))
-            painter.drawText(10, 20, f"Spheres: {len(spheres)}")
-            painter.drawText(10, 40, f"Boxes: {len(boxes)}")
-            painter.drawText(10, 60, f"Faces: {len(faces)}")
-            painter.drawText(10, 80, f"Vertices: {len(vertices)}")
-
-            painter.end()
-            return pixmap
-
-        except Exception as e:
-            img_debugger.error(f"Error rendering preview: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            pixmap = QPixmap(width, height)
-            pixmap.fill(QColor(60, 60, 60))
-            painter = QPainter(pixmap)
-            painter.setPen(QColor(255, 100, 100))
-            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, f"Render Error:\n{str(e)[:50]}...")
-            painter.end()
-            return pixmap
-
-
-# ----- Hotkeps
-
-    def keyPressEvent(self, event): #vers 1
-        """Handle keyboard shortcuts"""
-        from PyQt6.QtCore import Qt
-
-        # D key - Dock/Undock toggle
-        if event.key() == Qt.Key.Key_D and not event.modifiers():
-            self.toggle_dock_mode()
-            event.accept()
-            return
-
-        # T key - Tear out (same as undock)
-        if event.key() == Qt.Key.Key_T and not event.modifiers():
-            if self.is_docked:
-                self._undock_from_main()
-            event.accept()
-            return
-
-        super().keyPressEvent(event)
 
 
     def _setup_hotkeys(self): #vers 3
@@ -5228,7 +6575,7 @@ class COLWorkshop(QWidget): #vers 3
         layout.setSpacing(15)
 
         # Header
-        header = QLabel("COL Workshop for IMG Factory 1.5")
+        header = QLabel(f"COL Workshop - {App_name}")
         header.setFont(QFont("Arial", 14, QFont.Weight.Bold))
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
@@ -5308,859 +6655,13 @@ class COLWorkshop(QWidget): #vers 3
 #class SvgIcons: #vers 1 - Once functions are updated this class will be moved to the bottom
     """SVG icon data to QIcon with theme color support"""
 
-
-    def _create_bitdepth_icon(self): #vers 3
-        """Create bit depth icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path fill="currentColor"
-                d="M3,5H9V11H3V5M5,7V9H7V7H5M11,7H21V9H11V7M11,15H21V17H11V15M5,20L1.5,16.5L2.91,15.09L5,17.17L9.59,12.59L11,14L5,20Z"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_resize_icon(self): #vers 2
-        """Create resize icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path fill="currentColor"
-                d="M10,21V19H6.41L10.91,14.5L9.5,13.09L5,17.59V14H3V21H10M14.5,10.91L19,6.41V10H21V3H14V5H17.59L13.09,9.5L14.5,10.91Z"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_warning_icon_svg(self): #vers 1
-        """Create SVG warning icon for table display"""
-        svg_data = b"""
-        <svg width="16" height="16" viewBox="0 0 16 16">
-            <path fill="#FFA500" d="M8 1l7 13H1z"/>
-            <text x="8" y="12" font-size="10" fill="black" text-anchor="middle">!</text>
-        </svg>
-        """
-        return QIcon(QPixmap.fromImage(
-            QImage.fromData(QByteArray(svg_data))
-        ))
-
-
-    def _create_resize_icon2(self): #vers 1
-        """Resize grip icon - diagonal arrows"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M14 6l-8 8M10 6h4v4M6 14v-4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_upscale_icon(self): #vers 3
-        """Create AI upscale icon - brain/intelligence style"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <!-- Brain outline -->
-            <path d="M12 3 C8 3 5 6 5 9 C5 10 5.5 11 6 12 C5.5 13 5 14 5 15 C5 18 8 21 12 21 C16 21 19 18 19 15 C19 14 18.5 13 18 12 C18.5 11 19 10 19 9 C19 6 16 3 12 3 Z"
-                fill="none" stroke="currentColor" stroke-width="1.5"/>
-
-            <!-- Neural pathways inside -->
-            <path d="M9 8 L10 10 M14 8 L13 10 M10 12 L14 12 M9 14 L12 16 M15 14 L12 16"
-                stroke="currentColor" stroke-width="1" fill="none"/>
-
-            <!-- Upward indicator -->
-            <path d="M19 8 L19 4 M17 6 L19 4 L21 6"
-                stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_upscale_icon(self): #vers 3
-        """Create AI upscale icon - sparkle/magic AI style"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <!-- Large sparkle -->
-            <path d="M12 2 L13 8 L12 14 L11 8 Z M8 12 L2 11 L8 10 L14 11 Z"
-                fill="currentColor"/>
-
-            <!-- Small sparkles -->
-            <circle cx="18" cy="6" r="1.5" fill="currentColor"/>
-            <circle cx="6" cy="18" r="1.5" fill="currentColor"/>
-            <circle cx="19" cy="16" r="1" fill="currentColor"/>
-
-            <!-- Upward arrow -->
-            <path d="M16 20 L20 20 M18 18 L18 22"
-                stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_upscale_icon(self): #vers 3
-        """Create AI upscale icon - neural network style"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <!-- Neural network nodes -->
-            <circle cx="6" cy="6" r="2" fill="currentColor"/>
-            <circle cx="18" cy="6" r="2" fill="currentColor"/>
-            <circle cx="6" cy="18" r="2" fill="currentColor"/>
-            <circle cx="18" cy="18" r="2" fill="currentColor"/>
-            <circle cx="12" cy="12" r="2.5" fill="currentColor"/>
-
-            <!-- Connecting lines -->
-            <path d="M7.5 7.5 L10.5 10.5 M13.5 10.5 L16.5 7.5 M7.5 16.5 L10.5 13.5 M13.5 13.5 L16.5 16.5"
-                stroke="currentColor" stroke-width="1.5" fill="none"/>
-
-            <!-- Upward arrow overlay -->
-            <path d="M12 3 L12 9 M9 6 L12 3 L15 6"
-                stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_manage_icon(self): #vers 1
-        """Create manage/settings icon for bumpmap manager"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <!-- Gear/cog icon for management -->
-            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" fill="none"/>
-            <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"
-                stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_paint_icon(self): #vers 1
-        """Create paint brush icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path d="M20.71 7.04c.39-.39.39-1.04 0-1.41l-2.34-2.34c-.37-.39-1.02-.39-1.41 0l-1.84 1.83 3.75 3.75M3 17.25V21h3.75L17.81 9.93l-3.75-3.75L3 17.25z"
-                fill="currentColor"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_compress_icon(self): #vers 2
-        """Create compress icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path fill="currentColor"
-                d="M4,2H20V4H13V10H20V12H4V10H11V4H4V2M4,13H20V15H13V21H20V23H4V21H11V15H4V13Z"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_backface_icon(self): #vers 1
-        """Backface culling toggle - polygon with front/back sides"""
-        svg_data = b'''<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <!-- Front face (visible - solid) -->
-            <path d="M12 4 L20 8 L16 16 L8 16 L4 8 Z"
-                fill="currentColor" opacity="0.8"/>
-
-            <!-- Back edge (hidden - dashed) -->
-            <path d="M12 4 L8 16 M12 4 L16 16"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-dasharray="2,2"
-                opacity="0.3"
-                fill="none"/>
-
-            <!-- Front edges (visible - solid) -->
-            <path d="M4 8 L12 4 L20 8 L16 16 L8 16 Z"
-                stroke="currentColor"
-                stroke-width="1.5"
-                fill="none"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_build_icon(self): #vers 1
-        """Create build/construct icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path d="M22,9 L12,2 L2,9 L12,16 L22,9 Z M12,18 L4,13 L4,19 L12,24 L20,19 L20,13 L12,18 Z"
-                fill="currentColor"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_uncompress_icon(self): #vers 2
-        """Create uncompress icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path fill="currentColor" d="M11,4V2H13V4H11M13,21V19H11V21H13M4,12V10H20V12H4Z"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_view_icon(self): #vers 2
-        """Create view/eye icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path fill="currentColor"
-                d="M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9
-                    M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17
-                    M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5
-                    C17,19.5 21.27,16.39 23,12
-                    C21.27,7.61 17,4.5 12,4.5Z"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_add_icon(self): #vers 2
-        """Create add/plus icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path fill="currentColor" d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_delete_icon(self): #vers 2
-        """Create delete/minus icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path fill="currentColor" d="M19,13H5V11H19V13Z"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_color_picker_icon(self): #vers 1
-        """Color picker icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2"/>
-            <path d="M10 3v4M10 13v4M3 10h4M13 10h4" stroke="currentColor" stroke-width="2"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_zoom_in_icon(self): #vers 1
-        """Zoom in icon (+)"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2"/>
-            <path d="M8 5v6M5 8h6" stroke="currentColor" stroke-width="2"/>
-            <path d="M13 13l4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_zoom_out_icon(self): #vers 1
-        """Zoom out icon (-)"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2"/>
-            <path d="M5 8h6" stroke="currentColor" stroke-width="2"/>
-            <path d="M13 13l4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_reset_icon(self): #vers 1
-        """Reset/1:1 icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M16 10A6 6 0 1 1 4 10M4 10l3-3m-3 3l3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_fit_icon(self): #vers 1
-        """Fit to window icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="3" y="3" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"/>
-            <path d="M7 7l6 6M13 7l-6 6" stroke="currentColor" stroke-width="2"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_arrow_up_icon(self): #vers 1
-        """Arrow up"""
-        svg_data = b'''<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M8 3v10M4 7l4-4 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=16)
-
-
-    def _create_arrow_down_icon(self): #vers 1
-        """Arrow down"""
-        svg_data = b'''<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M8 13V3M12 9l-4 4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=16)
-
-
-    def _create_arrow_left_icon(self): #vers 1
-        """Arrow left"""
-        svg_data = b'''<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3 8h10M7 4L3 8l4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=16)
-
-
-    def _create_arrow_right_icon(self): #vers 1
-        """Arrow right"""
-        svg_data = b'''<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M13 8H3M9 12l4-4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=16)
-
-
-    def _create_flip_vert_icon(self): #vers 1
-        """Create vertical flip SVG icon"""
-        from PyQt6.QtGui import QIcon, QPixmap, QPainter
-        from PyQt6.QtSvg import QSvgRenderer
-
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3 12h18M8 7l-4 5 4 5M16 7l4 5-4 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>'''
-
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_flip_horz_icon(self): #vers 1
-        """Create horizontal flip SVG icon"""
-        from PyQt6.QtGui import QIcon, QPixmap, QPainter
-        from PyQt6.QtSvg import QSvgRenderer
-
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 3v18M7 8l5-4 5 4M7 16l5 4 5-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>'''
-
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_rotate_cw_icon(self): #vers 1
-        """Create clockwise rotation SVG icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M21 12a9 9 0 11-9-9v6M21 3l-3 6-6-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>'''
-
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_rotate_ccw_icon(self): #vers 1
-        """Create counter-clockwise rotation SVG icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3 12a9 9 0 109-9v6M3 3l3 6 6-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>'''
-
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_copy_icon(self): #vers 1
-        """Create copy SVG icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/>
-            <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="2"/>
-        </svg>'''
-
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_paste_icon(self): #vers 1
-        """Create paste SVG icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2" stroke="currentColor" stroke-width="2"/>
-            <rect x="8" y="2" width="8" height="4" rx="1" stroke="currentColor" stroke-width="2"/>
-        </svg>'''
-
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_edit_icon(self): #vers 1
-        """Create edit SVG icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="2"/>
-            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2"/>
-        </svg>'''
-
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_convert_icon(self): #vers 1
-        """Create convert SVG icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3 12h18M3 12l4-4M3 12l4 4M21 12l-4-4M21 12l-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
-        </svg>'''
-
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_undo_icon(self): #vers 2
-        """Undo - Curved arrow icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path d="M3 7v6h6M3 13a9 9 0 1018 0 9 9 0 00-18 0z"
-                stroke="currentColor" stroke-width="2" fill="none"
-                stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_info_icon(self): #vers 1
-        """Info - circle with 'i' icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/>
-            <path d="M12 11v6M12 8v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_folder_icon(self): #vers 1
-        """Open IMG - Folder icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-7l-2-2H5a2 2 0 00-2 2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_file_icon(self): #vers 1
-        """Open col - File icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" stroke-width="2"/>
-            <path d="M14 2v6h6" stroke="currentColor" stroke-width="2"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_open_icon(self): #vers 1
-        """Open - Folder icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path d="M3 7v13a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-                stroke="currentColor" stroke-width="2"
-                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_save_icon(self): #vers 1
-        """Save col - Floppy disk icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" stroke="currentColor" stroke-width="2"/>
-            <path d="M17 21v-8H7v8M7 3v5h8" stroke="currentColor" stroke-width="2"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_import_icon(self): #vers 1
-        """Import - Download/Import icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_export_icon(self): #vers 1
-        """Export - Upload/Export icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_saveas_icon(self): #vers 1
-        """Save - Floppy disk icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"
-                stroke="currentColor" stroke-width="2"
-                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-            <polyline points="17 21 17 13 7 13 7 21"
-                stroke="currentColor" stroke-width="2"
-                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-            <polyline points="7 3 7 8 15 8"
-                stroke="currentColor" stroke-width="2"
-                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_analyze_icon(self): #vers 1
-        """Analyze - Bar chart icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <line x1="18" y1="20" x2="18" y2="10"
-                stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            <line x1="12" y1="20" x2="12" y2="4"
-                stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            <line x1="6" y1="20" x2="6" y2="14"
-                stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_sphere_icon(self): #vers 1
-        """Sphere - Circle icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="10"
-                stroke="currentColor" stroke-width="2"
-                fill="none"/>
-            <path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"
-                stroke="currentColor" stroke-width="2"
-                fill="none"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_box_icon(self): #vers 1
-        """Box - Cube icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"
-                stroke="currentColor" stroke-width="2"
-                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-            <polyline points="3.27 6.96 12 12.01 20.73 6.96"
-                stroke="currentColor" stroke-width="2"
-                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-            <line x1="12" y1="22.08" x2="12" y2="12"
-                stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_mesh_icon(self): #vers 1
-        """Mesh - Grid/wireframe icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <rect x="3" y="3" width="18" height="18"
-                stroke="currentColor" stroke-width="2"
-                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-            <line x1="3" y1="9" x2="21" y2="9"
-                stroke="currentColor" stroke-width="2"/>
-            <line x1="3" y1="15" x2="21" y2="15"
-                stroke="currentColor" stroke-width="2"/>
-            <line x1="9" y1="3" x2="9" y2="21"
-                stroke="currentColor" stroke-width="2"/>
-            <line x1="15" y1="3" x2="15" y2="21"
-                stroke="currentColor" stroke-width="2"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_package_icon(self): #vers 1
-        """Export All - Package/Box icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" stroke="currentColor" stroke-width="2"/>
-            <path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12" stroke="currentColor" stroke-width="2"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_properties_icon(self): #vers 1
-        """Properties - Info/Details icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
-            <path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    # CONTEXT MENU ICONS
-
-    def _create_plus_icon(self): #vers 1
-        """Create New Entry - Plus icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
-            <path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_document_icon(self): #vers 1
-        """Create New col - Document icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" stroke-width="2"/>
-            <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="currentColor" stroke-width="2"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_filter_icon(self): #vers 1
-        """Filter/sliders icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="6" cy="4" r="2" fill="currentColor"/>
-            <rect x="5" y="8" width="2" height="8" fill="currentColor"/>
-            <circle cx="14" cy="12" r="2" fill="currentColor"/>
-            <rect x="13" y="4" width="2" height="6" fill="currentColor"/>
-            <circle cx="10" cy="8" r="2" fill="currentColor"/>
-            <rect x="9" y="12" width="2" height="4" fill="currentColor"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_add_icon(self): #vers 1
-        """Add/plus icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_trash_icon(self): #vers 1
-        """Delete/trash icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3 5h14M8 5V3h4v2M6 5v11a1 1 0 001 1h6a1 1 0 001-1V5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_filter_icon(self): #vers 1
-        """Filter/sliders icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="6" cy="4" r="2" fill="currentColor"/>
-            <rect x="5" y="8" width="2" height="8" fill="currentColor"/>
-            <circle cx="14" cy="12" r="2" fill="currentColor"/>
-            <rect x="13" y="4" width="2" height="6" fill="currentColor"/>
-            <circle cx="10" cy="8" r="2" fill="currentColor"/>
-            <rect x="9" y="12" width="2" height="4" fill="currentColor"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_delete_icon(self): #vers 1
-        """Delete/trash icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3 5h14M8 5V3h4v2M6 5v11a1 1 0 001 1h6a1 1 0 001-1V5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_duplicate_icon(self): #vers 1
-        """Duplicate/copy icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="6" y="6" width="10" height="10" stroke="currentColor" stroke-width="2" fill="none"/>
-            <path d="M4 4h8v2H6v8H4V4z" fill="currentColor"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_create_icon(self): #vers 1
-        """Create/new icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_filter_icon(self): #vers 1
-        """Filter/sliders icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="6" cy="4" r="2" fill="currentColor"/>
-            <rect x="5" y="8" width="2" height="8" fill="currentColor"/>
-            <circle cx="14" cy="12" r="2" fill="currentColor"/>
-            <rect x="13" y="4" width="2" height="6" fill="currentColor"/>
-            <circle cx="10" cy="8" r="2" fill="currentColor"/>
-            <rect x="9" y="12" width="2" height="4" fill="currentColor"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_pencil_icon(self): #vers 1
-        """Edit - Pencil icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="currentColor" stroke-width="2"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_trash_icon(self): #vers 1
-        """Delete - Trash icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_check_icon(self): #vers 2
-        """Create check/verify icon - document with checkmark"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"
-                fill="none" stroke="currentColor" stroke-width="2"/>
-            <path d="M14 2v6h6"
-                stroke="currentColor" stroke-width="2" fill="none"/>
-            <path d="M9 13l2 2 4-4"
-                stroke="currentColor" stroke-width="2" fill="none"
-                stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_eye_icon(self): #vers 1
-        """View - Eye icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" stroke-width="2"/>
-            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_list_icon(self): #vers 1
-        """Properties List - List icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    # WINDOW CONTROL ICONS
-
-    def _create_minimize_icon(self): #vers 1
-        """Minimize - Horizontal line"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_maximize_icon(self): #vers 1
-        """Maximize - Square"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokea-width="2"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_close_icon(self): #vers 1
-        """Close - X icon"""
-        svg_data = b'''<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data)
-
-
-    def _create_settings_icon(self): #vers 1
-        """Settings/gear icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="10" cy="10" r="3" stroke="currentColor" stroke-width="2"/>
-            <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.93 4.93l1.41 1.41M13.66 13.66l1.41 1.41M4.93 15.07l1.41-1.41M13.66 6.34l1.41-1.41" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_minimize_icon(self): #vers 1
-        """Minimize - Horizontal line icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <line x1="5" y1="12" x2="19" y2="12"
-                stroke="currentColor" stroke-width="2"
-                stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_maximize_icon(self): #vers 1
-        """Maximize - Square icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <rect x="5" y="5" width="14" height="14"
-                stroke="currentColor" stroke-width="2"
-                fill="none" rx="2"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_close_icon(self): #vers 1
-        """Close - X icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <line x1="6" y1="6" x2="18" y2="18"
-                stroke="currentColor" stroke-width="2"
-                stroke-linecap="round"/>
-            <line x1="18" y1="6" x2="6" y2="18"
-                stroke="currentColor" stroke-width="2"
-                stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_add_icon(self): #vers 1
-        """Add - Plus icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <line x1="12" y1="5" x2="12" y2="19"
-                stroke="currentColor" stroke-width="2"
-                stroke-linecap="round"/>
-            <line x1="5" y1="12" x2="19" y2="12"
-                stroke="currentColor" stroke-width="2"
-                stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_delete_icon(self): #vers 1
-        """Delete - Trash icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <polyline points="3 6 5 6 21 6"
-                    stroke="currentColor" stroke-width="2"
-                    fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"
-                stroke="currentColor" stroke-width="2"
-                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_import_icon(self): #vers 1
-        """Import - Download arrow icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"
-                stroke="currentColor" stroke-width="2"
-                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-            <polyline points="7 10 12 15 17 10"
-                    stroke="currentColor" stroke-width="2"
-                    fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-            <line x1="12" y1="15" x2="12" y2="3"
-                stroke="currentColor" stroke-width="2"
-                stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_export_icon(self): #vers 1
-        """Export - Upload arrow icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"
-                stroke="currentColor" stroke-width="2"
-                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-            <polyline points="17 8 12 3 7 8"
-                    stroke="currentColor" stroke-width="2"
-                    fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-            <line x1="12" y1="3" x2="12" y2="15"
-                stroke="currentColor" stroke-width="2"
-                stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_checkerboard_icon(self): #vers 1
-        """Create checkerboard pattern icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="0" y="0" width="5" height="5" fill="currentColor"/>
-            <rect x="5" y="5" width="5" height="5" fill="currentColor"/>
-            <rect x="10" y="0" width="5" height="5" fill="currentColor"/>
-            <rect x="15" y="5" width="5" height="5" fill="currentColor"/>
-            <rect x="0" y="10" width="5" height="5" fill="currentColor"/>
-            <rect x="5" y="15" width="5" height="5" fill="currentColor"/>
-            <rect x="10" y="10" width="5" height="5" fill="currentColor"/>
-            <rect x="15" y="15" width="5" height="5" fill="currentColor"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_undo_icon(self): #vers 2
-        """Undo - Curved arrow icon"""
-        svg_data = b'''<svg viewBox="0 0 24 24">
-            <path d="M3 7v6h6M3 13a9 9 0 1018 0 9 9 0 00-18 0z"
-                stroke="currentColor" stroke-width="2" fill="none"
-                stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _svg_to_icon(self, svg_data, size=24): #vers 2
-        """Convert SVG data to QIcon with theme color support"""
-        from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor
-        from PyQt6.QtSvg import QSvgRenderer
-        from PyQt6.QtCore import QByteArray
-
-        try:
-            # Get current text color from palette
-            text_color = self.palette().color(self.foregroundRole())
-
-            # Replace currentColor with actual color
-            svg_str = svg_data.decode('utf-8')
-            svg_str = svg_str.replace('currentColor', text_color.name())
-            svg_data = svg_str.encode('utf-8')
-
-            renderer = QSvgRenderer(QByteArray(svg_data))
-            pixmap = QPixmap(size, size)
-            pixmap.fill(QColor(0, 0, 0, 0))  # Transparent background
-
-            painter = QPainter(pixmap)
-            renderer.render(painter)
-            painter.end()
-
-            return QIcon(pixmap)
-        except:
-            # Fallback to no icon if SVG fails
-            return QIcon()
-
-
+#moved to scg_icon_factory
 
 class ZoomablePreview(QLabel): #vers 2
     """Fixed preview widget with zoom and pan"""
 
     def __init__(self, parent=None):
+        self.icon_factory = SVGIconFactory()
         super().__init__(parent)
         self.main_window = parent
         self.setMinimumSize(400, 400)
@@ -6427,8 +6928,9 @@ class COLEditorDialog(QDialog): #vers 3
 
 
     def __init__(self, parent=None):
+        self.icon_factory = SVGIconFactory()
         super().__init__(parent)
-        self.setWindowTitle(App_name + " - IMG Factory 1.5")
+        self.setWindowTitle(App_name)
         self.setModal(False)  # Allow non-modal operation
         self.resize(1000, 700)
 
@@ -6440,7 +6942,7 @@ class COLEditorDialog(QDialog): #vers 3
         self.setup_ui()
         self.connect_signals()
 
-        img_debugger.debug(App_name + " dialog created")
+        print(App_name + " dialog created")
 
 
     def setup_ui(self): #vers 1
@@ -6448,8 +6950,8 @@ class COLEditorDialog(QDialog): #vers 3
         layout = QVBoxLayout(self)
 
         # Toolbar
-        #self.toolbar = COLToolbar(self)
-        #layout.addWidget(self.toolbar)
+        self.toolbar = COLToolbar(self)
+        layout.addWidget(self.toolbar)
 
         # Main splitter
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -6570,7 +7072,7 @@ class COLEditorDialog(QDialog): #vers 3
             self.setWindowTitle(f"COL Editor - {os.path.basename(file_path)}")
             self.is_modified = False
 
-            img_debugger.success(f"COL file loaded: {file_path}")
+            print(f"COL file loaded: {file_path}")
             return True
 
         except Exception as e:
@@ -6578,7 +7080,7 @@ class COLEditorDialog(QDialog): #vers 3
             self.status_bar.showMessage("Ready")
             error_msg = f"Error loading COL file: {str(e)}"
             QMessageBox.critical(self, "Error", error_msg)
-            img_debugger.error(error_msg)
+            print(error_msg)
             return False
 
 
@@ -6616,7 +7118,7 @@ class COLEditorDialog(QDialog): #vers 3
         except Exception as e:
             error_msg = f"Error saving COL file: {str(e)}"
             QMessageBox.critical(self, "Save Error", error_msg)
-            img_debugger.error(error_msg)
+            print(error_msg)
 
 
     def save_file_as(self): #vers 1
@@ -6660,7 +7162,7 @@ class COLEditorDialog(QDialog): #vers 3
         except Exception as e:
             error_msg = f"Error analyzing COL file: {str(e)}"
             QMessageBox.critical(self, "Analysis Error", error_msg)
-            img_debugger.error(error_msg)
+            print(error_msg)
 
 
     def on_model_selected(self, model_index: int): #vers 1
@@ -6688,13 +7190,14 @@ class COLEditorDialog(QDialog): #vers 3
             model_name = getattr(self.current_model, 'name', f'Model_{model_index}')
             self.status_bar.showMessage(f"Selected: {model_name}")
 
-            img_debugger.debug(f"Model selected: {model_name} (index {model_index})")
+            print(f"Model selected: {model_name} (index {model_index})")
 
         except Exception as e:
-            img_debugger.error(f"Error selecting model: {str(e)}")
+            print(f"Error selecting model: {str(e)}")
 
 
     def _create_viewport_controls(self): #vers 1
+        icon_color = self._get_icon_color()
         """Create 3D viewport controls - 3DS Max style toolbar at bottom"""
         if not VIEWPORT_AVAILABLE:
             return QWidget()
@@ -6735,7 +7238,7 @@ class COLEditorDialog(QDialog): #vers 3
 
         # View mode buttons
         btn_spheres = QPushButton()
-        btn_spheres.setIcon(self._create_sphere_icon())
+        btn_spheres.setIcon(self.icon_factory.sphere_icon(color=icon_color))
         btn_spheres.setCheckable(True)
         btn_spheres.setChecked(True)
         btn_spheres.setToolTip("Toggle Spheres")
@@ -6744,7 +7247,7 @@ class COLEditorDialog(QDialog): #vers 3
         )
 
         btn_boxes = QPushButton()
-        btn_boxes.setIcon(self._create_box_icon())
+        btn_boxes.setIcon(self.icon_factory.box_icon(color=icon_color))
         btn_boxes.setCheckable(True)
         btn_boxes.setChecked(True)
         btn_boxes.setToolTip("Toggle Boxes")
@@ -6753,7 +7256,7 @@ class COLEditorDialog(QDialog): #vers 3
         )
 
         btn_mesh = QPushButton()
-        btn_mesh.setIcon(self._create_mesh_icon())
+        btn_mesh.setIcon(self.icon_factory.mesh_icon(color=icon_color))
         btn_mesh.setCheckable(True)
         btn_mesh.setChecked(True)
         btn_mesh.setToolTip("Toggle Mesh")
@@ -6762,7 +7265,7 @@ class COLEditorDialog(QDialog): #vers 3
         )
 
         btn_wireframe = QPushButton()
-        btn_wireframe.setIcon(self._create_wireframe_icon())
+        btn_wireframe.setIcon(self.icon_factory.wireframe_icon(color=icon_color))
         btn_wireframe.setCheckable(True)
         btn_wireframe.setChecked(True)
         btn_wireframe.setToolTip("Toggle Wireframe")
@@ -6771,7 +7274,7 @@ class COLEditorDialog(QDialog): #vers 3
         )
 
         btn_bounds = QPushButton()
-        btn_bounds.setIcon(self._create_bounds_icon())
+        btn_bounds.setIcon(self.icon_factory.bounds_icon(color=icon_color))
         btn_bounds.setCheckable(True)
         btn_bounds.setChecked(True)
         btn_bounds.setToolTip("Toggle Bounding Box")
@@ -6787,7 +7290,7 @@ class COLEditorDialog(QDialog): #vers 3
 
         # Camera controls
         btn_reset = QPushButton()
-        btn_reset.setIcon(self._create_reset_view_icon())
+        btn_reset.setIcon(self.icon_factory.reset_view_icon(color=icon_color))
         btn_reset.setToolTip("Reset View")
         btn_reset.clicked.connect(self.viewer_3d.reset_view)
 
@@ -6817,65 +7320,6 @@ class COLEditorDialog(QDialog): #vers 3
         layout.addStretch()
 
         return controls_widget
-
-
-    def _create_sphere_icon(self): #vers 1
-        """Sphere collision icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2" fill="none"/>
-            <ellipse cx="10" cy="10" rx="7" ry="3" stroke="currentColor" stroke-width="1.5" fill="none"/>
-            <path d="M3 10 Q10 13 17 10" stroke="currentColor" stroke-width="1.5" fill="none"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_box_icon(self): #vers 1
-        """Box collision icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M4 6 L10 3 L16 6 L16 14 L10 17 L4 14 Z" stroke="currentColor" stroke-width="2" fill="none"/>
-            <path d="M4 6 L10 9 L16 6" stroke="currentColor" stroke-width="2"/>
-            <path d="M10 9 L10 17" stroke="currentColor" stroke-width="2"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_mesh_icon(self): #vers 1
-        """Mesh collision icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3 10 L10 3 L17 10 L10 17 Z" stroke="currentColor" stroke-width="2" fill="none"/>
-            <path d="M3 10 L17 10 M10 3 L10 17" stroke="currentColor" stroke-width="1.5"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_wireframe_icon(self): #vers 1
-        """Wireframe mode icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M5 5 L15 5 L15 15 L5 15 Z" stroke="currentColor" stroke-width="2" fill="none"/>
-            <path d="M5 10 L15 10 M10 5 L10 15" stroke="currentColor" stroke-width="1.5"/>
-            <circle cx="5" cy="5" r="1.5" fill="currentColor"/>
-            <circle cx="15" cy="5" r="1.5" fill="currentColor"/>
-            <circle cx="15" cy="15" r="1.5" fill="currentColor"/>
-            <circle cx="5" cy="15" r="1.5" fill="currentColor"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_bounds_icon(self): #vers 1
-        """Bounding box icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="3" y="3" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="3,2"/>
-            <path d="M3 3 L7 3 M17 3 L13 3 M3 17 L7 17 M17 17 L13 17 M3 3 L3 7 M3 17 L3 13 M17 3 L17 7 M17 17 L17 13" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
-
-
-    def _create_reset_view_icon(self): #vers 1
-        """Reset camera view icon"""
-        svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M16 10A6 6 0 1 1 4 10M4 10l3-3m-3 3l3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>'''
-        return self._svg_to_icon(svg_data, size=20)
 
 
     def _set_camera_view(self, view_type): #vers 1
@@ -6909,6 +7353,10 @@ class COLEditorDialog(QDialog): #vers 3
             svg_data = svg_str.encode('utf-8')
 
             renderer = QSvgRenderer(QByteArray(svg_data))
+            if not renderer.isValid():
+                print(f"Invalid SVG data in col_workshop")
+                return QIcon()
+
             pixmap = QPixmap(size, size)
             pixmap.fill(QColor(0, 0, 0, 0))
 
@@ -6951,70 +7399,11 @@ class COLEditorDialog(QDialog): #vers 3
             if hasattr(self, 'viewer_3d') and VIEWPORT_AVAILABLE:
                 self.viewer_3d.set_current_model(current_model, selected_index)
 
-            img_debugger.debug(f"Property changed: {property_name} = {new_value}")
+            print(f"Property changed: {property_name} = {new_value}")
 
         except Exception as e:
-            img_debugger.error(f"Error handling property change: {str(e)}")
+            print(f"Error handling property change: {str(e)}")
             self.status_bar.showMessage(f"Error: {str(e)}")
-
-
-        def _create_sphere_icon(self): #vers 1
-            """Sphere collision icon"""
-            svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2" fill="none"/>
-                <ellipse cx="10" cy="10" rx="7" ry="3" stroke="currentColor" stroke-width="1.5" fill="none"/>
-                <path d="M3 10 Q10 13 17 10" stroke="currentColor" stroke-width="1.5" fill="none"/>
-            </svg>'''
-            return self._svg_to_icon(svg_data, size=20)
-
-
-        def _create_box_icon(self): #vers 1
-            """Box collision icon"""
-            svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M4 6 L10 3 L16 6 L16 14 L10 17 L4 14 Z" stroke="currentColor" stroke-width="2" fill="none"/>
-                <path d="M4 6 L10 9 L16 6" stroke="currentColor" stroke-width="2"/>
-                <path d="M10 9 L10 17" stroke="currentColor" stroke-width="2"/>
-            </svg>'''
-            return self._svg_to_icon(svg_data, size=20)
-
-
-        def _create_mesh_icon(self): #vers 1
-            """Mesh collision icon"""
-            svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M3 10 L10 3 L17 10 L10 17 Z" stroke="currentColor" stroke-width="2" fill="none"/>
-                <path d="M3 10 L17 10 M10 3 L10 17" stroke="currentColor" stroke-width="1.5"/>
-            </svg>'''
-            return self._svg_to_icon(svg_data, size=20)
-
-
-        def _create_wireframe_icon(self): #vers 1
-            """Wireframe mode icon"""
-            svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M5 5 L15 5 L15 15 L5 15 Z" stroke="currentColor" stroke-width="2" fill="none"/>
-                <path d="M5 10 L15 10 M10 5 L10 15" stroke="currentColor" stroke-width="1.5"/>
-                <circle cx="5" cy="5" r="1.5" fill="currentColor"/>
-                <circle cx="15" cy="5" r="1.5" fill="currentColor"/>
-                <circle cx="15" cy="15" r="1.5" fill="currentColor"/>
-                <circle cx="5" cy="15" r="1.5" fill="currentColor"/>
-            </svg>'''
-            return self._svg_to_icon(svg_data, size=20)
-
-
-        def _create_bounds_icon(self): #vers 1
-            """Bounding box icon"""
-            svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect x="3" y="3" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="3,2"/>
-                <path d="M3 3 L7 3 M17 3 L13 3 M3 17 L7 17 M17 17 L13 17 M3 3 L3 7 M3 17 L3 13 M17 3 L17 7 M17 17 L17 13" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-            </svg>'''
-            return self._svg_to_icon(svg_data, size=20)
-
-
-        def _create_reset_view_icon(self): #vers 1
-            """Reset camera view icon"""
-            svg_data = b'''<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M16 10A6 6 0 1 1 4 10M4 10l3-3m-3 3l3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>'''
-            return self._svg_to_icon(svg_data, size=20)
 
 
         def _set_camera_view(self, view_type): #vers 1
@@ -7031,30 +7420,6 @@ class COLEditorDialog(QDialog): #vers 3
 
             self.viewer_3d.update()
 
-
-        def _svg_to_icon(self, svg_data, size=24): #vers 1
-            """Convert SVG to QIcon"""
-            from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor
-            from PyQt6.QtSvg import QSvgRenderer
-            from PyQt6.QtCore import QByteArray
-
-            try:
-                text_color = self.palette().color(self.foregroundRole())
-                svg_str = svg_data.decode('utf-8')
-                svg_str = svg_str.replace('currentColor', text_color.name())
-                svg_data = svg_str.encode('utf-8')
-
-                renderer = QSvgRenderer(QByteArray(svg_data))
-                pixmap = QPixmap(size, size)
-                pixmap.fill(QColor(0, 0, 0, 0))
-
-                painter = QPainter(pixmap)
-                renderer.render(painter)
-                painter.end()
-
-                return QIcon(pixmap)
-            except:
-                return QIcon()
 
 
     def closeEvent(self, event): #vers 1
@@ -7078,7 +7443,7 @@ class COLEditorDialog(QDialog): #vers 3
         else:
             event.accept()
 
-        img_debugger.debug("COL Editor dialog closed")
+        print("COL Editor dialog closed")
 
 
     # Add import/export functionality when docked
@@ -7100,7 +7465,7 @@ class COLEditorDialog(QDialog): #vers 3
                 self.main_window.log_message(f"{App_name} import/export functionality ready")
                 
         except Exception as e:
-            img_debugger.error(f"Error adding import/export functionality: {str(e)}")
+            print(f"Error adding import/export functionality: {str(e)}")
 
 
     def _import_col_data(self): #vers 1
@@ -7112,7 +7477,7 @@ class COLEditorDialog(QDialog): #vers 3
                 from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.information(self, "Import", "Import functionality coming soon!")
         except Exception as e:
-            img_debugger.error(f"Error importing COL data: {str(e)}")
+            print(f"Error importing COL data: {str(e)}")
 
 
     def _export_col_data(self): #vers 1
@@ -7124,7 +7489,7 @@ class COLEditorDialog(QDialog): #vers 3
                 from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.information(self, "Export", "Export functionality coming soon!")
         except Exception as e:
-            img_debugger.error(f"Error exporting COL data: {str(e)}")
+            print(f"Error exporting COL data: {str(e)}")
 
 
 # Convenience functions
@@ -7135,22 +7500,22 @@ def open_col_editor(parent=None, file_path: str = None) -> COLEditorDialog: #ver
 
         if file_path:
             if editor.load_col_file(file_path):
-                img_debugger.success(f"COL editor opened with file: {file_path}")
+                print(f"COL editor opened with file: {file_path}")
             else:
-                img_debugger.error(f"Failed to load file in COL editor: {file_path}")
+                print(f"Failed to load file in COL editor: {file_path}")
 
         editor.show()
         return editor
 
     except Exception as e:
-        img_debugger.error(f"Error opening COL editor: {str(e)}")
+        print(f"Error opening COL editor: {str(e)}")
         if parent:
             QMessageBox.critical(parent, "COL Editor Error", f"Failed to open COL editor:\n{str(e)}")
         return None
 
 
 def create_new_model(model_name: str = "New Model") -> COLModel: #vers 1
-    """Create new COL model"""
+
     try:
         model = COLModel()
         model.name = model_name
@@ -7164,11 +7529,11 @@ def create_new_model(model_name: str = "New Model") -> COLModel: #vers 1
         if hasattr(model, 'calculate_bounding_box'):
             model.calculate_bounding_box()
 
-        img_debugger.debug(f"Created new COL model: {model_name}")
+        print(f"Created new COL model: {model_name}")
         return model
 
     except Exception as e:
-        img_debugger.error(f"Error creating new COL model: {str(e)}")
+        print(f"Error creating new COL model: {str(e)}")
         return None
 
 
@@ -7184,11 +7549,11 @@ def delete_model(col_file: COLFile, model_index: int) -> bool: #vers 1
         model_name = getattr(col_file.models[model_index], 'name', f'Model_{model_index}')
         del col_file.models[model_index]
 
-        img_debugger.debug(f"Deleted COL model: {model_name}")
+        print(f"Deleted COL model: {model_name}")
         return True
 
     except Exception as e:
-        img_debugger.error(f"Error deleting COL model: {str(e)}")
+        print(f"Error deleting COL model: {str(e)}")
         return False
 
 
@@ -7196,11 +7561,11 @@ def export_model(model: COLModel, file_path: str) -> bool: #vers 1
     """Export single model to file"""
     try:
         # TODO: Implement model export
-        img_debugger.info(f"Model export to {file_path} - not yet implemented")
+        print(f"Model export to {file_path} - not yet implemented")
         return False
 
     except Exception as e:
-        img_debugger.error(f"Error exporting model: {str(e)}")
+        print(f"Error exporting model: {str(e)}")
         return False
 
 
@@ -7208,11 +7573,11 @@ def import_elements(model: COLModel, file_path: str) -> bool: #vers 1
     """Import collision elements from file"""
     try:
         # TODO: Implement element import
-        img_debugger.info(f"Element import from {file_path} - not yet implemented")
+        print(f"Element import from {file_path} - not yet implemented")
         return False
 
     except Exception as e:
-        img_debugger.error(f"Error importing elements: {str(e)}")
+        print(f"Error importing elements: {str(e)}")
         return False
 
 
@@ -7220,17 +7585,17 @@ def refresh_model_list(list_widget: COLModelListWidget, col_file: COLFile): #ver
     """Refresh model list widget"""
     try:
         list_widget.set_col_file(col_file)
-        img_debugger.debug("Model list refreshed")
+        print("Model list refreshed")
 
     except Exception as e:
-        img_debugger.error(f"Error refreshing model list: {str(e)}")
+        print(f"Error refreshing model list: {str(e)}")
 
 
 def update_view_options(viewer: 'COL3DViewport', **options): #vers 1
     """Update 3D viewer options"""
     try:
         viewer.set_view_options(**options)
-        img_debugger.debug(f"View options updated: {options}")
+        print(f"View options updated: {options}")
 
         def _ensure_standalone_functionality(self): #vers 1
             """Ensure popped-out windows work independently of img factory"""
@@ -7253,10 +7618,10 @@ def update_view_options(viewer: 'COL3DViewport', **options): #vers 1
                         self.setWindowFlags(Qt.WindowType.Window)
 
             except Exception as e:
-                img_debugger.error(f"Error ensuring standalone functionality: {str(e)}")
+                print(f"Error ensuring standalone functionality: {str(e)}")
 
     except Exception as e:
-        img_debugger.error(f"Error updating view options: {str(e)}")
+        print(f"Error updating view options: {str(e)}")
 
 
 
@@ -7264,11 +7629,11 @@ def apply_changes(editor: COLEditorDialog) -> bool: #vers 1
     """Apply all pending changes"""
     try:
         # TODO: Implement change application
-        img_debugger.info("Apply changes - not yet implemented")
+        print("Apply changes - not yet implemented")
         return True
 
     except Exception as e:
-        img_debugger.error(f"Error applying changes: {str(e)}")
+        print(f"Error applying changes: {str(e)}")
         return False
 
 
@@ -7308,22 +7673,56 @@ def open_workshop(main_window, img_path=None): #vers 3
 COLEditorDialog = COLWorkshop  #vers 1
 
 
-def open_col_workshop(main_window, img_path=None): #vers 1
-    """Open COL Workshop - matches TXD Workshop pattern"""
+def open_col_workshop(main_window, img_path=None): #vers 2
+    """Open COL Workshop - embedded in tab if main_window has tab widget, standalone otherwise"""
     try:
-        workshop = COLWorkshop(main_window, main_window)
-        if img_path:
-            if img_path.lower().endswith(".col"):
-                if hasattr(workshop, "open_col_file"):
+        from PyQt6.QtWidgets import QVBoxLayout, QWidget
+
+        # Standalone mode
+        if not main_window or not hasattr(main_window, 'main_tab_widget'):
+            workshop = COLWorkshop(None, main_window)
+            workshop.setWindowFlags(Qt.WindowType.Window)
+            if img_path and img_path.lower().endswith('.col'):
+                if hasattr(workshop, 'open_col_file'):
                     workshop.open_col_file(img_path)
-                elif hasattr(workshop, "load_col_file"):
+                elif hasattr(workshop, 'load_col_file'):
                     workshop.load_col_file(img_path)
-        workshop.setWindowTitle("COL Workshop - IMG Factory 1.5")
+            workshop.setWindowTitle(f"COL Workshop - {App_name}")
+            workshop.resize(1200, 800)
+            workshop.show()
+            return workshop
+
+        # Embedded mode - add as tab
+        import os
+        tab_container = QWidget()
+        tab_layout = QVBoxLayout(tab_container)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+
+        workshop = COLWorkshop(tab_container, main_window)
+        workshop.setWindowFlags(Qt.WindowType.Widget)
+        tab_layout.addWidget(workshop)
+
+        if img_path and img_path.lower().endswith('.col'):
+            if hasattr(workshop, 'open_col_file'):
+                workshop.open_col_file(img_path)
+            elif hasattr(workshop, 'load_col_file'):
+                workshop.load_col_file(img_path)
+
+        tab_label = os.path.splitext(os.path.basename(img_path))[0] if img_path else "COL Workshop"
+        try:
+            from apps.methods.imgfactory_svg_icons import get_col_file_icon
+            icon = get_col_file_icon()
+            idx = main_window.main_tab_widget.addTab(tab_container, icon, tab_label)
+        except Exception:
+            idx = main_window.main_tab_widget.addTab(tab_container, tab_label)
+        main_window.main_tab_widget.setCurrentIndex(idx)
+
         workshop.show()
         return workshop
+
     except Exception as e:
-        if main_window and hasattr(main_window, "log_message"):
-            main_window.log_message(f"Error: {str(e)}")
+        if main_window and hasattr(main_window, 'log_message'):
+            main_window.log_message(f"Error opening COL Workshop: {str(e)}")
         return None
 
 COLEditorDialog = COLWorkshop
@@ -7354,5 +7753,4 @@ if __name__ == "__main__":
         print(f"ERROR: {e}")
         traceback.print_exc()
         sys.exit(1)
-
 

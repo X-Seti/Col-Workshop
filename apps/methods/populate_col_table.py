@@ -154,22 +154,25 @@ def setup_table_for_col_data(table: QTableWidget) -> bool: #vers 1
         img_debugger.error(f"Error setting up COL table structure: {e}")
         return False
 
-def setup_col_tab(main_window, file_path): #vers 1
+def setup_col_tab(main_window, file_path): #vers 2
     """Setup or reuse tab for COL file"""
     try:
         current_index = main_window.main_tab_widget.currentIndex()
-        
-        # Check if current tab is empty
-        if not hasattr(main_window, 'open_files') or current_index not in main_window.open_files:
-            img_debugger.debug("Using current tab for COL file")
-        else:
+
+        # Check if current tab already has a file - open a new tab
+        if hasattr(main_window, 'open_files') and current_index in main_window.open_files:
             img_debugger.debug("Creating new tab for COL file")
-            if hasattr(main_window, 'close_manager'):
+            if hasattr(main_window, 'create_tab') and callable(main_window.create_tab):
                 main_window.create_tab()
                 current_index = main_window.main_tab_widget.currentIndex()
-            else:
-                img_debugger.warning("Close manager not available")
-                return None
+            elif hasattr(main_window, 'main_tab_widget'):
+                from PyQt6.QtWidgets import QWidget
+                new_tab = QWidget()
+                main_window.main_tab_widget.addTab(new_tab, "COL")
+                current_index = main_window.main_tab_widget.count() - 1
+                main_window.main_tab_widget.setCurrentIndex(current_index)
+        else:
+            img_debugger.debug("Using current tab for COL file")
         
         # Setup tab info
         file_name = os.path.basename(file_path)
@@ -196,31 +199,26 @@ def setup_col_tab(main_window, file_path): #vers 1
         img_debugger.error(f"Error setting up COL tab: {str(e)}")
         return None
 
-def load_col_file_object(main_window, file_path): #vers 1
+def load_col_file_object(main_window, file_path): #vers 2
     """Load COL file object"""
     try:
         from apps.methods.col_core_classes import COLFile
-        
+
         img_debugger.debug(f"Loading COL file: {os.path.basename(file_path)}")
-        
-        # Create COL file object
+
         col_file = COLFile()
-        if not col_file.load_from_file(file_path):
-            img_debugger.error(f"Failed to load COL file: {col_file.load_error if hasattr(col_file, "load_error") else "Unknown error"}")
-            return None
-        
-        # Load the file
+        if col_file.load_from_file(file_path):
+            model_count = len(col_file.models) if hasattr(col_file, 'models') else 0
             img_debugger.success(f"COL file loaded: {model_count} models")
             return col_file
         else:
             error_details = col_file.load_error if hasattr(col_file, 'load_error') else "Unknown error"
             img_debugger.error(f"Failed to load COL file: {error_details}")
             return None
-        
+
     except Exception as e:
         img_debugger.error(f"Error loading COL file: {str(e)}")
         return None
-
 def setup_col_table_structure(main_window): #vers 1
     """Setup table structure for COL data"""
     try:
@@ -277,19 +275,27 @@ def populate_col_table(main_window, col_file): #vers 3
 
         for row, model in enumerate(models):
             try:
-                # Model Name
-                model_name = getattr(model, 'name', f'Model_{row+1}')
+                # Model Name — try model.name first, then model.header.name
+                model_name = getattr(model, 'name', None)
+                if not model_name and hasattr(model, 'header'):
+                    model_name = getattr(model.header, 'name', None)
+                if not model_name:
+                    model_name = f'Model_{row+1}'
                 table.setItem(row, 0, QTableWidgetItem(str(model_name)))
 
                 # Type
                 table.setItem(row, 1, QTableWidgetItem("COL"))
 
-                # Version
-                version = getattr(model, 'version', 'Unknown')
-                if hasattr(version, 'value'):
+                # Version — try model.version, then model.header.version
+                version = getattr(model, 'version', None)
+                if version is None and hasattr(model, 'header'):
+                    version = getattr(model.header, 'version', None)
+                if version is not None and hasattr(version, 'name'):
+                    version_text = version.name   # e.g. "COL_1", "COL_2"
+                elif version is not None and hasattr(version, 'value'):
                     version_text = f"COL{version.value}"
                 else:
-                    version_text = str(version)
+                    version_text = str(version) if version else 'Unknown'
                 table.setItem(row, 2, QTableWidgetItem(version_text))
 
                 # Size - USE ACTUAL MODEL SIZE NOT ESTIMATED
@@ -405,47 +411,113 @@ def setup_col_tab_integration(main_window): #vers 1
         img_debugger.error(f"COL tab integration failed: {str(e)}")
         return False
 
-def load_col_file_safely(main_window, file_path): #vers 1
-    """Load COL file safely with proper tab management"""
+def load_col_file_safely(main_window, file_path): #vers 2
+    """Load COL file safely with proper tab creation and table population"""
     try:
-        # Validate file
         if not validate_col_file(main_window, file_path):
             return False
 
-        # Setup tab
-        tab_index = setup_col_tab(main_window, file_path)
-        if tab_index is None:
-            return False
-
-        # Load COL file
+        # Load COL file object first
         col_file = load_col_file_object(main_window, file_path)
         if col_file is None:
             return False
 
-        # Setup table structure for COL data
-        setup_col_table_structure(main_window)
+        # Create a proper new tab using the tab system
+        from apps.methods.tab_system import create_tab
+        from PyQt6.QtWidgets import QTableWidget
+        tab_index = create_tab(main_window, file_path=file_path, file_type='COL', file_object=col_file)
 
-        # Populate table with COL data (try enhanced first, fallback to debug version)
-        try:
-            populate_col_table(main_window, col_file)
-        except Exception as e:
-            img_debugger.warning(f"Enhanced table population failed: {str(e)}, using fallback")
-            populate_table_with_col_data_debug(main_window, col_file)
+        # Get the table widget from the new tab
+        tab_widget = main_window.main_tab_widget.widget(tab_index)
+        table = getattr(tab_widget, 'table_ref', None)
+        if table is None:
+            tables = tab_widget.findChildren(QTableWidget)
+            table = tables[-1] if tables else None
+
+        if table is None:
+            img_debugger.error("No table found in new COL tab")
+            return False
+
+        # Setup COL columns on this tab's table
+        col_headers = ["Model Name", "Type", "Version", "Size", "Spheres", "Boxes", "Vertices", "Faces"]
+        table.setColumnCount(len(col_headers))
+        table.setHorizontalHeaderLabels(col_headers)
+        table.setColumnWidth(0, 200)
+        table.setColumnWidth(1, 80)
+        table.setColumnWidth(2, 80)
+        table.setColumnWidth(3, 100)
+        table.setColumnWidth(4, 80)
+        table.setColumnWidth(5, 80)
+        table.setColumnWidth(6, 80)
+        table.setColumnWidth(7, 80)
+        table.setSortingEnabled(True)
+        img_debugger.debug("COL table structure setup complete")
+
+        # Populate table
+        models = col_file.models
+        table.setRowCount(len(models))
+        img_debugger.debug(f"Populating table with {len(models)} COL models")
+
+        for row, model in enumerate(models):
+            try:
+                model_name = getattr(model, 'name', f'Model_{row+1}')
+                table.setItem(row, 0, QTableWidgetItem(str(model_name)))
+                table.setItem(row, 1, QTableWidgetItem("COL"))
+
+                version = getattr(model, 'version', 'Unknown')
+                version_text = f"COL{version.value}" if hasattr(version, 'value') else str(version)
+                table.setItem(row, 2, QTableWidgetItem(version_text))
+
+                if hasattr(model, 'model_size') and model.model_size > 0:
+                    sz = model.model_size
+                    size_text = f"{sz//1024}KB" if sz > 1024 else f"{sz}B"
+                else:
+                    size_text = "64B"
+                table.setItem(row, 3, QTableWidgetItem(size_text))
+
+                table.setItem(row, 4, QTableWidgetItem(str(len(getattr(model, 'spheres', [])))))
+                table.setItem(row, 5, QTableWidgetItem(str(len(getattr(model, 'boxes', [])))))
+                table.setItem(row, 6, QTableWidgetItem(str(len(getattr(model, 'vertices', [])))))
+                table.setItem(row, 7, QTableWidgetItem(str(len(getattr(model, 'faces', [])))))
+
+            except Exception as e:
+                img_debugger.error(f"Error populating row {row}: {e}")
+                table.setItem(row, 0, QTableWidgetItem(f"Model_{row+1}"))
+                for col in range(1, 8):
+                    table.setItem(row, col, QTableWidgetItem("0"))
+
+        img_debugger.success(f"COL table populated with {len(models)} models")
 
         # Update main window state
         main_window.current_col = col_file
-        main_window.open_files[tab_index]['file_object'] = col_file
 
-        # Update info bar (try enhanced first, fallback to basic)
+        # Update info bar
         try:
             update_col_info_bar_enhanced(main_window, col_file, file_path)
         except Exception as e:
-            img_debugger.warning(f"Enhanced info bar update failed: {str(e)}")
-            # If enhanced fails, we continue without it
+            img_debugger.warning(f"Info bar update failed: {e}")
 
         img_debugger.success(f"COL file loaded: {os.path.basename(file_path)}")
         return True
 
     except Exception as e:
         img_debugger.error(f"Error loading COL file: {str(e)}")
+        import traceback
+        img_debugger.error(traceback.format_exc())
+        return False
+
+def setup_col_tab_integration(main_window): #vers 1
+    """Setup COL tab integration with main window"""
+    try:
+        # Add COL loading method to main window
+        main_window.load_col_file_safely = lambda file_path: load_col_file_safely(main_window, file_path)
+
+        # Add styling reset method
+        main_window._reset_table_styling = lambda: reset_table_styling(main_window)
+
+        img_debugger.success("COL tab integration ready")
+        return True
+
+    except Exception as e:
+        img_debugger.error(f"COL tab integration failed: {str(e)}")
         return False

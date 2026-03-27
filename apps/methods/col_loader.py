@@ -35,23 +35,18 @@ from apps.methods.col_core_classes import COLFile
 # COLBackgroundLoader
 
 
-def load_col_file_safely(main_window, file_path: str) -> bool: #vers 8
+def load_col_file_safely(main_window, file_path: str) -> bool: #vers 9
     """Load COL file safely with proper validation and tab management"""
     try:
         img_debugger.debug(f"Loading COL: {os.path.basename(file_path)}")
-
-        # Use threaded loader for better UX
-        #from apps.components.col_loader import load_col_file_threaded
-        loader = load_col_file_threaded(main_window, file_path)
-
-        # Return True if loader started successfully
+        loader = load_col_file_async(main_window, file_path)
         return loader is not None
 
     except Exception as e:
         img_debugger.error(f"Error in COL loading: {str(e)}")
         return False
 
-def load_col_file_object(main_window, file_path: str) -> Optional[COLFile]: #vers 8
+def load_col_file_object(main_window, file_path: str) -> Optional[COLFile]: #vers 9
     """Load COL file and return COL object directly"""
     try:
         if not validate_col_file(main_window, file_path):
@@ -60,19 +55,17 @@ def load_col_file_object(main_window, file_path: str) -> Optional[COLFile]: #ver
         col_file = COLFile()
 
         if col_file.load_from_file(file_path):
-            if col_file.load_error:
-                error_details = col_file.load_error
-                img_debugger.error(f"COL file load error: {error_details}")
-                main_window.log_message(f"❌ Failed to load COL file: {error_details}")
-                return None
-
             model_count = len(col_file.models) if hasattr(col_file, 'models') else 0
             img_debugger.success(f"COL file loaded: {model_count} models")
             return col_file
-
-        except Exception as e:
-            img_debugger.error(f"Error loading COL file: {str(e)}")
+        else:
+            error_details = col_file.load_error if hasattr(col_file, 'load_error') else "Unknown error"
+            img_debugger.error(f"COL file load error: {error_details}")
             return None
+
+    except Exception as e:
+        img_debugger.error(f"Error loading COL file: {str(e)}")
+        return None
 
 def validate_col_file(main_window, file_path: str) -> bool: #vers 8
     """Validate COL file before loading"""
@@ -266,8 +259,7 @@ class COLBackgroundLoader(QThread):
                 return
             
             # Create COL file object
-            self.col_file = COLFile()
-            self.col_file.load_from_file(self.file_path)
+            self.col_file = COLFile(self.file_path)
             
             self.progress_update.emit(25, "Reading COL file data...")
             
@@ -317,7 +309,7 @@ class COLBackgroundLoader(QThread):
             def progress_load():
                 self.progress_update.emit(50, "Parsing COL structure...")
                 
-                result = self.col_file.load()
+                result = self.col_file.load_from_file(self.file_path)
                 
                 if result and self.col_file.models:
                     self.progress_update.emit(75, f"Processing {len(self.col_file.models)} models...")
@@ -338,14 +330,14 @@ class COLBackgroundLoader(QThread):
                 return result
             
             # Replace the load method temporarily
-            # Removed original_load reference
-            # Removed load method replacement
+            original_load = self.col_file.load
+            self.col_file.load = progress_load
             
             try:
                 return self.col_file.load_from_file(self.file_path)
             finally:
                 # Restore original load method
-                # Removed load restore
+                self.col_file.load = original_load
             
         except Exception as e:
             self.progress_update.emit(0, f"Loading error: {str(e)}")
