@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#this belongs in components.Col_Editor.col_workshop.py - Version: 12
+#this belongs in components.Col_Editor.col_workshop.py - Version: 74
 # X-Seti - August10 2025 - Converted col editor using gui base template.
 
 """
@@ -32,10 +32,15 @@ if str(project_root) not in sys.path:
 
 # Import PyQt6
 from PyQt6.QtWidgets import (QApplication, QSlider, QCheckBox,
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QListWidget, QDialog, QFormLayout, QSpinBox,  QListWidgetItem, QLabel, QPushButton, QFrame, QFileDialog, QLineEdit, QTextEdit, QMessageBox, QScrollArea, QGroupBox, QTableWidget, QTableWidgetItem, QColorDialog, QHeaderView, QAbstractItemView, QMenu, QComboBox, QInputDialog, QTabWidget, QDoubleSpinBox, QRadioButton
+    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QListWidget, QDialog, QFormLayout, QSpinBox,  QListWidgetItem, QLabel, QPushButton, QFrame, QFileDialog, QLineEdit, QTextEdit, QMessageBox, QScrollArea, QGroupBox, QTableWidget, QTableWidgetItem, QColorDialog, QHeaderView, QAbstractItemView, QMenu, QComboBox, QInputDialog, QTabWidget, QDoubleSpinBox, QRadioButton, QStyledItemDelegate
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPoint, QRect, QByteArray
 from PyQt6.QtGui import QFont, QIcon, QPixmap, QImage, QPainter, QPen, QBrush, QColor, QCursor
+# QAction location varies by PyQt6 version — try bothQStyledItemDelegate
+try:
+    from PyQt6.QtGui import QAction
+except ImportError:
+    from PyQt6.QtWidgets import QAction
 from PyQt6.QtSvg import QSvgRenderer
 
 # Import project modules AFTER path setup
@@ -52,20 +57,1171 @@ from apps.methods.col_workshop_parser import COLParser
 from apps.methods.col_workshop_loader import COLFile
 
 
-
 # Temporary 3D viewport placeholder
-class COL3DViewport(QWidget):
+class COL3DViewport(QWidget): #vers 2
+    """COL preview viewport.
+    Left-drag = pan, Right-drag = free rotate, Scroll = zoom, Middle = pan.
+    G key / button = translate gizmo, R key / button = rotate gizmo.
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(400, 400)
-        layout = QVBoxLayout(self)
-        label = QLabel("3D Viewport - Placeholder")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(label)
-    def set_current_file(self, col_file): pass
-    def set_view_options(self, **options): pass
+        self.setMinimumSize(200, 200)
+        self._model        = None
+        self._yaw          = 30.0
+        self._pitch        = 20.0
+        self._zoom         = 1.0
+        self._pan_x        = 0.0
+        self._pan_y        = 0.0
+        self._flip_h       = False
+        self._flip_v       = False
+        self._show_spheres = True
+        self._show_boxes   = True
+        self._show_mesh    = True
+        self._backface     = False
+        self._render_style = 'semi'
+        self._bg_color     = (25, 25, 35)
+        # drag state
+        self._left_drag    = None
+        self._right_drag   = None
+        self._mid_drag     = None
+        # gizmo
+        self._gizmo_mode   = 'translate'  # 'translate' | 'rotate'
+        self._gizmo_drag   = None         # 'X'|'Y'|'Z' while dragging
+        self._gizmo_start  = None
+        # face selection / paint state
+        self._selected_faces  = set()    # set of face indices currently selected
+        self._paint_mode      = False    # True = click face to paint material
+        self._paint_material  = 0
+        self._tool_mode       = 'select'  # 'select' | 'paint' | 'dropper' | 'select_all_mat'
+        self._dropper_active  = False        # material id to apply in paint mode
+        self.on_face_selected = None     # callback(face_index, face) when face clicked
+        self._drag_selecting  = False    # True while LMB held after face click
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.DefaultContextMenu)
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
 
-VIEWPORT_AVAILABLE = False  # 3D viewport not yet implemented
+
+    # ── public API ────────────────────────────────────────────────────────
+    def set_current_file(self, col_file): pass
+    def set_view_options(self, **kw):     pass
+
+    def set_current_model(self, model, index=0):
+        self._model = model
+        # Reset view so the new model is centred and visible
+        self._pan_x = 0.0
+        self._pan_y = 0.0
+        self._zoom  = 1.0
+        self.update()
+
+    def zoom_in(self):
+        self._zoom = min(20.0, self._zoom * 1.25); self.update()
+
+    def zoom_out(self):
+        self._zoom = max(0.05, self._zoom / 1.25); self.update()
+
+    def reset_view(self):
+        self._yaw = 30.0; self._pitch = 20.0
+        self._zoom = 1.0; self._pan_x = self._pan_y = 0.0
+        self._flip_h = self._flip_v = False
+        self.update()
+
+    def fit_to_window(self):
+        self._pan_x = self._pan_y = 0.0; self._zoom = 1.0; self.update()
+
+    def pan(self, dx, dy):
+        self._pan_x += dx; self._pan_y += dy; self.update()
+
+    def rotate_cw(self):
+        self._yaw = (self._yaw + 90) % 360; self.update()
+
+    def rotate_ccw(self):
+        self._yaw = (self._yaw - 90) % 360; self.update()
+
+    def flip_horizontal(self):
+        self._flip_h = not self._flip_h; self.update()
+
+    def flip_vertical(self):
+        self._flip_v = not self._flip_v; self.update()
+
+    def set_background_color(self, rgb):
+        self._bg_color = rgb; self.update()
+
+    def set_show_spheres(self, v): self._show_spheres = v; self.update()
+    def set_show_boxes(self,   v): self._show_boxes   = v; self.update()
+    def set_show_mesh(self,    v): self._show_mesh     = v; self.update()
+    def set_backface(self,     v): self._backface      = v; self.update()
+    def set_render_style(self, s): self._render_style  = s; self.update()
+
+    def toggle_gizmo_mode(self):
+        self._gizmo_mode = 'rotate' if self._gizmo_mode == 'translate' else 'translate'
+        self._gizmo_drag = None
+        self.update()
+
+    def _set_gizmo(self, mode):
+        self._gizmo_mode = mode; self._gizmo_drag = None; self.update()
+
+
+    # ── projection (self-contained, no workshop needed) ──────────────────
+    def _proj(self, x, y, z):
+        """Project 3D world point → 2D screen pixel using current view state."""
+        import math
+        yr = math.radians(self._yaw);   cy, sy = math.cos(yr), math.sin(yr)
+        pr = math.radians(self._pitch); cp, sp = math.cos(pr), math.sin(pr)
+        rx = x*cy - y*sy
+        ry = x*sy + y*cy
+        ry2 = ry*cp - z*sp
+        return rx, ry2
+
+    def _get_scale_origin(self):
+        """Return (scale, ox, oy) mapping 3D projected coords to screen pixels."""
+        W, H = self.width(), self.height()
+        model = self._model
+        if not model:
+            return 50.0 * self._zoom, W/2 + self._pan_x, H/2 + self._pan_y
+
+        verts = getattr(model, 'vertices', [])
+        spheres = getattr(model, 'spheres', [])
+        boxes   = getattr(model, 'boxes',   [])
+
+        pts3 = [(v.x, v.y, v.z) for v in verts]
+        for s in spheres:
+            c = s.center; r = s.radius
+            cx,cy,cz = (c.x,c.y,c.z) if hasattr(c,'x') else (c[0],c[1],c[2])
+            pts3 += [(cx-r,cy,cz),(cx+r,cy,cz),(cx,cy-r,cz),(cx,cy+r,cz),(cx,cy,cz-r),(cx,cy,cz+r)]
+        for b in boxes:
+            mn = b.min if not hasattr(b,'min_point') else b.min_point
+            mx = b.max if not hasattr(b,'max_point') else b.max_point
+            for p in [mn, mx]:
+                pts3.append((p.x,p.y,p.z) if hasattr(p,'x') else (p[0],p[1],p[2]))
+
+        if not pts3:
+            return 50.0 * self._zoom, W/2 + self._pan_x, H/2 + self._pan_y
+
+        pts2 = [self._proj(x,y,z) for x,y,z in pts3]
+        xs = [p[0] for p in pts2]; ys = [p[1] for p in pts2]
+        rng = max(max(xs)-min(xs), max(ys)-min(ys), 0.001)
+        pad = 40
+        base_scale = (min(W,H) - pad*2) / rng
+        scale = base_scale * self._zoom
+        cx2 = (min(xs)+max(xs))/2; cy2 = (min(ys)+max(ys))/2
+        ox = W/2 - cx2*scale + self._pan_x
+        oy = H/2 - cy2*scale + self._pan_y
+        return scale, ox, oy
+
+    def _to_screen(self, x, y, z):
+        scale, ox, oy = self._get_scale_origin()
+        px, py = self._proj(x, y, z)
+        return px*scale + ox, py*scale + oy
+
+
+    # ── gizmo hit test ───────────────────────────────────────────────────
+    def _gizmo_centre(self):
+        """Screen coords of gizmo origin (model centroid)."""
+        model = self._model
+        if not model: return None
+        verts = getattr(model, 'vertices', [])
+        if verts:
+            cx = sum(v.x for v in verts)/len(verts)
+            cy = sum(v.y for v in verts)/len(verts)
+            cz = sum(v.z for v in verts)/len(verts)
+        else:
+            cx = cy = cz = 0.0
+        return self._to_screen(cx, cy, cz)
+
+    def _gizmo_arm(self):
+        return max(45, min(self.width(), self.height()) * 0.15)
+
+    def _hit_gizmo(self, mx, my):
+        """Return axis 'X'/'Y'/'Z' if click near a gizmo handle, else None."""
+        import math
+        ctr = self._gizmo_centre()
+        if not ctr: return None
+        gx, gy = ctr
+        arm = self._gizmo_arm()
+        best, best_d = None, 16
+        for (dx,dy,dz), name in [((1,0,0),'X'),((0,1,0),'Y'),((0,0,1),'Z')]:
+            px, py = self._proj(dx, dy, dz)
+            tx, ty = gx+px*arm, gy+py*arm
+            if math.hypot(mx-tx, my-ty) < best_d:
+                best_d, best = math.hypot(mx-tx, my-ty), name
+        return best
+
+    def set_paint_mode(self, enabled: bool, material_id: int = 0):
+        """Enable/disable paint mode. In paint mode LMB click paints a face."""
+        self._paint_mode     = enabled
+        self._paint_material = material_id
+        self._selected_faces = set()
+        self.setCursor(Qt.CursorShape.CrossCursor if enabled else Qt.CursorShape.OpenHandCursor)
+        self.update()
+
+    def _pick_face(self, mx, my):
+        """Return (face_index, face) of the closest face whose projected centroid
+        is within 20px of click, or (None, None)."""
+        import math
+        model = self._model
+        if not model: return None, None
+        verts = getattr(model, 'vertices', [])
+        faces = getattr(model, 'faces',   [])
+        if not verts or not faces: return None, None
+
+        scale, ox, oy = self._get_scale_origin()
+
+        def ts(x, y, z):
+            px, py = self._proj(x, y, z)
+            return px * scale + ox, py * scale + oy
+
+        def g3(obj):
+            if hasattr(obj, 'x'): return obj.x, obj.y, obj.z
+            return float(obj[0]), float(obj[1]), float(obj[2])
+
+        best_i, best_d = None, 20.0   # 20px pick radius
+        for i, face in enumerate(faces):
+            fa = getattr(face, 'a', None)
+            if fa is None: continue
+            try:
+                ax, ay, az = g3(verts[face.a])
+                bx, by, bz = g3(verts[face.b])
+                cx, cy, cz = g3(verts[face.c])
+            except IndexError: continue
+            # centroid in screen space
+            sx, sy = ts((ax+bx+cx)/3, (ay+by+cy)/3, (az+bz+cz)/3)
+            d = math.hypot(mx - sx, my - sy)
+            if d < best_d:
+                best_d, best_i = d, i
+
+        if best_i is not None:
+            return best_i, faces[best_i]
+        return None, None
+
+
+    # ── mouse ────────────────────────────────────────────────────────────
+    def mousePressEvent(self, event):
+        mx, my = event.position().x(), event.position().y()
+        W, H = self.width(), self.height()
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Top-right chips
+            if self._paint_mode:
+                # Hit-test using same constants as paintEvent
+                _CHIP_H  = 22; _BTN_W = 24; _BTN_GAP = 4
+                _MAT_W   = 180; _MARGIN = 8
+                _ROW1_Y  = 4;  _ROW2_Y = _ROW1_Y + _CHIP_H + 2
+                rx = W - _MAT_W - _MARGIN   # left edge of chip area
+                # Row 1: material chip click (future: open mat picker)
+                if _ROW1_Y <= my <= _ROW1_Y + _CHIP_H and rx <= mx <= rx + _MAT_W:
+                    _ARW = 22
+                    ws = self._find_workshop()
+                    if ws:
+                        if mx <= rx + _ARW:           # ◀ prev
+                            ws._paint_cycle_mat(-1)
+                        elif mx >= rx + _MAT_W - _ARW: # ▶ next
+                            ws._paint_cycle_mat(+1)
+                        else:                           # mat name chip — open list popup
+                            ws._open_paint_mat_popup()
+                    return
+                # Row 2: tool buttons
+                elif _ROW2_Y <= my <= _ROW2_Y + _CHIP_H:
+                    ws = self._find_workshop()
+                    # Each button occupies _BTN_W + _BTN_GAP
+                    btn_idx = (mx - rx) // (_BTN_W + _BTN_GAP)
+                    if   btn_idx == 0 and ws: ws._set_paint_tool('paint')
+                    elif btn_idx == 1 and ws: ws._set_paint_tool('dropper')#;btn_idx.setToolTip("Colour dropper")
+                    elif btn_idx == 2 and ws: ws._set_paint_tool('fill')#;btn_idx.setToolTip("Colour Fill")
+                    elif btn_idx == 3 and ws: ws._undo_last_action()#;btn_idx.setToolTip("Undo")
+                    elif btn_idx == 4 and ws: ws._exit_paint_mode()#;btn_idx.setToolTip("Exit")
+                    self.update(); return
+            else:
+                # Normal: Move [G] toggle
+                if W-70 <= mx <= W-4 and 4 <= my <= 26:
+                    self.toggle_gizmo_mode(); return
+
+            # Paint mode — pick face, apply current tool
+            if self._paint_mode:
+                fi, face = self._pick_face(mx, my)
+                if fi is not None and face is not None:
+                    tool = getattr(self, '_tool_mode', 'paint')
+
+                    if tool == 'dropper':
+                        # Pick material from face → update paint colour + overlay
+                        mat = face.material
+                        picked = mat.material_id if hasattr(mat, 'material_id') else int(mat)
+                        self._paint_material = picked
+                        self._paint_material = picked   # update viewport attr
+                        ws = self._find_workshop()
+                        if ws:
+                            combo = getattr(ws, 'paint_mat_combo', None)
+                            if combo:
+                                for i in range(combo.count()):
+                                    if combo.itemData(i) == picked:
+                                        combo.setCurrentIndex(i)
+                                        break
+                            ws._paint_active_mat = picked
+                        # Auto-switch back to paint tool after dropper pick
+                        self._tool_mode = 'paint'
+                        self.update()   # refresh overlay chip with new colour
+                        return
+
+                    elif tool == 'fill':
+                        # Fill all faces that share the same material as clicked face
+                        mat = face.material
+                        src_id = mat.material_id if hasattr(mat, 'material_id') else int(mat)
+                        model = self._model
+                        if model:
+                            ws = self._find_workshop()
+                            if ws:
+                                models = getattr(getattr(ws, 'current_col_file', None), 'models', [])
+                                mi = models.index(model) if model in models else -1
+                                if mi >= 0:
+                                    ws._push_undo(mi, f"Fill material {self._paint_material} from {src_id}")
+                            count = 0
+                            for f2 in model.faces:
+                                m2 = f2.material
+                                cur = m2.material_id if hasattr(m2, 'material_id') else int(m2)
+                                if cur == src_id:
+                                    if hasattr(m2, 'material_id'):
+                                        m2.material_id = self._paint_material
+                                    else:
+                                        f2.material = self._paint_material
+                                    count += 1
+                            if ws:
+                                ws._set_status(f"Filled {count} faces (mat {src_id} → {self._paint_material})")
+
+                    else:  # paint
+                        if hasattr(face, 'material'):
+                            if hasattr(face.material, 'material_id'):
+                                face.material.material_id = self._paint_material
+                            else:
+                                face.material = self._paint_material
+
+                    self._selected_faces = {fi}
+                    if self.on_face_selected:
+                        self.on_face_selected(fi, face)
+                    self.update()
+                return
+
+            # Normal mode — face select on click; start drag-select
+            fi, face = self._pick_face(mx, my)
+            if fi is not None:
+                mods = event.modifiers()
+                if mods & Qt.KeyboardModifier.ControlModifier:
+                    # Ctrl+click: toggle individual face
+                    if fi in self._selected_faces:
+                        self._selected_faces.discard(fi)
+                    else:
+                        self._selected_faces.add(fi)
+                else:
+                    self._selected_faces = {fi}
+                self._drag_selecting = True   # enable brush drag
+                self.setCursor(Qt.CursorShape.CrossCursor)
+                if self.on_face_selected:
+                    self.on_face_selected(fi, face)
+                self.update()
+                return
+
+            # Gizmo axis
+            axis = self._hit_gizmo(mx, my)
+            if axis:
+                self._gizmo_drag  = axis
+                self._gizmo_start = event.position()
+                self.setCursor(Qt.CursorShape.SizeAllCursor)
+            else:
+                self._left_drag = event.position()
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        elif event.button() == Qt.MouseButton.RightButton:
+            # Try to pick a face at click pos; if hit → context menu, else → rotate drag
+            mx2, my2 = event.position().x(), event.position().y()
+            fi2, face2 = self._pick_face(mx2, my2)
+            if fi2 is not None and face2 is not None:
+                # Select the face
+                if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+                    if fi2 not in self._selected_faces:
+                        self._selected_faces = {fi2}
+                else:
+                    self._selected_faces.add(fi2)
+                self.update()
+                self._show_face_context_menu(event.globalPosition().toPoint(), fi2, face2)
+            else:
+                self._right_drag = event.position()
+                self.setCursor(Qt.CursorShape.SizeAllCursor)
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            self._mid_drag = event.position()
+            self.setCursor(Qt.CursorShape.SizeAllCursor)  # rotate
+
+    def mouseMoveEvent(self, event):
+        import math
+
+        # ── Gizmo drag ───────────────────────────────────────────────────
+        if self._gizmo_drag and (event.buttons() & Qt.MouseButton.LeftButton):
+            d  = event.position() - self._gizmo_start
+            self._gizmo_start = event.position()
+            axis = self._gizmo_drag
+            scale, _, _ = self._get_scale_origin()
+            ax3 = {'X':(1,0,0),'Y':(0,1,0),'Z':(0,0,1)}[axis]
+            px, py = self._proj(*ax3)
+            screen_len = math.hypot(px, py) or 1.0
+
+            def _vec(obj):
+                """Return the Vector3-like object itself if it has .x/.y/.z"""
+                return obj if (obj and hasattr(obj,'x')) else None
+
+            def _box_pts(box):
+                """Yield the min and max Vector3 points of a box."""
+                mn = getattr(box,'min_point', getattr(box,'min', None))
+                mx = getattr(box,'max_point', getattr(box,'max', None))
+                for pt in [mn, mx]:
+                    if pt and hasattr(pt,'x'): yield pt
+
+            if self._gizmo_mode == 'translate':
+                dot = (d.x()*px + d.y()*py) / screen_len
+                delta = dot / scale
+                if self._model:
+                    # Move vertices
+                    for v in getattr(self._model, 'vertices', []):
+                        if   axis=='X': v.x += delta
+                        elif axis=='Y': v.y += delta
+                        else:           v.z += delta
+                    # Move box min/max points
+                    for box in getattr(self._model, 'boxes', []):
+                        for pt in _box_pts(box):
+                            if   axis=='X': pt.x += delta
+                            elif axis=='Y': pt.y += delta
+                            else:           pt.z += delta
+                    # Move sphere centres
+                    for sph in getattr(self._model, 'spheres', []):
+                        c = _vec(sph.center)
+                        if c:
+                            if   axis=='X': c.x += delta
+                            elif axis=='Y': c.y += delta
+                            else:           c.z += delta
+                    # Move bounds centre
+                    bounds = getattr(self._model, 'bounds', None)
+                    if bounds:
+                        for pt in [getattr(bounds,'center',None),
+                                   getattr(bounds,'min',None),
+                                   getattr(bounds,'max',None)]:
+                            if pt and hasattr(pt,'x'):
+                                if   axis=='X': pt.x += delta
+                                elif axis=='Y': pt.y += delta
+                                else:           pt.z += delta
+            else:  # rotate
+                perp_x, perp_y = -py, px
+                deg = (d.x()*perp_x + d.y()*perp_y) / screen_len * 0.8
+                r = math.radians(deg)
+                cos_r, sin_r = math.cos(r), math.sin(r)
+                if self._model:
+                    def _rot_pt(pt):
+                        if not (pt and hasattr(pt,'x')): return
+                        x2,y2,z2 = pt.x, pt.y, pt.z
+                        if axis=='X':
+                            pt.y = y2*cos_r - z2*sin_r
+                            pt.z = y2*sin_r + z2*cos_r
+                        elif axis=='Y':
+                            pt.x = x2*cos_r + z2*sin_r
+                            pt.z = -x2*sin_r + z2*cos_r
+                        else:
+                            pt.x = x2*cos_r - y2*sin_r
+                            pt.y = x2*sin_r + y2*cos_r
+                    # Rotate vertices
+                    for v in getattr(self._model, 'vertices', []):
+                        _rot_pt(v)
+                    # Rotate box min/max
+                    for box in getattr(self._model, 'boxes', []):
+                        for pt in _box_pts(box):
+                            _rot_pt(pt)
+                    # Rotate sphere centres
+                    for sph in getattr(self._model, 'spheres', []):
+                        _rot_pt(_vec(sph.center))
+                    # Rotate bounds
+                    bounds = getattr(self._model, 'bounds', None)
+                    if bounds:
+                        for attr in ('center','min','max'):
+                            _rot_pt(getattr(bounds, attr, None))
+            self.update()
+            return
+
+        # ── Pan (left drag on background) ────────────────────────────────
+        # ── Drag-select (LMB held after face click — paint-brush selection) ──
+        if self._drag_selecting and (event.buttons() & Qt.MouseButton.LeftButton):
+            mx2, my2 = event.position().x(), event.position().y()
+            fi, face = self._pick_face(mx2, my2)
+            shift_held = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            if fi is not None and fi not in self._selected_faces:
+                if self._paint_mode and not shift_held:
+                    # Paint mode drag without shift: paint face
+                    if hasattr(face, 'material'):
+                        if hasattr(face.material, 'material_id'):
+                            face.material.material_id = self._paint_material
+                        else:
+                            face.material = self._paint_material
+                # Shift held OR not in paint mode: just add to selection
+                self._selected_faces.add(fi)
+                if self.on_face_selected and not shift_held:
+                    self.on_face_selected(fi, face)
+                self.update()
+
+        elif self._left_drag and (event.buttons() & Qt.MouseButton.LeftButton):
+            d = event.position() - self._left_drag
+            self._pan_x += d.x(); self._pan_y += d.y()
+            self._left_drag = event.position(); self.update()
+
+        # ── Free rotate (right drag) ──────────────────────────────────────
+        if self._right_drag and (event.buttons() & Qt.MouseButton.RightButton):
+            d = event.position() - self._right_drag
+            self._yaw   = (self._yaw + d.x() * 0.4) % 360
+            self._pitch = max(-89.0, min(89.0, self._pitch + d.y() * 0.4))
+            self._right_drag = event.position(); self.update()
+
+        # ── Free rotate (middle drag) ─────────────────────────────────────
+        if self._mid_drag and (event.buttons() & Qt.MouseButton.MiddleButton):
+            d = event.position() - self._mid_drag
+            self._yaw   = (self._yaw + d.x() * 0.4) % 360
+            self._pitch = max(-89.0, min(89.0, self._pitch + d.y() * 0.4))
+            self._mid_drag = event.position(); self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._left_drag = None
+            self._gizmo_drag = None
+            self._drag_selecting = False
+        elif event.button() == Qt.MouseButton.RightButton:
+            self._right_drag = None
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            self._mid_drag = None
+        # Restore cursor — cross if still in paint mode, else arrow
+        self.setCursor(
+            Qt.CursorShape.CrossCursor if self._paint_mode
+            else Qt.CursorShape.ArrowCursor
+        )
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        ws = self._find_workshop()
+        if ws and hasattr(ws, 'paint_toolbar') and ws.paint_toolbar and ws.paint_toolbar.isVisible():
+            vp = getattr(ws, 'preview_widget', None)
+            if vp: ws.paint_toolbar.setGeometry(0, 0, vp.width(), 34)
+
+    def wheelEvent(self, event):
+        factor = 1.18 if event.angleDelta().y() > 0 else 1/1.18
+        self._zoom = max(0.02, min(40.0, self._zoom * factor))
+        self.update()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            if self._paint_mode:
+                self.set_paint_mode(False)
+                # notify workshop via _workshop_ref (reliable; parent() may be a QFrame)
+                ws = self._find_workshop()
+                if ws and hasattr(ws, '_on_paint_mode_exited'):
+                    ws._on_paint_mode_exited()
+            self._selected_faces = set()
+            self.update()
+        elif event.key() == Qt.Key.Key_G: self._set_gizmo('translate')
+        elif event.key() == Qt.Key.Key_F and self._paint_mode:
+            # F = fill selected faces with current paint material
+            ws = self._find_workshop()
+            if ws: ws._apply_to_selected_faces_paint()
+        elif event.key() == Qt.Key.Key_R: self._set_gizmo('rotate')
+        elif event.key() == Qt.Key.Key_F: self.fit_to_window()
+        elif event.key() == Qt.Key.Key_V: self._cycle_render_style()
+        else: super().keyPressEvent(event)
+
+    def _cycle_render_style(self):
+        modes = ['wireframe','semi','solid']
+        self._render_style = modes[(modes.index(self._render_style)+1) % 3]                              if self._render_style in modes else 'semi'
+        self.update()
+
+    def contextMenuEvent(self, event):
+        from PyQt6.QtWidgets import QMenu
+        m = QMenu(self)
+        m.addAction("Top",       lambda: self._set_angles(0,   0))
+        m.addAction("Front",     lambda: self._set_angles(0,  90))
+        m.addAction("Side",      lambda: self._set_angles(90,  0))
+        m.addAction("Isometric", lambda: self._set_angles(45, 35))
+        m.addSeparator()
+        m.addAction("Reset View",    self.reset_view)
+        m.addAction("Fit to Window", self.fit_to_window)
+        m.addSeparator()
+        m.addAction("Move Gizmo  [G]",   lambda: self._set_gizmo('translate'))
+        m.addAction("Rotate Gizmo [R]",  lambda: self._set_gizmo('rotate'))
+        m.addSeparator()
+        for style,label in [('wireframe','Wireframe [V]'),
+                             ('semi',     'Semi-transparent [V]'),
+                             ('solid',    'Solid [V]')]:
+            tick = '✓ ' if self._render_style == style else '    '
+            m.addAction(tick+label, lambda s=style: self.set_render_style(s))
+        m.exec(event.globalPos())
+
+    def _set_angles(self, yaw, pitch):
+        self._yaw, self._pitch = float(yaw), float(pitch); self.update()
+
+
+    # ── paint ─────────────────────────────────────────────────────────────
+    def paintEvent(self, event):
+        """Fully self-contained paint — grid, mesh, boxes, spheres, bounds, gizmo, HUD."""
+        from PyQt6.QtGui import (QPainter, QColor, QFont, QPen, QBrush,
+                                  QPolygonF, QLinearGradient)
+        from PyQt6.QtCore import QPointF, QRectF
+        import math
+
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        W, H = self.width(), self.height()
+        r2, g2, b2 = self._bg_color
+        p.fillRect(self.rect(), QColor(r2, g2, b2))
+
+        if not self._model:
+            p.setPen(QColor(120, 120, 120))
+            p.setFont(QFont('Arial', 11))
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No model selected")
+            return
+
+        scale, ox, oy = self._get_scale_origin()
+
+        def to_screen(x, y, z):
+            px, py = self._proj(x, y, z)
+            return px * scale + ox, py * scale + oy
+
+        def g3(obj):
+            if hasattr(obj, 'x'):        return obj.x, obj.y, obj.z
+            if hasattr(obj, 'position'): return obj.position.x, obj.position.y, obj.position.z
+            if obj is None:              return 0.0, 0.0, 0.0
+            return float(obj[0]), float(obj[1]), float(obj[2])
+
+        model   = self._model
+        verts   = getattr(model, 'vertices', [])
+        faces   = getattr(model, 'faces',   [])
+        boxes   = getattr(model, 'boxes',   [])
+        spheres = getattr(model, 'spheres', [])
+        bounds  = getattr(model, 'bounds',  None)
+
+        # ── Extent from ALL geometry (verts + boxes + spheres) ───────────
+        all_pts = [(v.x, v.y, v.z) for v in verts]
+        for box in boxes:
+            mn = getattr(box,'min_point', getattr(box,'min', None))
+            mx = getattr(box,'max_point', getattr(box,'max', None))
+            if mn: all_pts.append(g3(mn))
+            if mx: all_pts.append(g3(mx))
+        for sph in spheres:
+            cx,cy3,cz = g3(getattr(sph,'center',None))
+            r = getattr(sph,'radius',1.0)
+            all_pts += [(cx+r,cy3,cz),(cx-r,cy3,cz),(cx,cy3+r,cz),(cx,cy3-r,cz)]
+        if bounds:
+            for attr in ('min','max'):
+                pt = getattr(bounds, attr, None)
+                if pt: all_pts.append(g3(pt))
+
+        if all_pts:
+            extent = max(max(abs(c) for pt in all_pts for c in pt), 1.0)
+        else:
+            extent = 5.0
+
+        # ── Reference grid (XY plane, Z=0) ───────────────────────────────
+        raw_step = extent / 4.0
+        mag  = 10 ** math.floor(math.log10(max(raw_step, 0.001)))
+        step = round(raw_step / mag) * mag; step = max(step, 0.01)
+        half = math.ceil(extent / step + 1) * step
+        n    = int(half / step)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        for i in range(-n, n + 1):
+            v2 = i * step
+            col = QColor(75, 80, 105) if i == 0 else QColor(50, 55, 72)
+            p.setPen(QPen(col, 1))
+            x0,y0 = to_screen(-half, v2, 0); x1,y1 = to_screen(half, v2, 0)
+            p.drawLine(int(x0), int(y0), int(x1), int(y1))
+            x0,y0 = to_screen(v2, -half, 0); x1,y1 = to_screen(v2, half, 0)
+            p.drawLine(int(x0), int(y0), int(x1), int(y1))
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        # ── Material colours — from col_materials group palette ───────────
+        try:
+            from apps.methods.col_materials import get_material_qcolor, COLGame
+            _game = COLGame.VC if getattr(getattr(model,'version',None),'value',3)==1 else COLGame.SA
+            def mat_col(mat_id):
+                c = get_material_qcolor(mat_id, _game)
+                return c if c else QColor(120,120,120)
+        except Exception:
+            def mat_col(mat_id):
+                return QColor(120,120,120)
+
+        # ── Mesh faces ────────────────────────────────────────────────────
+        rs = self._render_style  # 'wireframe' | 'semi' | 'solid'
+        if self._show_mesh and verts and faces:
+            for face_idx, face in enumerate(faces):
+                idx = getattr(face,'vertex_indices',None)
+                if idx is None:
+                    fa = getattr(face,'a',None)
+                    if fa is not None: idx=(fa,face.b,face.c)
+                if not idx or len(idx)!=3: continue
+                try:
+                    pts=[QPointF(*to_screen(*g3(verts[i]))) for i in idx]
+                except (IndexError,AttributeError): continue
+                _mat = getattr(face,'material',0)
+                _mat_id = getattr(_mat,'material_id',_mat) if not isinstance(_mat,int) else _mat
+                mc = mat_col(_mat_id)
+                is_selected = (face_idx in self._selected_faces)
+                if is_selected:
+                    p.setBrush(QBrush(QColor(255, 200, 50, 200)))
+                    p.setPen(QPen(QColor(255, 230, 80), 2))
+                elif rs == 'solid':
+                    p.setBrush(QBrush(mc))
+                    p.setPen(QPen(mc.darker(130),0.5))
+                elif rs == 'semi':
+                    fill=QColor(mc.red(),mc.green(),mc.blue(),90)
+                    p.setBrush(QBrush(fill))
+                    p.setPen(QPen(QColor(mc.red()//2+60,mc.green()//2+60,mc.blue()//2+60),0.5))
+                else:  # wireframe
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    p.setPen(QPen(QColor(100,180,100),1))
+                p.drawPolygon(QPolygonF(pts))
+
+        # ── Boxes — draw all 12 edges of AABB ─────────────────────────────
+        if self._show_boxes:
+            p.setPen(QPen(QColor(220,180,50),1.5))
+            p.setBrush(QBrush(QColor(220,180,50,30)) if rs!='wireframe' else Qt.BrushStyle.NoBrush)
+            for box in boxes:
+                mn_obj = getattr(box,'min_point',getattr(box,'min',None))
+                mx_obj = getattr(box,'max_point',getattr(box,'max',None))
+                if mn_obj is None or mx_obj is None: continue
+                x0,y0,z0 = g3(mn_obj)
+                x1,y1,z1 = g3(mx_obj)
+                # 8 corners
+                corners=[(xa,ya,za) for xa in(x0,x1) for ya in(y0,y1) for za in(z0,z1)]
+                sc=[to_screen(*c) for c in corners]
+                # 12 edges of the cube
+                edges=[(0,1),(0,2),(0,4),(1,3),(1,5),(2,3),(2,6),(3,7),(4,5),(4,6),(5,7),(6,7)]
+                for a2,b2 in edges:
+                    ax,ay=sc[a2]; bx,by=sc[b2]
+                    p.drawLine(int(ax),int(ay),int(bx),int(by))
+
+        # ── Spheres — draw 3 projected rings (equator + 2 meridians) ──────
+        if self._show_spheres:
+            p.setPen(QPen(QColor(80,200,220),1.5))
+            p.setBrush(QBrush(QColor(80,200,220,25)) if rs!='wireframe' else Qt.BrushStyle.NoBrush)
+            N = 48
+            for sph in spheres:
+                cx,cy3,cz = g3(getattr(sph,'center',sph))
+                r = getattr(sph,'radius',1.0)
+                # 3 rings in different planes
+                for t1,t2,t3 in [(1,0,0,),(0,1,0),(0,0,1)]:
+                    # tangent vectors from axis (t1,t2,t3)
+                    if t3: ta,tb = (1,0,0),(0,1,0)
+                    elif t2: ta,tb = (1,0,0),(0,0,1)
+                    else: ta,tb = (0,1,0),(0,0,1)
+                    pts=[]
+                    for i in range(N+1):
+                        a2=2*math.pi*i/N
+                        wx=cx+r*(math.cos(a2)*ta[0]+math.sin(a2)*tb[0])
+                        wy=cy3+r*(math.cos(a2)*ta[1]+math.sin(a2)*tb[1])
+                        wz=cz+r*(math.cos(a2)*ta[2]+math.sin(a2)*tb[2])
+                        pts.append(QPointF(*to_screen(wx,wy,wz)))
+                    for i in range(len(pts)-1):
+                        p.drawLine(pts[i],pts[i+1])
+
+        # ── Bounding box (model.bounds) ───────────────────────────────────
+        if bounds:
+            mn_obj=getattr(bounds,'min',None); mx_obj=getattr(bounds,'max',None)
+            if mn_obj and mx_obj:
+                x0,y0,z0=g3(mn_obj); x1,y1,z1=g3(mx_obj)
+                corners=[(xa,ya,za) for xa in(x0,x1) for ya in(y0,y1) for za in(z0,z1)]
+                sc=[to_screen(*c) for c in corners]
+                edges=[(0,1),(0,2),(0,4),(1,3),(1,5),(2,3),(2,6),(3,7),(4,5),(4,6),(5,7),(6,7)]
+                p.setPen(QPen(QColor(180,100,220,160),1,Qt.PenStyle.DashLine))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                for a2,b2 in edges:
+                    ax,ay=sc[a2]; bx,by=sc[b2]
+                    p.drawLine(int(ax),int(ay),int(bx),int(by))
+            # Bounding sphere
+            bc=getattr(bounds,'center',None); br=getattr(bounds,'radius',0)
+            if bc and br>0:
+                cx,cy3,cz=g3(bc)
+                ta,tb=(1,0,0),(0,1,0)
+                pts=[]
+                for i in range(49):
+                    a2=2*math.pi*i/48
+                    wx=cx+br*(math.cos(a2)*ta[0]+math.sin(a2)*tb[0])
+                    wy=cy3+br*(math.cos(a2)*ta[1]+math.sin(a2)*tb[1])
+                    wz=cz+br*(math.cos(a2)*ta[2]+math.sin(a2)*tb[2])
+                    pts.append(QPointF(*to_screen(wx,wy,wz)))
+                p.setPen(QPen(QColor(180,100,220,120),1,Qt.PenStyle.DotLine))
+                for i in range(len(pts)-1): p.drawLine(pts[i],pts[i+1])
+
+        # ── Gizmo at model centroid ───────────────────────────────────────
+        if all_pts:
+            cx3=sum(pt[0] for pt in all_pts)/len(all_pts)
+            cy3=sum(pt[1] for pt in all_pts)/len(all_pts)
+            cz3=sum(pt[2] for pt in all_pts)/len(all_pts)
+        else:
+            cx3=cy3=cz3=0.0
+        gx,gy=to_screen(cx3,cy3,cz3)
+        arm=max(45,min(W,H)*0.15)
+        axes=[((1,0,0),QColor(220,60,60),'X'),((0,1,0),QColor(60,200,60),'Y'),((0,0,1),QColor(60,120,220),'Z')]
+        sorted_axes=sorted(axes,key=lambda a:self._proj(*a[0])[1],reverse=True)
+        if self._gizmo_mode=='translate':
+            for (dx,dy,dz),color,label in sorted_axes:
+                px2,py2=self._proj(dx,dy,dz)
+                tx,ty=gx+px2*arm,gy+py2*arm
+                p.setPen(QPen(color,2)); p.drawLine(int(gx),int(gy),int(tx),int(ty))
+                ang=math.atan2(ty-gy,tx-gx); aw,ah=12,6
+                tip=QPointF(tx,ty)
+                lpt=QPointF(tx-aw*math.cos(ang)+ah*math.sin(ang),ty-aw*math.sin(ang)-ah*math.cos(ang))
+                rpt=QPointF(tx-aw*math.cos(ang)-ah*math.sin(ang),ty-aw*math.sin(ang)+ah*math.cos(ang))
+                p.setBrush(QBrush(color)); p.setPen(QPen(color,1))
+                p.drawPolygon(QPolygonF([tip,lpt,rpt]))
+                lx=tx+(9 if tx>=gx else -14); ly=ty+(5 if ty>=gy else -3)
+                p.setFont(QFont('Arial',8,QFont.Weight.Bold)); p.setPen(color)
+                p.drawText(int(lx),int(ly),label)
+        else:
+            N=64
+            rings=[((1,0,0),(0,1,0),(0,0,1),QColor(220,60,60),'X'),
+                   ((0,1,0),(1,0,0),(0,0,1),QColor(60,200,60),'Y'),
+                   ((0,0,1),(1,0,0),(0,1,0),QColor(60,120,220),'Z')]
+            for (_,t1,t2,color,label) in sorted(rings,key=lambda r:self._proj(*r[0])[1],reverse=True):
+                t1x,t1y,t1z=t1; t2x,t2y,t2z=t2
+                pts=[]
+                for i in range(N+1):
+                    a2=2*math.pi*i/N
+                    wx=math.cos(a2)*t1x+math.sin(a2)*t2x
+                    wy=math.cos(a2)*t1y+math.sin(a2)*t2y
+                    wz=math.cos(a2)*t1z+math.sin(a2)*t2z
+                    px2,py2=self._proj(wx,wy,wz)
+                    pts.append(QPointF(gx+px2*arm,gy+py2*arm))
+                p.setPen(QPen(color,2)); p.setBrush(Qt.BrushStyle.NoBrush)
+                for i in range(len(pts)-1): p.drawLine(pts[i],pts[i+1])
+                p45x=math.cos(math.pi/4)*t1x+math.sin(math.pi/4)*t2x
+                p45y=math.cos(math.pi/4)*t1y+math.sin(math.pi/4)*t2y
+                p45z=math.cos(math.pi/4)*t1z+math.sin(math.pi/4)*t2z
+                lp,lq=self._proj(p45x,p45y,p45z)
+                p.setFont(QFont('Arial',8,QFont.Weight.Bold)); p.setPen(color)
+                p.drawText(int(gx+lp*arm+(6 if lp>=0 else -12)),int(gy+lq*arm+(5 if lq>=0 else -3)),label)
+        p.setBrush(QBrush(QColor(230,230,230))); p.setPen(QPen(QColor(160,160,160),1))
+        p.drawEllipse(int(gx)-5,int(gy)-5,10,10)
+
+        # ── Top-right overlay — normal mode: Move/Rotate + Render chips ──
+        #                         paint mode:  material + tool chips
+        if self._paint_mode:
+            # ── Tunable layout constants ────────────────────────────────
+            _CHIP_H   = 26   # height of each chip row  (px)
+            _BTN_W    = 32   # width  of each tool button
+            _BTN_GAP  = 3    # gap between buttons
+            _ICON_SZ  = 18   # SVG icon size inside button
+            _MAT_W    = 200  # width of the material name chip
+            _MARGIN   = 8    # right margin from viewport edge
+            _ROW1_Y   = 4    # y of material chip
+            _ROW2_Y   = _ROW1_Y + _CHIP_H + 2   # y of tool buttons row
+            # ────────────────────────────────────────────────────────────
+
+            from apps.methods.col_materials import get_material_name, get_material_colour, COLGame
+            from PyQt6.QtCore import QRect
+            mat_id   = self._paint_material
+            mat_name = get_material_name(mat_id, COLGame.SA)
+            hex_col  = get_material_colour(mat_id, COLGame.SA)
+            mc = QColor(f"#{hex_col}")
+
+            # Row 1: [◀] [■ mat swatch | id — name | ▶]
+            _ARW = 22   # arrow button width
+            rx = W - _MAT_W - _MARGIN
+            # ◀ prev button
+            p.setBrush(QBrush(QColor(30,30,50,210))); p.setPen(QPen(QColor(180,120,0),1))
+            p.drawRoundedRect(rx, _ROW1_Y, _ARW, _CHIP_H, 3, 3)
+            p.setPen(QColor(255,180,0)); p.setFont(QFont('Arial',10,QFont.Weight.Bold))
+            p.drawText(rx+5, _ROW1_Y+17, "◀")
+            # material name chip
+            p.setBrush(QBrush(QColor(20,20,40,220))); p.setPen(QPen(QColor(255,140,0),1))
+            p.drawRoundedRect(rx+_ARW+2, _ROW1_Y, _MAT_W-_ARW*2-4, _CHIP_H, 4, 4)
+            p.setBrush(QBrush(mc)); p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(rx+_ARW+6, _ROW1_Y+4, _CHIP_H-8, _CHIP_H-8, 2, 2)
+            p.setPen(QColor(255,200,80)); p.setFont(QFont('Arial',8,QFont.Weight.Bold))
+            p.drawText(rx+_ARW+_CHIP_H+4, _ROW1_Y+17, f"{mat_id} — {mat_name[:20]}")
+            # ▶ next button
+            p.setBrush(QBrush(QColor(30,30,50,210))); p.setPen(QPen(QColor(180,120,0),1))
+            p.drawRoundedRect(rx+_MAT_W-_ARW, _ROW1_Y, _ARW, _CHIP_H, 3, 3)
+            p.setPen(QColor(255,180,0)); p.setFont(QFont('Arial',10,QFont.Weight.Bold))
+            p.drawText(rx+_MAT_W-_ARW+4, _ROW1_Y+17, "▶")
+
+            # Row 2: tool buttons using SVG icons via QIcon.paint()
+            tool = getattr(self, '_tool_mode', 'paint')
+            tx = W - _MAT_W - _MARGIN
+            ws = self._find_workshop()
+            icon_fac = getattr(ws, 'icon_factory', None) if ws else None
+
+            tool_defs = [
+                ('paint',   'paint_icon',   '#ff8c00'),   # orange when active
+                ('dropper', 'dropper_icon', '#4fc3f7'),   # blue
+                ('fill',    'fill_icon',    '#a5d6a7'),   # green
+            ]
+            for t_name, icon_fn, active_col in tool_defs:
+                active = (tool == t_name)
+                bg  = QColor(active_col) if active else QColor(30,30,50,210)
+                bdr = QColor(active_col) if active else QColor(80,90,130)
+                p.setBrush(QBrush(bg)); p.setPen(QPen(bdr, 1))
+                p.drawRoundedRect(tx, _ROW2_Y, _BTN_W, _CHIP_H, 3, 3)
+                # Draw SVG icon centred in button
+                if icon_fac:
+                    icon_col = '#000000' if active else active_col
+                    try:
+                        icon = getattr(icon_fac, icon_fn)(color=icon_col)
+                        icon_x = tx + (_BTN_W - _ICON_SZ) // 2
+                        icon_y = _ROW2_Y + (_CHIP_H - _ICON_SZ) // 2
+                        icon.paint(p, QRect(icon_x, icon_y, _ICON_SZ, _ICON_SZ))
+                    except Exception:
+                        pass
+                tx += _BTN_W + _BTN_GAP
+
+            # Tool name label below row 2 (acts as tooltip)
+            tool_labels = {'paint':'Paint', 'dropper':'Pick', 'fill':'Fill'}
+            p.setPen(QColor(200,200,160,180)); p.setFont(QFont('Arial',7))
+            p.drawText(W - _MAT_W - _MARGIN, _ROW2_Y + _CHIP_H + 10,
+                       f"Tool: {tool_labels.get(tool, tool)}")
+
+            # Undo button
+            p.setBrush(QBrush(QColor(30,30,50,210))); p.setPen(QPen(QColor(80,90,130),1))
+            p.drawRoundedRect(tx, _ROW2_Y, _BTN_W, _CHIP_H, 3, 3)
+            if icon_fac:
+                try:
+                    icon = icon_fac.undo_paint_icon(color='#b0bec5')
+                    icon_x = tx + (_BTN_W - _ICON_SZ)//2
+                    icon_y = _ROW2_Y + (_CHIP_H - _ICON_SZ)//2
+                    icon.paint(p, QRect(icon_x, icon_y, _ICON_SZ, _ICON_SZ))
+                except Exception:
+                    p.setPen(QColor(180,200,255)); p.setFont(QFont('Arial',9))
+                    p.drawText(tx+6, _ROW2_Y+15, "↩")
+            tx += _BTN_W + _BTN_GAP
+
+            # Exit button (✕)
+            p.setBrush(QBrush(QColor(30,30,50,210))); p.setPen(QPen(QColor(200,80,60),1))
+            p.drawRoundedRect(tx, _ROW2_Y, _BTN_W, _CHIP_H, 3, 3)
+            if icon_fac:
+                try:
+                    icon = icon_fac.close_icon(color='#ef5350')
+                    icon_x = tx + (_BTN_W - _ICON_SZ)//2
+                    icon_y = _ROW2_Y + (_CHIP_H - _ICON_SZ)//2
+                    icon.paint(p, QRect(icon_x, icon_y, _ICON_SZ, _ICON_SZ))
+                except Exception:
+                    p.setPen(QColor(255,100,80)); p.setFont(QFont('Arial',9,QFont.Weight.Bold))
+                    p.drawText(tx+7, _ROW2_Y+15, "x")
+        else:
+            bx,by,bw,bh=W-70,4,66,22
+            p.setBrush(QBrush(QColor(40,44,62))); p.setPen(QPen(QColor(80,90,130),1))
+            p.drawRoundedRect(bx,by,bw,bh,4,4)
+            p.setFont(QFont('Arial',8)); p.setPen(QColor(200,200,220))
+            lbl='↕ Move [G]' if self._gizmo_mode=='translate' else '↻ Rotate [R]'
+            p.drawText(bx+4,by+15,lbl)
+            mode_lbl={'wireframe':'Wire','semi':'Semi','solid':'Solid'}.get(rs,'?')
+            mode_col={'wireframe':QColor(100,180,100),'semi':QColor(180,180,100),'solid':QColor(100,140,220)}.get(rs,QColor(180,180,180))
+            p.setBrush(QBrush(QColor(40,44,62))); p.setPen(QPen(mode_col,1))
+            p.drawRoundedRect(W-70,28,66,18,3,3)
+            p.setPen(mode_col); p.setFont(QFont('Arial',7))
+            p.drawText(W-66,41,f"[V] {mode_lbl}")
+
+        # ── HUD ───────────────────────────────────────────────────────────
+        p.setFont(QFont('Arial',8)); p.setPen(QColor(200,200,200))
+        p.drawText(6,14,getattr(model,'name','') or '')
+        y2=H-54
+        for col_c,txt in [(QColor(100,180,100),f"Mesh  F:{len(faces)} V:{len(verts)}"),
+                          (QColor(220,180,50), f"Boxes  {len(boxes)}"),
+                          (QColor(80,200,220), f"Spheres  {len(spheres)}")]:
+            p.setPen(col_c); p.drawText(6,y2,txt); y2+=14
+        p.setPen(QColor(120,125,140)); p.setFont(QFont('Arial',7))
+        p.drawText(6,H-4,f"Y:{self._yaw:.0f}° P:{self._pitch:.0f}° Z:{self._zoom:.2f}x")
+
+        # Paint mode indicator now shown in paint_toolbar above viewport (not drawn here)
+        p.drawText(W-68,H-4,f"grid {step:.3g}")
+
+
+    def _apply_to_selected_faces(self):
+        vp = self.preview_widget
+        model = self._get_selected_model()
+
+        if not vp or not model:
+            return
+
+        sel = sorted(getattr(vp, '_selected_faces', []))
+        if not sel:
+            return
+
+        mat_id = self._paint_active_mat
+
+        for fi in sel:
+            if fi < len(model.faces):
+                f = model.faces[fi]
+                if isinstance(f.material, int):
+                    f.material = mat_id
+                else:
+                    f.material.material_id = mat_id
+
+        vp.update()
+        self._set_status(f"Applied material {mat_id} to {len(sel)} faces")
+
+
+    def _apply_to_all_faces(self):
+        model = self._get_selected_model()
+        if not model:
+            return
+
+        mat_id = self._paint_active_mat
+
+        for f in model.faces:
+            if isinstance(f.material, int):
+                f.material = mat_id
+            else:
+                f.material.material_id = mat_id
+
+        self.preview_widget.update()
+        self._set_status(f"Applied material {mat_id} to all faces")
+
+
+    def _show_face_context_menu(self, global_pos, face_index, face): #vers 1
+        """Right-click context menu for a picked face — material operations."""
+        from PyQt6.QtWidgets import QMenu  # QAction imported at module level
+        from PyQt6.QtGui import QColor, QPixmap, QIcon
+        from PyQt6.QtCore import Qt as _Qt
+
+        ws = self._find_workshop()
+
+        # Resolve material
+        mat = face.material
+        mat_id = mat.material_id if hasattr(mat, 'material_id') else int(mat)
+
+        try:
+            from apps.methods.col_materials import (
+                get_material_name, get_material_colour, COLGame)
+            model = self._model
+            ver = getattr(getattr(model, 'version', None), 'value', 3) if model else 3
+            game = COLGame.VC if ver == 1 else COLGame.SA
+            mat_name = get_material_name(mat_id, game)
+            hex_col  = get_material_colour(mat_id, game)
+        except Exception:
+            mat_name = f"Material {mat_id}"
+            hex_col  = "808080"
+
+        # ── Build menu ───────────────────────────────────────────────────
+        menu = QMenu(self)
+
+        # Header — material info with colour swatch
+        px = QPixmap(14, 14)
+        px.fill(QColor(f"#{hex_col}"))
+        info_act = QAction(QIcon(px),
+            f"  Face {face_index}:  {mat_id} — {mat_name}", self)
+        info_act.setEnabled(False)
+        menu.addAction(info_act)
+        menu.addSeparator()
+
+        # Copy material
+        act_copy = menu.addAction("Copy material")
+        # Paste material (only if clipboard has one)
+        _clip = getattr(ws, '_mat_clipboard', None) if ws else None
+        act_paste = menu.addAction(
+            f"Paste material  ({_clip})" if _clip is not None
+            else "Paste material")
+        act_paste.setEnabled(_clip is not None)
+        menu.addSeparator()
+
+        # Apply to selection
+        n_sel = len(self._selected_faces)
+        sel_label = (f"✓  Apply to {n_sel} selected face(s)"
+                     if n_sel > 1 else "✓  Apply to selection")
+        act_apply_sel = menu.addAction(sel_label)
+        act_apply_sel.setEnabled(n_sel > 1)
+
+        # Clear material on this face (→ material 0)
+        act_clear_face = menu.addAction("✕  Clear material on this face")
+        # Clear material on ALL faces in model
+        model = self._model
+        n_faces = len(getattr(model, 'faces', []))
+        act_clear_all = menu.addAction(
+            f"✕✕  Clear material on all {n_faces} faces")
+
+        menu.addSeparator()
+        # Open full paint editor
+        act_paint = menu.addAction("🖌  Open material editor…")
+
+        # ── Execute ──────────────────────────────────────────────────────
+        chosen = menu.exec(global_pos)
+        if chosen is None:
+            return
+
+        if chosen == act_copy:
+            if ws:
+                ws._mat_clipboard = mat_id
+                if hasattr(ws, '_set_status'):
+                    ws._set_status(f"Copied material {mat_id} — {mat_name}")
+
+        elif chosen == act_paste and _clip is not None:
+            if ws and model:
+                models = getattr(getattr(ws, 'current_col_file', None), 'models', [])
+                mi = models.index(model) if model in models else -1
+                if mi >= 0 and hasattr(ws, '_push_undo'):
+                    ws._push_undo(mi, f"Paste material {_clip} → face {face_index}")
+            if hasattr(mat, 'material_id'):
+                mat.material_id = _clip
+            else:
+                face.material = _clip
+            self.update()
+            if ws and hasattr(ws, '_set_status'):
+                ws._set_status(f"Pasted material {_clip} → face {face_index}")
+
+        elif chosen == act_apply_sel:
+            if ws and model:
+                models = getattr(getattr(ws, 'current_col_file', None), 'models', [])
+                mi = models.index(model) if model in models else -1
+                if mi >= 0 and hasattr(ws, '_push_undo'):
+                    ws._push_undo(mi, f"Apply material {mat_id} → {n_sel} faces")
+            for fi in self._selected_faces:
+                if fi < len(model.faces):
+                    f2 = model.faces[fi]
+                    m2 = f2.material
+                    if hasattr(m2, 'material_id'):
+                        m2.material_id = mat_id
+                    else:
+                        f2.material = mat_id
+            self.update()
+            if ws and hasattr(ws, '_set_status'):
+                ws._set_status(f"Applied material {mat_id} to {n_sel} faces")
+
+        elif chosen == act_clear_face:
+            if ws and model:
+                models = getattr(getattr(ws, 'current_col_file', None), 'models', [])
+                mi = models.index(model) if model in models else -1
+                if mi >= 0 and hasattr(ws, '_push_undo'):
+                    ws._push_undo(mi, f"Clear material → face {face_index}")
+            if hasattr(mat, 'material_id'):
+                mat.material_id = 0
+            else:
+                face.material = 0
+            self.update()
+            if ws and hasattr(ws, '_set_status'):
+                ws._set_status(f"Cleared material on face {face_index}")
+
+        elif chosen == act_clear_all:
+            if model:
+                if ws:
+                    models = getattr(getattr(ws, 'current_col_file', None), 'models', [])
+                    mi = models.index(model) if model in models else -1
+                    if mi >= 0 and hasattr(ws, '_push_undo'):
+                        ws._push_undo(mi, "Clear all face materials")
+                for f2 in model.faces:
+                    m2 = f2.material
+                    if hasattr(m2, 'material_id'):
+                        m2.material_id = 0
+                    else:
+                        f2.material = 0
+                self.update()
+                if ws and hasattr(ws, '_set_status'):
+                    ws._set_status(f"Cleared material on all {n_faces} faces")
+
+        elif chosen == act_paint:
+            if ws and hasattr(ws, '_open_paint_editor'):
+                ws._open_paint_editor()
+
+    def _find_workshop(self):
+        ref = getattr(self, '_workshop_ref', None)
+        if ref is not None: return ref
+        p = self.parent()
+        while p:
+            if isinstance(p, COLWorkshop): return p
+            p = p.parent() if callable(getattr(p, 'parent', None)) else None
+        return None
+VIEWPORT_AVAILABLE = True
 
 # Add root directory to path
 App_name = "Col Workshop"
@@ -137,6 +1293,39 @@ class COLModelListWidget(QListWidget): #vers 1
 
 
 
+
+class _ColListDelegate(QStyledItemDelegate): #vers 1
+    """Word-wrapping delegate for the COL compact list Details column."""
+    def paint(self, painter, option, index):
+        if index.column() != 1:
+            super().paint(painter, option, index)
+            return
+        from PyQt6.QtWidgets import QStyle, QApplication
+        from PyQt6.QtCore import Qt
+        # Background
+        QApplication.style().drawPrimitive(
+            QStyle.PrimitiveElement.PE_PanelItemViewItem, option, painter)
+        text = index.data(Qt.ItemDataRole.DisplayRole) or ''
+        painter.save()
+        painter.setClipRect(option.rect)
+        r = option.rect.adjusted(4, 4, -4, -4)
+        painter.setPen(option.palette.text().color())
+        painter.setFont(option.font)
+        painter.drawText(r, Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignTop, text)
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        if index.column() != 1:
+            return super().sizeHint(option, index)
+        from PyQt6.QtCore import Qt, QSize
+        text = index.data(Qt.ItemDataRole.DisplayRole) or ''
+        fm = option.fontMetrics
+        # Measure the text in a column ~160px wide
+        w = 160
+        r = fm.boundingRect(0, 0, w, 9999,
+            Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignTop, text)
+        return QSize(w, max(72, r.height() + 12))
+
 class COLWorkshop(QWidget): #vers 3
     """COL Workshop - Main window"""
 
@@ -158,6 +1347,17 @@ class COLWorkshop(QWidget): #vers 3
         self.undo_stack = []
         self.button_display_mode = 'both'
         self.last_save_directory = None
+        # Thumbnail spin animation state
+        self._spin_timer  = None
+        self._spin_row    = None
+        self._spin_model  = None
+        self._spin_yaw    = 0.0
+        self._spin_pitch  = 0.0
+        self._spin_dyaw   = 1.0
+        self._spin_dpitch = 0.2
+        # Thumbnail view axis (applied to all static thumbnails)
+        self._thumb_yaw   = 0.0    # top-down (XY plane) by default
+        self._thumb_pitch = 0.0
 
         # Set default fonts
         from PyQt6.QtGui import QFont
@@ -225,9 +1425,18 @@ class COLWorkshop(QWidget): #vers 3
             self.move(parent_pos.x() + 50, parent_pos.y() + 80)
 
 
+        # Paint toolbar attrs — set by _create_paint_bar() called from _create_right_panel
+        self.paint_toolbar   = None
+        self.paint_mat_combo = None
+        self.paint_swatch    = None
+        self.paint_undo_btn  = None
+        self.paint_exit_btn  = None
+        self.tool_paint_btn  = None
+        self.tool_dropper_btn = None
+        self.tool_fill_btn   = None
+
         # Setup UI FIRST
         self.setup_ui()
-
         # Setup hotkeys
         self._setup_hotkeys()
 
@@ -235,20 +1444,23 @@ class COLWorkshop(QWidget): #vers 3
         self._apply_theme()
 
 
-    def setup_ui(self): #vers 7
+    def setup_ui(self): #vers 8
         """Setup the main UI layout"""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(5, 5, 5, 5)
         main_layout.setSpacing(5)
 
-        # Toolbar
+        # Toolbar - hidden when embedded in main window tab
         toolbar = self._create_toolbar()
+        self._workshop_toolbar = toolbar
+        if not self.standalone_mode:
+            toolbar.setVisible(False)
         main_layout.addWidget(toolbar)
 
         # Tab bar for multiple col files
         self.col_tabs = QTabWidget()
         self.col_tabs.setTabsClosable(True)
-        #self.col_tabs.tabCloseRequested.connect(self._close_col_tab)
+        self.col_tabs.tabCloseRequested.connect(self._close_col_tab)
 
 
         # Create initial tab with main content
@@ -258,7 +1470,7 @@ class COLWorkshop(QWidget): #vers 3
 
 
         # Main splitter
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Create all panels first
         left_panel = self._create_left_panel()
@@ -267,27 +1479,971 @@ class COLWorkshop(QWidget): #vers 3
 
         # Add panels to splitter based on mode
         if left_panel is not None:  # IMG Factory mode
-            main_splitter.addWidget(left_panel)
-            main_splitter.addWidget(middle_panel)
-            main_splitter.addWidget(right_panel)
+            self._main_splitter.addWidget(left_panel)
+            self._main_splitter.addWidget(middle_panel)
+            self._main_splitter.addWidget(right_panel)
             # Set proportions (2:3:5)
-            main_splitter.setStretchFactor(0, 2)
-            main_splitter.setStretchFactor(1, 3)
-            main_splitter.setStretchFactor(2, 5)
+            self._main_splitter.setStretchFactor(0, 2)
+            self._main_splitter.setStretchFactor(1, 3)
+            self._main_splitter.setStretchFactor(2, 5)
         else:  # Standalone mode
-            main_splitter.addWidget(middle_panel)
-            main_splitter.addWidget(right_panel)
+            self._main_splitter.addWidget(middle_panel)
+            self._main_splitter.addWidget(right_panel)
             # Set proportions (1:1)
-            main_splitter.setStretchFactor(0, 1)
-            main_splitter.setStretchFactor(1, 1)
+            self._main_splitter.setStretchFactor(0, 1)
+            self._main_splitter.setStretchFactor(1, 1)
 
-        main_layout.addWidget(main_splitter)
+        main_layout.addWidget(self._main_splitter)
+        self._main_splitter.splitterMoved.connect(self._on_splitter_moved)
 
-        # Status indicators if available
+        # Status indicators - hidden when embedded in main window tab
         if hasattr(self, '_setup_status_indicators'):
             status_frame = self._setup_status_indicators()
+            if not self.standalone_mode:
+                status_frame.setVisible(False)
             main_layout.addWidget(status_frame)
 
+        # Apply theme colours to all icons now that UI is fully built
+        self._refresh_icons()
+        self._connect_all_buttons()
+
+
+    def _connect_all_buttons(self): #vers 2
+        """Wire flip/rotate transform buttons to preview_widget.
+        Called once from setup_ui after all panels are built."""
+        pw = getattr(self, 'preview_widget', None)
+        if not (pw and isinstance(pw, COL3DViewport)):
+            return
+
+        def _safe(btn_name, fn):
+            btn = getattr(self, btn_name, None)
+            if not btn: return
+            try: btn.clicked.disconnect()
+            except Exception: pass
+            btn.clicked.connect(fn)
+
+        _safe('flip_vert_btn',  pw.flip_vertical)
+        _safe('flip_horz_btn',  pw.flip_horizontal)
+        _safe('rotate_cw_btn',  pw.rotate_cw)
+        _safe('rotate_ccw_btn', pw.rotate_ccw)
+
+
+    # ── Stub implementations (log until fully implemented) ──────────────────
+
+    def _create_new_model(self): #vers 1
+        from PyQt6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "New Model", "Model name:")
+        if not ok or not name.strip(): return
+        from apps.methods.col_workshop_classes import COLModel, COLHeader, COLVersion, COLBounds
+        m = COLModel()
+        m.name = name.strip(); m.version = COLVersion.COL_1
+        if not self.current_col_file: return
+        self.current_col_file.models.append(m)
+        self._populate_collision_list()
+        self.collision_list.selectRow(self.collision_list.rowCount()-1)
+
+    def _delete_selected_model(self): #vers 2
+        """Delete selected collision model(s) — uses currentRow() for reliability."""
+        if not self.current_col_file: return
+        models = getattr(self.current_col_file, 'models', [])
+        if not models: return
+
+        lw = (self.col_compact_list if getattr(self,'_col_view_mode','detail')=='detail'
+              else self.collision_list)
+
+        # Collect selected indices (highest first so deletion doesn't shift lower rows)
+        indices = sorted({i.row() for i in lw.selectionModel().selectedRows()
+                          if 0 <= i.row() < len(models)}, reverse=True)
+        cr = lw.currentRow()
+        if 0 <= cr < len(models):
+            indices = sorted(set(indices) | {cr}, reverse=True)
+        if not indices: return
+
+        from PyQt6.QtWidgets import QMessageBox
+        if len(indices) == 1:
+            name = models[indices[0]].name
+            if QMessageBox.question(self, "Delete", f"Delete '{name}'?",
+               QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+               ) != QMessageBox.StandardButton.Yes:
+                return
+        else:
+            if QMessageBox.question(self, "Delete",
+               f"Delete {len(indices)} collision models?",
+               QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+               ) != QMessageBox.StandardButton.Yes:
+                return
+
+        for idx in indices:
+            del models[idx]
+        self._populate_collision_list()
+        self._populate_compact_col_list()
+        self._set_status(f"Deleted {len(indices)} model(s).")
+
+    def _duplicate_selected_model(self): #vers 1
+        rows = self.collision_list.selectionModel().selectedRows()
+        if not rows or not self.current_col_file: return
+        row = rows[0].row()
+        item = self.collision_list.item(row, 1)
+        if not item: return
+        idx = item.data(Qt.ItemDataRole.UserRole)
+        if idx is None: return
+        import copy
+        m = copy.deepcopy(self.current_col_file.models[idx])
+        m.name = m.name + "_copy"
+        self.current_col_file.models.insert(idx+1, m)
+        self._populate_collision_list()
+        self.collision_list.selectRow(row+1)
+
+    def _copy_model_to_clipboard(self): #vers 1
+        rows = self.collision_list.selectionModel().selectedRows()
+        if not rows or not self.current_col_file: return
+        row = rows[0].row()
+        item = self.collision_list.item(row, 1)
+        if not item: return
+        idx = item.data(Qt.ItemDataRole.UserRole)
+        if idx is None: return
+        import copy
+        self._clipboard_model = copy.deepcopy(self.current_col_file.models[idx])
+        if hasattr(self, 'paste_btn') and self.paste_btn:
+            self.paste_btn.setEnabled(True)
+
+    def _paste_model_from_clipboard(self): #vers 1
+        if not hasattr(self, '_clipboard_model') or not self._clipboard_model: return
+        if not self.current_col_file: return
+        import copy
+        m = copy.deepcopy(self._clipboard_model)
+        m.name = m.name + "_paste"
+        self.current_col_file.models.append(m)
+        self._populate_collision_list()
+        self.collision_list.selectRow(self.collision_list.rowCount()-1)
+
+    def _open_surface_paint_dialog(self): #vers 2
+        """Open material paint dialog (delegates to _open_paint_editor)."""
+        self._open_paint_editor()
+
+    def _open_surface_type_dialog(self): #vers 1
+        """Show surface material type picker for selected model."""
+        rows = self.collision_list.selectionModel().selectedRows()
+        if not rows or not self.current_col_file: return
+        row = rows[0].row()
+        item = self.collision_list.item(row, 1)
+        if not item: return
+        idx = item.data(Qt.ItemDataRole.UserRole)
+        if idx is None: return
+        model = self.current_col_file.models[idx]
+        types = {0:"Default",1:"Tarmac",2:"Gravel",3:"Grass",4:"Sand",5:"Water",
+                 6:"Metal",7:"Wood",8:"Concrete",63:"Obstacle"}
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QDialogButtonBox
+        dlg = QDialog(self); dlg.setWindowTitle(f"Surface Type — {model.name}")
+        lay = QVBoxLayout(dlg)
+        lst = QListWidget()
+        for k,v in types.items(): lst.addItem(f"{k:3d}  {v}")
+        lay.addWidget(lst)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+        dlg.exec()
+
+
+    def _cycle_view_render_style(self): #vers 1
+        """Cycle viewport render: wireframe -> semi -> solid."""
+        pw = getattr(self, 'preview_widget', None)
+        if not pw: return
+        modes = ['wireframe','semi','solid']
+        cur = getattr(pw, '_render_style', 'semi')
+        pw._render_style = modes[(modes.index(cur)+1) % 3] if cur in modes else 'semi'
+        pw.update()
+
+
+    def _open_paint_editor(self): #vers 4
+        """Enter paint mode immediately — no dialog.
+        All material selection happens in the viewport overlay."""
+        if not self.current_col_file:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "No File", "Load a COL file first.")
+            return
+        model = self._get_selected_model()
+        if model is None:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "No Model Selected",
+                "Select a model in the list first.")
+            return
+        if not getattr(model, 'faces', []):
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "No Mesh Faces",
+                f"'{model.name}' has no mesh faces to paint.")
+            return
+
+        vp = getattr(self, 'preview_widget', None)
+        if not vp:
+            return
+
+        models  = getattr(self.current_col_file, 'models', [])
+        model_idx = models.index(model) if model in models else -1
+
+        # Use last active mat or default 0
+        mat_id  = getattr(self, '_paint_active_mat', 0)
+
+        # Push one undo snapshot on entry
+        if model_idx >= 0:
+            self._push_undo(model_idx, f"Enter paint mode")
+
+        # Cache the full material list for this model's version
+        try:
+            from apps.methods.col_materials import get_materials_for_version, COLGame
+            ver     = getattr(getattr(model,'version',None),'value',3) if model else 3
+            game    = COLGame.VC if ver == 1 else COLGame.SA
+            self._paint_mat_list = get_materials_for_version(game, include_procedural=True)
+        except Exception:
+            self._paint_mat_list = [(i, f"Material {i}", "808080") for i in range(64)]
+
+        # Set current index into the list
+        mat_ids = [m[0] for m in self._paint_mat_list]
+        self._paint_mat_idx = mat_ids.index(mat_id) if mat_id in mat_ids else 0
+        mat_id = self._paint_mat_list[self._paint_mat_idx][0]
+        self._paint_active_mat = mat_id
+
+        # Enter viewport paint mode
+        vp.set_paint_mode(True, mat_id)
+        vp.on_face_selected = self._on_painted_face
+        vp._paint_material  = mat_id
+        vp.update()  # draw overlay immediately
+
+        # Update paint button to show exit state
+        for btn in self._find_all_paint_btns():
+            try: btn.clicked.disconnect()
+            except: pass
+            btn.clicked.connect(self._exit_paint_mode)
+            btn.setText("⬛ Exit")
+            btn.setStyleSheet("color:#ff6b35; font-weight:bold;")
+
+        self._set_status(
+            "Paint mode — click faces to paint  |  ◀▶ change material  "
+            "|  Shift+drag to select  |  Esc to exit")
+
+
+    def _open_paint_mat_popup(self): #vers 1
+        """Popup material list anchored to the viewport overlay — no dialog needed."""
+        from PyQt6.QtWidgets import (QListWidget, QListWidgetItem, QFrame,
+                                     QVBoxLayout, QLineEdit)
+        from PyQt6.QtCore import Qt, QPoint
+        from PyQt6.QtGui import QColor
+
+        lst = getattr(self, '_paint_mat_list', [])
+        if not lst: return
+
+        vp = getattr(self, 'preview_widget', None)
+        if not vp: return
+
+        # Floating popup parented to viewport
+        popup = QFrame(vp)
+        popup.setFrameStyle(QFrame.Shape.StyledPanel)
+        popup.setStyleSheet(
+            "QFrame { background:#1a1a2e; border:1px solid #ff8c00; }"
+            "QListWidget { background:#1a1a2e; color:#eee; border:none; }"
+            "QListWidget::item:selected { background:#ff8c00; color:#000; }"
+            "QLineEdit { background:#252535; color:#eee; border:1px solid #555; padding:2px; }"
+        )
+
+        lay = QVBoxLayout(popup)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(3)
+
+        search = QLineEdit()
+        search.setPlaceholderText("Filter…")
+        search.setFixedHeight(24)
+        lay.addWidget(search)
+
+        lw = QListWidget()
+        lw.setFixedHeight(200)
+        lay.addWidget(lw)
+
+        def _populate(flt=""):
+            lw.clear()
+            for mid, name, hex_col in lst:
+                if flt and flt.lower() not in name.lower() and flt not in str(mid):
+                    continue
+                item = QListWidgetItem(f"  {mid:3d}  {name}")
+                item.setData(Qt.ItemDataRole.UserRole, mid)
+                c = QColor(f"#{hex_col}")
+                item.setBackground(QColor(c.red()//4, c.green()//4, c.blue()//4+10))
+                item.setForeground(c.lighter(180))
+                lw.addItem(item)
+            # Scroll to current
+            cur = getattr(self, '_paint_mat_idx', 0)
+            if cur < lw.count():
+                lw.setCurrentRow(cur)
+
+        _populate()
+        search.textChanged.connect(_populate)
+
+        def _pick(item):
+            mid = item.data(Qt.ItemDataRole.UserRole)
+            if mid is None: return
+            mat_ids = [m[0] for m in lst]
+            self._paint_mat_idx = mat_ids.index(mid) if mid in mat_ids else 0
+            self._paint_active_mat = mid
+            vp._paint_material = mid
+            vp.update()
+            popup.hide()
+            popup.deleteLater()
+
+        lw.itemClicked.connect(_pick)
+        lw.itemDoubleClicked.connect(_pick)
+
+        # Position popup below the material chip
+        W = vp.width()
+        _MARGIN = 8; _MAT_W = 200; _ROW1_Y = 4; _CHIP_H = 26
+        px = W - _MAT_W - _MARGIN + 22   # below mat name area
+        py = _ROW1_Y + _CHIP_H + 2
+        popup.move(px, py)
+        popup.resize(160, 235)
+        popup.show()
+        popup.raise_()
+        search.setFocus()
+
+        # Close on click outside
+        popup.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+
+    def _apply_to_selected_faces_paint(self): #vers 1
+        """Apply current paint material to all selected faces (F key in paint mode)."""
+        vp = getattr(self, 'preview_widget', None)
+        if not vp: return
+        sel = sorted(getattr(vp, '_selected_faces', set()))
+        if not sel:
+            self._set_status("No faces selected — click or drag to select faces first")
+            return
+        model = self._get_selected_model()
+        if not model: return
+        models = getattr(self.current_col_file, 'models', [])
+        mi = models.index(model) if model in models else -1
+        mat_id = getattr(self, '_paint_active_mat', 0)
+        if mi >= 0:
+            self._push_undo(mi, f"Paint {mat_id} → {len(sel)} selected faces")
+        for fi in sel:
+            if fi < len(model.faces):
+                f = model.faces[fi]
+                if hasattr(f.material, 'material_id'):
+                    f.material.material_id = mat_id
+                else:
+                    f.material = mat_id
+        vp.update()
+        self._set_status(f"Applied material {mat_id} to {len(sel)} selected face(s)")
+
+    def _paint_cycle_mat(self, delta: int): #vers 1
+        """Cycle active paint material by delta steps (+1 next / -1 prev)."""
+        lst = getattr(self, '_paint_mat_list', [])
+        if not lst: return
+        idx = getattr(self, '_paint_mat_idx', 0)
+        idx = (idx + delta) % len(lst)
+        self._paint_mat_idx   = idx
+        mat_id, name, hex_col = lst[idx]
+        self._paint_active_mat = mat_id
+        vp = getattr(self, 'preview_widget', None)
+        if vp:
+            vp._paint_material = mat_id
+            vp.update()
+        self._set_status(f"Paint material: {mat_id} — {name}")
+
+    def _show_paint_toolbar(self, mat_id: int, model=None): #vers 5
+        """Populate combo then show the floating paint bar."""
+        tb    = self.paint_toolbar
+        combo = self.paint_mat_combo
+        if not tb or not combo:
+            return  # not built yet
+
+        # Populate material combo
+        try:
+            from apps.methods.col_materials import get_materials_for_version, COLGame, get_material_colour
+            ver = getattr(getattr(model, 'version', None), 'value', 3) if model else 3
+            game = COLGame.VC if ver == 1 else COLGame.SA
+            all_mats = get_materials_for_version(game, include_procedural=True)
+        except Exception:
+            all_mats = [(i, f"Material {i}", "808080") for i in range(10)]
+
+        from PyQt6.QtGui import QPixmap, QColor, QIcon
+        from PyQt6.QtCore import Qt as _Qt
+
+        def _make_swatch_icon(hex_col: str) -> QIcon:
+            """16×16 filled square icon for combo items."""
+            px = QPixmap(16, 16)
+            px.fill(QColor(f"#{hex_col}"))
+            return QIcon(px)
+
+        def _apply_swatch(hex_col: str):
+            """Update the standalone swatch label colour."""
+            sw = getattr(self, 'paint_swatch', None)
+            if sw:
+                sw.setStyleSheet(
+                    f"background:#{hex_col}; border:2px solid #888; border-radius:3px;")
+                sw.setToolTip(f"Colour: #{hex_col.upper()}")
+
+        combo.blockSignals(True)
+        combo.clear()
+        sel_idx = 0
+        for i, (mid, name, hex_col) in enumerate(all_mats):
+            icon = _make_swatch_icon(hex_col)
+            combo.addItem(icon, f"{mid:3d}  {name}", mid)
+            if mid == mat_id:
+                sel_idx = i
+                _apply_swatch(hex_col)
+        combo.setIconSize(QSize(16, 16))
+        combo.setCurrentIndex(sel_idx)
+        combo.blockSignals(False)
+
+        # Update viewport + swatch when material changes
+        try:
+            combo.currentIndexChanged.disconnect()
+        except Exception:
+            pass
+
+        # Build a quick hex_col lookup by mat_id
+        _col_map = {mid: hx for mid, _, hx in all_mats}
+
+        def _on_mat_changed(idx):
+            new_mid = combo.itemData(idx)
+            if new_mid is None:
+                return
+            self._paint_active_mat = new_mid
+            vp = getattr(self, 'preview_widget', None)
+            if vp:
+                vp._paint_material = new_mid
+                vp.update()
+            _apply_swatch(_col_map.get(new_mid, "808080"))
+            self._set_status(f"Paint material: {new_mid}")
+
+        combo.currentIndexChanged.connect(_on_mat_changed)
+
+        # Enable undo button only if undo stack has entries
+        if undo_btn:
+            undo_btn.setEnabled(bool(getattr(self, 'undo_stack', [])))
+
+        # Trigger viewport repaint to show the paint overlay chips
+        vp = getattr(self, 'preview_widget', None)
+        if vp:
+            vp.update()
+
+
+    def _on_painted_face(self, face_index, face): #vers 2
+        """Called by viewport when a face is painted. Status update only —
+        undo state was pushed before entering paint mode."""
+        mat_id = self._paint_active_mat if hasattr(self, '_paint_active_mat') else 0
+        self._set_status(f"Painted face {face_index} → material {mat_id}  [Esc to exit]")
+
+    def _set_paint_tool(self, mode: str): #vers 1
+        """Switch active paint tool: 'paint' | 'dropper' | 'fill'."""
+        self._current_paint_tool = mode
+        vp = getattr(self, 'preview_widget', None)
+        if vp:
+            vp._tool_mode = mode
+            if mode == 'dropper':
+                from PyQt6.QtCore import Qt
+                vp.setCursor(Qt.CursorShape.PointingHandCursor)
+            elif mode == 'fill':
+                from PyQt6.QtCore import Qt
+                vp.setCursor(Qt.CursorShape.CrossCursor)
+            else:
+                from PyQt6.QtCore import Qt
+                vp.setCursor(Qt.CursorShape.CrossCursor)
+        # Update button check states
+        for btn, name in [
+            (getattr(self, 'tool_paint_btn', None), 'paint'),
+            (getattr(self, 'tool_dropper_btn', None), 'dropper'),
+            (getattr(self, 'tool_fill_btn', None), 'fill'),
+        ]:
+            if btn:
+                btn.setChecked(name == mode)
+        tool_names = {'paint': 'Paint', 'dropper': 'Dropper (pick material)', 'fill': 'Fill (same material)'}
+        self._set_status(f"Tool: {tool_names.get(mode, mode)}")
+
+    def _exit_paint_mode(self): #vers 2
+        """Exit paint mode — hide toolbar, restore paint button."""
+        vp = getattr(self, 'preview_widget', None)
+        if vp:
+            vp.set_paint_mode(False)
+            vp.on_face_selected = None
+
+        # Hide QWidget paint bar if it was created, refresh viewport
+        tb = getattr(self, 'paint_toolbar', None)
+        if tb:
+            tb.hide()
+        vp = getattr(self, 'preview_widget', None)
+        if vp:
+            vp.update()
+
+        # Reset paint button in both icon and text panels
+        for btn in self._find_all_paint_btns():
+            try: btn.clicked.disconnect()
+            except: pass
+            btn.clicked.connect(self._open_paint_editor)
+            btn.setText("Paint")
+            btn.setStyleSheet("")
+            btn.setChecked(False) if btn.isCheckable() else None
+
+        self._set_status("Paint mode exited.")
+
+    def _on_paint_mode_exited(self): #vers 1
+        """Called by viewport Escape key — sync button state."""
+        self._exit_paint_mode()
+
+    def _get_selected_model(self): #vers 4
+        """Return the currently selected COLModel or None.
+        Uses currentRow() on the active (visible) list widget — more reliable
+        than selectedRows() which can fail with custom delegates."""
+        if not self.current_col_file:
+            return None
+        models = getattr(self.current_col_file, 'models', [])
+        if not models:
+            return None
+
+        # Only check the VISIBLE list — the hidden one may have stale state
+        if getattr(self, '_col_view_mode', 'detail') == 'detail':
+            lw = getattr(self, 'col_compact_list', None)
+        else:
+            lw = getattr(self, 'collision_list', None)
+
+        if lw is None:
+            return None
+
+        # currentRow() is always reliable; selectedRows() can fail with delegates
+        row = lw.currentRow()
+        if row < 0:
+            # Fallback: try selectedRows
+            rows = lw.selectionModel().selectedRows()
+            if rows:
+                row = rows[0].row()
+        if 0 <= row < len(models):
+            return models[row]
+        return None
+
+    def _set_status(self, msg: str): #vers 1
+        """Write msg to the status label (whichever one exists)."""
+        if hasattr(self, 'status_label'):
+            self.status_label.setText(msg)
+        elif hasattr(self, 'status_bar') and hasattr(self.status_bar, 'showMessage'):
+            self.status_bar.showMessage(msg, 3000)
+        else:
+            print(f"[COL] {msg}")
+
+    def _create_new_surface(self): #vers 1
+        """Add a new empty COL model to the loaded file."""
+        if not self.current_col_file:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "No File", "Load a COL file first.")
+            return
+        from apps.methods.col_workshop_classes import COLModel, COLHeader, COLBounds, COLVersion
+        from apps.methods.col_core_classes import Vector3
+        hdr = COLHeader(fourcc=b'COLL', size=0, name='new_model',
+                        model_id=0, version=COLVersion.COL_1)
+        bnd = COLBounds(radius=1.0, center=Vector3(0,0,0),
+                        min=Vector3(-1,-1,-1), max=Vector3(1,1,1))
+        model = COLModel(header=hdr, bounds=bnd,
+                         spheres=[], boxes=[], vertices=[], faces=[])
+        self.current_col_file.models.append(model)
+        self._populate_compact_col_list()
+        self._populate_collision_list()
+        new_row = len(self.current_col_file.models) - 1
+        active = (self.col_compact_list
+                  if self._col_view_mode == 'detail' else self.collision_list)
+        if active.rowCount() > new_row:
+            active.selectRow(new_row)
+
+    def _open_surface_edit_dialog(self): #vers 2
+        """Open the COL Mesh Editor for the currently selected model."""
+        try:
+            from apps.components.Col_Editor.col_mesh_editor import open_col_mesh_editor
+            open_col_mesh_editor(self, parent=self)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Mesh Editor Error", str(e))
+    def _build_col_from_txd(self): #vers 2
+        """Create stub COL models for each texture name in a loaded TXD."""
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+        from apps.methods.col_workshop_loader import COLFile
+        from apps.methods.col_workshop_classes import COLModel, COLVersion, COLBounds
+        txd_path, _ = QFileDialog.getOpenFileName(
+            self, "Select TXD file", "", "TXD Files (*.txd);;All Files (*)")
+        if not txd_path:
+            return
+        try:
+            import os
+            # Extract texture names from TXD (scan for null-terminated strings after each 0x15 chunk)
+            import struct
+            names = []
+            with open(txd_path, 'rb') as f:
+                data = f.read()
+            pos = 0
+            while pos < len(data) - 12:
+                t, s, v = struct.unpack_from('<III', data, pos)
+                if t == 0x15 and pos + 12 + 12 < len(data):
+                    body = pos + 12 + 12
+                    name = data[body+8:body+40].rstrip(b'').decode('ascii','ignore').strip()
+                    if name:
+                        names.append(name)
+                pos += 12 + s if s > 0 else 1
+            if not names:
+                QMessageBox.warning(self, "No Textures", "No texture names found in TXD.")
+                return
+            if not self.current_col_file:
+                from apps.methods.col_workshop_loader import COLFile
+                self.current_col_file = COLFile()
+                self.current_col_file.models = []
+            added = 0
+            for name in names:
+                m = COLModel()
+                m.name = name
+                m.version = COLVersion.COL_2
+                m.spheres = []; m.boxes = []; m.vertices = []; m.faces = []
+                m.shadow_verts = []; m.shadow_faces = []
+                bounds = COLBounds()
+                bounds.min = type('V', (), {'x': -1.0, 'y': -1.0, 'z': -1.0})()
+                bounds.max = type('V', (), {'x':  1.0, 'y':  1.0, 'z':  1.0})()
+                bounds.center = type('V', (), {'x': 0.0, 'y': 0.0, 'z': 0.0})()
+                bounds.radius = 1.73
+                m.bounds = bounds; m.model_id = 0
+                self.current_col_file.models.append(m)
+                added += 1
+            self._populate_collision_list()
+            self._populate_compact_col_list()
+            msg = f"Created {added} stub COL model(s) from {os.path.basename(txd_path)}"
+            self._set_status(msg)
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(msg)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+    def _cycle_render_mode(self): #vers 1
+        modes = ['wireframe','solid','painted']
+        cur   = getattr(self, '_render_mode', 'wireframe')
+        self._render_mode = modes[(modes.index(cur)+1) % len(modes)] if cur in modes else 'wireframe'
+        if hasattr(self, 'preview_widget') and self.preview_widget:
+            self.preview_widget._refresh()
+
+    def _convert_surface(self): #vers 2
+        """Convert selected model to a different COL version."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QMessageBox
+        from apps.methods.col_workshop_classes import COLVersion
+        model = self._get_selected_model()
+        if not model:
+            QMessageBox.warning(self, "No Selection", "Select a collision model first.")
+            return
+        current = getattr(model.version, 'name', str(model.version))
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Convert COL version — {model.name}")
+        dlg.setFixedSize(300, 130)
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel(f"Current version: <b>{current}</b>"))
+        lay.addWidget(QLabel("Convert to:"))
+        combo = QComboBox()
+        ver_map = {'COL_1': COLVersion.COL_1, 'COL_2': COLVersion.COL_2, 'COL_3': COLVersion.COL_3}
+        [combo.addItem(k) for k in ver_map if k != current]
+        lay.addWidget(combo)
+        btns = QHBoxLayout()
+        ok = QPushButton("Convert"); cancel = QPushButton("Cancel")
+        btns.addStretch(); btns.addWidget(ok); btns.addWidget(cancel)
+        lay.addLayout(btns)
+        cancel.clicked.connect(dlg.reject)
+        def _do():
+            model.version = ver_map[combo.currentText()]
+            self._populate_collision_list()
+            self._populate_compact_col_list()
+            self._set_status(f"Converted {model.name} to {combo.currentText()}")
+            dlg.accept()
+        ok.clicked.connect(_do)
+        dlg.exec()
+
+    def _show_shadow_mesh(self): #vers 2
+        """Show shadow mesh info for selected model."""
+        from PyQt6.QtWidgets import QMessageBox
+        model = self._get_selected_model()
+        if not model:
+            QMessageBox.warning(self, "No Selection", "Select a collision model first.")
+            return
+        sv = len(getattr(model, 'shadow_verts', []))
+        sf = len(getattr(model, 'shadow_faces', []))
+        if sv == 0 and sf == 0:
+            QMessageBox.information(self, "Shadow Mesh",
+                f"'{model.name}' has no shadow mesh data.\n\n"
+                "COL3+ models can have a separate low-poly shadow collision mesh.")
+        else:
+            QMessageBox.information(self, "Shadow Mesh",
+                f"Model: {model.name}\n"
+                f"Shadow vertices: {sv}\n"
+                f"Shadow faces:    {sf}\n\n"
+                "Shadow mesh is included in COL3 export.")
+
+    def _create_shadow_mesh(self): #vers 2
+        """Auto-generate shadow mesh as a copy of the main collision mesh."""
+        from PyQt6.QtWidgets import QMessageBox
+        import copy
+        model = self._get_selected_model()
+        if not model:
+            QMessageBox.warning(self, "No Selection", "Select a collision model first.")
+            return
+        if not model.vertices or not model.faces:
+            QMessageBox.warning(self, "No Mesh", f"'{model.name}' has no vertex/face data.")
+            return
+        # Upgrade to COL3 if needed
+        from apps.methods.col_workshop_classes import COLVersion
+        if getattr(model.version, 'value', 0) < 3:
+            reply = QMessageBox.question(self, "Upgrade to COL3",
+                "Shadow mesh requires COL3. Upgrade this model?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            model.version = COLVersion.COL_3
+        model.shadow_verts = copy.deepcopy(model.vertices)
+        model.shadow_faces = copy.deepcopy(model.faces)
+        self._populate_collision_list()
+        self._populate_compact_col_list()
+        msg = (f"Shadow mesh created for {model.name}: "
+               f"{len(model.shadow_verts)}V {len(model.shadow_faces)}F")
+        self._set_status(msg)
+        if self.main_window and hasattr(self.main_window, 'log_message'):
+            self.main_window.log_message(msg)
+
+    def _remove_shadow_mesh(self): #vers 2
+        """Remove shadow mesh data from the selected COL model."""
+        from PyQt6.QtWidgets import QMessageBox
+        model = self._get_selected_model()
+        if not model:
+            QMessageBox.warning(self, "No Selection", "Select a collision model first.")
+            return
+        has_shadow = bool(getattr(model, 'shadow_verts', []) or getattr(model, 'shadow_faces', []))
+        if not has_shadow:
+            QMessageBox.information(self, "No Shadow Mesh", f"{model.name} has no shadow mesh.")
+            return
+        reply = QMessageBox.question(self, "Remove Shadow Mesh",
+            f"Remove shadow mesh from '{model.name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            model.shadow_verts = []
+            model.shadow_faces = []
+            self._set_status(f"Removed shadow mesh from {model.name}")
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(f"Shadow mesh removed from {model.name}")
+
+    def _compress_col(self): #vers 2
+        """Mark COL file for compressed output (sets flags on export)."""
+        from PyQt6.QtWidgets import QMessageBox
+        if not self.current_col_file:
+            QMessageBox.warning(self, "No File", "No COL file loaded.")
+            return
+        QMessageBox.information(self, "COL Compression",
+            "COL files do not use zlib/LZO compression internally.\n\n"
+            "To reduce size: remove unused models, clear shadow meshes,\n"
+            "or reduce vertex/face counts in the mesh editor.")
+
+    def _uncompress_col(self): #vers 2
+        """Reload COL file (parses fresh from disk, clears in-memory edits)."""
+        from PyQt6.QtWidgets import QMessageBox
+        if not self.current_col_file or not getattr(self, 'current_file_path', None):
+            QMessageBox.warning(self, "No File", "No COL file loaded.")
+            return
+        reply = QMessageBox.question(self, "Reload File",
+            "Reload from disk? Unsaved changes will be lost.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self._open_file(self.current_file_path)
+
+    def _open_render_settings_dialog(self): #vers 1
+        """Render & background settings dialog."""
+        from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                                     QComboBox, QSlider, QPushButton, QColorDialog,
+                                     QGroupBox, QDialogButtonBox, QCheckBox)
+        from PyQt6.QtGui import QColor
+        from PyQt6.QtCore import Qt
+
+        pw = getattr(self, 'preview_widget', None)
+        if not pw: return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Render Settings")
+        dlg.setMinimumWidth(360)
+        lay = QVBoxLayout(dlg)
+
+        # Object rendering style
+        style_grp = QGroupBox("Object Rendering")
+        sg = QHBoxLayout(style_grp)
+        sg.addWidget(QLabel("Style:"))
+        style_combo = QComboBox()
+        style_combo.addItems(["Wireframe", "Semi-transparent", "Solid"])
+        mapping = {"wireframe":"Wireframe","semi":"Semi-transparent","solid":"Solid"}
+        style_combo.setCurrentText(mapping.get(pw._render_style, "Semi-transparent"))
+        sg.addWidget(style_combo)
+        lay.addWidget(style_grp)
+
+        # Background
+        bg_grp = QGroupBox("Background")
+        bg = QHBoxLayout(bg_grp)
+        r,g,b = pw._bg_color
+        bg_preview = QPushButton("  ")
+        bg_preview.setFixedSize(60, 28)
+        bg_preview.setStyleSheet(f"background-color: rgb({r},{g},{b});")
+        def _pick_bg():
+            c = QColorDialog.getColor(QColor(r,g,b), dlg, "Background Colour")
+            if c.isValid():
+                bg_preview.setStyleSheet(f"background-color: {c.name()};")
+                bg_preview.setProperty("chosen", (c.red(), c.green(), c.blue()))
+        bg_preview.clicked.connect(_pick_bg)
+        bg.addWidget(QLabel("Colour:"))
+        bg.addWidget(bg_preview)
+
+        scene_cb = QComboBox()
+        scene_cb.addItems(["Dark", "Mid", "Light"])
+        bg.addWidget(scene_cb)
+        lay.addWidget(bg_grp)
+
+        # Buttons
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
+                                QDialogButtonBox.StandardButton.Cancel)
+        btns.rejected.connect(dlg.reject)
+        def _apply():
+            s = style_combo.currentText()
+            rev = {"Wireframe":"wireframe","Semi-transparent":"semi","Solid":"solid"}
+            pw.set_render_style(rev.get(s,"semi"))
+            chosen = bg_preview.property("chosen")
+            if chosen:
+                pw.set_background_color(chosen)
+            dlg.accept()
+        btns.accepted.connect(_apply)
+        lay.addWidget(btns)
+        dlg.exec()
+
+
+    # ── Method aliases — drop Qt signal args (*_, **__) before forwarding ──
+    # These are called from Qt signals that pass e.g. bool(checked) as arg.
+    # Target methods take only self, so we must not forward the signal args.
+    def _compress_surface(self, *_, **__): return self._compress_col()
+    def _copy_surface(self, *_, **__): return self._copy_model_to_clipboard()
+    def _delete_surface(self, *_, **__): return self._delete_selected_model()
+    def _duplicate_surface(self, *_, **__): return self._duplicate_selected_model()
+    def _force_save_col(self, *_, **__): return self._save_file()
+    def _import_selected(self, *_, **__): return self._import_col_data()
+    def _import_surface(self, *_, **__): return self._import_col_data()
+    def _open_col_file(self, *_, **__): return self._open_file()
+    def _open_mipmap_manager(self, *_, **__): return self._show_shadow_mesh()
+    def _paste_surface(self, *_, **__): return self._paste_model_from_clipboard()
+    def _reload_surface_table(self, *_, **__): return self._populate_collision_list()
+    def _remove_shadow(self, *_, **__): return self._remove_shadow_mesh()
+    def _save_as_col_file(self, *_, **__): return self._save_file()
+    def _save_col_file(self, *_, **__): return self._save_file()
+    def _saveall_file(self, *_, **__): return self._save_file()
+    def _uncompress_surface(self, *_, **__): return self._uncompress_col()
+    def export_all(self, *_, **__): return self._export_col_data()
+    def export_all_surfaces(self, *_, **__): return self._export_col_data()
+    def export_selected(self, *_, **__): return self._export_col_data()
+    def export_selected_surface(self, *_, **__): return self._export_col_data()
+    def refresh(self, *_, **__): return self._populate_collision_list()
+    def reload_surface_table(self, *_, **__): return self._populate_collision_list()
+    def save_col_file(self, *a, **kw): return self._save_file(*a, **kw)
+    def shadow_dialog(self, *a, **kw): return self._create_shadow_mesh(*a, **kw)
+    def switch_surface_view(self, *a, **kw): return self._cycle_render_mode(*a, **kw)
+
+    def _change_format(self, *a, **kw): pass
+    def _close_col_tab(self, *a, **kw): pass
+    def _edit_main_surface(self, *a, **kw): pass
+    def _focus_search(self, *a, **kw): pass
+    def _rename_shadow_shortcut(self, *a, **kw): pass
+    def _save_surface_name(self, *a, **kw): pass
+    def _show_detailed_info(self, *a, **kw): pass
+    def _show_surface_info(self, *a, **kw): pass
+    def show_help(self, *a, **kw): pass
+    def show_settings_dialog(self, *a, **kw): pass
+
+    def _set_thumbnail_view(self, yaw, pitch, label="Custom"): #vers 1
+        """Change the view angle for all thumbnails and regenerate them."""
+        self._thumb_yaw   = float(yaw)
+        self._thumb_pitch = float(pitch)
+        self._stop_thumbnail_spin()
+        self._regenerate_all_thumbnails()
+        if hasattr(self, 'main_window') and self.main_window:
+            self.main_window.log_message(f"Thumbnail view: {label}")
+
+    def _regenerate_all_thumbnails(self): #vers 1
+        """Redraw every thumbnail in both lists at current _thumb_yaw/pitch."""
+        if not self.current_col_file:
+            return
+        models = getattr(self.current_col_file, 'models', [])
+        # Compact list
+        for row in range(self.col_compact_list.rowCount()):
+            item = self.col_compact_list.item(row, 0)
+            if item and row < len(models):
+                thumb = self._generate_collision_thumbnail(
+                    models[row], 64, 64,
+                    yaw=self._thumb_yaw, pitch=self._thumb_pitch)
+                item.setData(Qt.ItemDataRole.DecorationRole, thumb)
+                item.setData(Qt.ItemDataRole.UserRole + 1, True)
+        # Detail list
+        for row in range(self.collision_list.rowCount()):
+            item = self.collision_list.item(row, 0)
+            if item and row < len(models):
+                thumb = self._generate_collision_thumbnail(
+                    models[row], 64, 64,
+                    yaw=self._thumb_yaw, pitch=self._thumb_pitch)
+                item.setData(Qt.ItemDataRole.DecorationRole, thumb)
+                item.setData(Qt.ItemDataRole.UserRole + 1, True)
+
+    def _start_thumbnail_spin(self, row, model): #vers 1
+        """Start slowly rotating the thumbnail of the selected row."""
+        self._stop_thumbnail_spin()
+        self._spin_row   = row
+        self._spin_model = model
+        self._spin_yaw   = 0.0
+        # Random slow axis: yaw + slight pitch drift
+        import random
+        self._spin_dyaw   = random.uniform(0.8, 1.4)
+        self._spin_dpitch = random.uniform(-0.3, 0.3)
+        self._spin_pitch  = random.uniform(-20.0, 20.0)
+        from PyQt6.QtCore import QTimer
+        self._spin_timer = QTimer(self)
+        self._spin_timer.setInterval(50)   # 20 fps
+        self._spin_timer.timeout.connect(self._tick_thumbnail_spin)
+        self._spin_timer.start()
+
+    def _stop_thumbnail_spin(self): #vers 1
+        """Stop any running thumbnail rotation."""
+        t = getattr(self, '_spin_timer', None)
+        if t:
+            t.stop()
+            t.deleteLater()
+            self._spin_timer = None
+        self._spin_row   = None
+        self._spin_model = None
+
+    def _tick_thumbnail_spin(self): #vers 1
+        """Advance the spin angle and update the thumbnail."""
+        model = getattr(self, '_spin_model', None)
+        row   = getattr(self, '_spin_row',   None)
+        if model is None or row is None:
+            self._stop_thumbnail_spin()
+            return
+        # Advance angles
+        self._spin_yaw   = (self._spin_yaw + self._spin_dyaw) % 360
+        self._spin_pitch = max(-35.0, min(35.0,
+            self._spin_pitch + self._spin_dpitch))
+        # Flip pitch direction at limits
+        if abs(self._spin_pitch) >= 35.0:
+            self._spin_dpitch *= -1
+
+        # Only spin if model has geometry
+        has_geo = (getattr(model, 'vertices', []) or
+                   getattr(model, 'spheres',  []) or
+                   getattr(model, 'boxes',    []))
+        if not has_geo:
+            self._stop_thumbnail_spin()
+            return
+
+        # Render thumbnail at current angle
+        thumb = self._generate_collision_thumbnail(
+            model, 64, 64,
+            yaw=self._spin_yaw, pitch=self._spin_pitch)
+
+        # [T] view no longer has thumbnails — spin does nothing visible there
+        # The viewport itself rotates via _yaw/_pitch so just stop the timer
+        self._stop_thumbnail_spin()
 
     def _enable_name_edit(self, event, is_alpha): #vers 1
         """Enable name editing on click"""
@@ -347,12 +2503,71 @@ class COLWorkshop(QWidget): #vers 3
 
         return status_bar
 
-    def _refresh_icons(self): #vers 1
-        """Refresh all icons after theme change"""
+    def _refresh_icons(self): #vers 2
+        """Refresh all button icons after theme change — picks up current text_primary colour."""
         SVGIconFactory.clear_cache()
+        c = self._get_icon_color()
+        SVGIconFactory.set_theme_color(c)
+
+        # Map: attribute name → icon factory method
+        _icon_map = [
+            # Toolbar
+            ('settings_btn',       'settings_icon'),
+            ('open_btn',           'open_icon'),
+            ('save_btn',           'save_icon'),
+            ('saveall_btn',        'saveas_icon'),
+            ('export_all_btn',     'package_icon'),
+            ('undo_btn',           'undo_icon'),
+            ('info_btn',           'info_icon'),
+            ('minimize_btn',       'minimize_icon'),
+            ('maximize_btn',       'maximize_icon'),
+            ('close_btn',          'close_icon'),
+            ('open_img_btn',       'folder_icon'),
+            ('from_img_btn',       'open_icon'),
+            # Middle panel mini-toolbar
+            ('open_col_btn',       'open_icon'),
+            ('save_col_btn',       'save_icon'),
+            ('export_col_btn',     'package_icon'),
+            ('undo_col_btn',       'undo_icon'),
+            # Transform icon panel
+            ('flip_vert_btn',      'flip_vert_icon'),
+            ('flip_horz_btn',      'flip_horz_icon'),
+            ('rotate_cw_btn',      'rotate_cw_icon'),
+            ('rotate_ccw_btn',     'rotate_ccw_icon'),
+            ('analyze_btn',        'analyze_icon'),
+            ('copy_btn',           'copy_icon'),
+            ('paste_btn',          'paste_icon'),
+            ('create_surface_btn', 'add_icon'),
+            ('delete_surface_btn', 'remove_icon'),
+            ('import_btn',         'import_icon'),
+            ('export_btn',         'export_icon'),
+            # Right panel toolbar buttons
+            ('switch_btn',         'flip_vert_icon'),
+            ('convert_btn',        'convert_icon'),
+            ('properties_btn',     'settings_icon'),
+        ]
+        for attr, method in _icon_map:
+            btn = getattr(self, attr, None)
+            if btn is None:
+                continue
+            fn = getattr(self.icon_factory, method, None)
+            if fn is None:
+                continue
+            try:
+                btn.setIcon(fn(color=c))
+            except TypeError:
+                try:
+                    btn.setIcon(fn())
+                except Exception:
+                    pass
 
 
 # - Settings Reusable
+
+        # Sync mini toolbar visibility with current dock state
+        if hasattr(self, '_middle_btn_row'):
+            self._middle_btn_row.setVisible(
+                self.is_docked and not self.standalone_mode)
 
     def _show_workshop_settings(self): #vers 1
         """Show complete workshop settings dialog"""
@@ -974,6 +3189,8 @@ class COLWorkshop(QWidget): #vers 3
             # Update dock state
             self.is_docked = True
             self._update_dock_button_visibility()
+            if hasattr(self, '_middle_btn_row'):
+                self._middle_btn_row.setVisible(True)
 
             if hasattr(self.main_window, 'log_message'):
                 self.main_window.log_message(f"{App_name} docked to main window")
@@ -1004,6 +3221,8 @@ class COLWorkshop(QWidget): #vers 3
                 
             self.is_docked = False
             self._update_dock_button_visibility()
+            if hasattr(self, '_middle_btn_row'):
+                self._middle_btn_row.setVisible(False)
 
             self.show()
             self.raise_()
@@ -1206,7 +3425,9 @@ class COLWorkshop(QWidget): #vers 3
         if hasattr(self, 'titlebar') and self.titlebar.geometry().contains(pos):
             titlebar_pos = self.titlebar.mapFromParent(pos)
             if self._is_on_draggable_area(titlebar_pos):
-                self.windowHandle().startSystemMove()
+                handle = self.windowHandle()
+                if handle:
+                    handle.startSystemMove()
                 event.accept()
                 return
 
@@ -1369,11 +3590,68 @@ class COLWorkshop(QWidget): #vers 3
         self.drag_position = global_pos
 
 
-    def resizeEvent(self, event): #vers 1
-        '''Keep resize grip in bottom-right corner'''
+    def resizeEvent(self, event): #vers 2
+        """Update layout on resize."""
         super().resizeEvent(event)
         if hasattr(self, 'size_grip'):
             self.size_grip.move(self.width() - 16, self.height() - 16)
+        self._update_transform_text_panel_visibility()
+
+    def _on_splitter_moved(self, pos, index): #vers 1
+        """Called when main splitter is dragged — update text panel visibility."""
+        self._update_transform_text_panel_visibility()
+
+    def _update_transform_text_panel_visibility(self): #vers 2
+        """Toggle between text+icon panel (wide) and icon-only strip (narrow).
+        Reads threshold from IMG Factory settings. Also collapses bottom buttons."""
+        tp   = getattr(self, '_transform_text_panel_ref', None)
+        ip   = getattr(self, '_transform_icon_panel_ref', None)
+        mode = getattr(self, 'button_display_mode', 'both')
+
+        if mode == 'icons':
+            if tp: tp.setVisible(False)
+            if ip: ip.setVisible(True)
+            return
+        if mode == 'text':
+            if tp: tp.setVisible(True)
+            if ip: ip.setVisible(False)
+            return
+
+        # Measure right panel width directly
+        rp = getattr(self, '_right_panel_ref', None)
+        if rp:
+            ref_w = rp.width()
+        else:
+            splitter = getattr(self, '_main_splitter', None)
+            ref_w = self.width()
+            if splitter and tp:
+                w = tp
+                while w and w.parent() is not splitter:
+                    w = w.parent() if hasattr(w, 'parent') else None
+                if w:
+                    ref_w = w.width()
+
+        try:
+            from apps.methods.imgfactory_ui_settings import get_collapse_threshold
+            threshold = get_collapse_threshold(getattr(self, 'main_window', None))
+        except Exception:
+            threshold = 550
+        wide = ref_w >= threshold
+        if tp: tp.setVisible(wide)
+        if ip: ip.setVisible(not wide)
+
+        # Toggle bottom panel rows the same way
+        btr = getattr(self, '_bottom_text_row', None)
+        bir = getattr(self, '_bottom_icon_row', None)
+        if btr: btr.setVisible(wide)
+        if bir: bir.setVisible(not wide)
+
+    def resizeEvent(self, event): #vers 3
+        """Keep resize grip in corner; auto-collapse text transform panel when narrow."""
+        super().resizeEvent(event)
+        if hasattr(self, 'size_grip'):
+            self.size_grip.move(self.width() - 16, self.height() - 16)
+        self._update_transform_text_panel_visibility()
 
 
     def mouseDoubleClickEvent(self, event): #vers 2
@@ -1422,9 +3700,9 @@ class COLWorkshop(QWidget): #vers 3
         self.titlebar.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
         self.titlebar.setMouseTracking(True)
 
-        self.layout = QHBoxLayout(self.titlebar)
-        self.layout.setContentsMargins(5, 5, 5, 5)
-        self.layout.setSpacing(5)
+        self.titlebar_layout = QHBoxLayout(self.titlebar)
+        self.titlebar_layout.setContentsMargins(5, 5, 5, 5)
+        self.titlebar_layout.setSpacing(5)
 
         # Get icon color from theme
         icon_color = self._get_icon_color()
@@ -1440,7 +3718,7 @@ class COLWorkshop(QWidget): #vers 3
         # Settings button
         self.settings_btn = QPushButton()
         self.settings_btn.setFont(self.button_font)
-        self.settings_btn.setIcon(self.icon_factory.settings_icon())
+        self.settings_btn.setIcon(self.icon_factory.settings_icon(color=icon_color))
         self.settings_btn.setText("Settings")
         self.settings_btn.setIconSize(QSize(20, 20))
         self.settings_btn.clicked.connect(self._show_workshop_settings)
@@ -1462,15 +3740,25 @@ class COLWorkshop(QWidget): #vers 3
         if not self.standalone_mode:
             self.open_img_btn = QPushButton("OpenIMG")
             self.open_img_btn.setFont(self.button_font)
-            self.open_img_btn.setIcon(self.icon_factory.folder_icon())
+            self.open_img_btn.setIcon(self.icon_factory.folder_icon(color=icon_color))
             self.open_img_btn.setIconSize(QSize(20, 20))
             self.open_img_btn.clicked.connect(self.open_img_archive)
+            self.open_img_btn.setToolTip("Open an IMG archive and browse its COL entries")
             layout.addWidget(self.open_img_btn)
+
+            # "From IMG" — pick a COL entry from the currently loaded IMG in IMG Factory
+            self.from_img_btn = QPushButton("From IMG")
+            self.from_img_btn.setFont(self.button_font)
+            self.from_img_btn.setIcon(self.icon_factory.open_icon(color=icon_color))
+            self.from_img_btn.setIconSize(QSize(20, 20))
+            self.from_img_btn.clicked.connect(self._pick_col_from_current_img)
+            self.from_img_btn.setToolTip("Pick a COL entry from the currently loaded IMG")
+            layout.addWidget(self.from_img_btn)
 
         # Open button
         self.open_btn = QPushButton()
         self.open_btn.setFont(self.button_font)
-        self.open_btn.setIcon(self.icon_factory.open_icon())
+        self.open_btn.setIcon(self.icon_factory.open_icon(color=icon_color))
         self.open_btn.setText("Open")
         self.open_btn.setIconSize(QSize(20, 20))
         self.open_btn.setShortcut("Ctrl+O")
@@ -1483,13 +3771,13 @@ class COLWorkshop(QWidget): #vers 3
         # Save button
         self.save_btn = QPushButton()
         self.save_btn.setFont(self.button_font)
-        self.save_btn.setIcon(self.icon_factory.save_icon())
+        self.save_btn.setIcon(self.icon_factory.save_icon(color=icon_color))
         self.save_btn.setText("Save")
         self.save_btn.setIconSize(QSize(20, 20))
         self.save_btn.setShortcut("Ctrl+S")
         if self.button_display_mode == 'icons':
             self.save_btn.setFixedSize(40, 40)
-        self.save_btn.setEnabled(False)  # Enable when modified
+        self.save_btn.setEnabled(True)
         self.save_btn.setToolTip("Save COL file (Ctrl+S)")
         self.save_btn.clicked.connect(self._save_file)
         layout.addWidget(self.save_btn)
@@ -1497,40 +3785,40 @@ class COLWorkshop(QWidget): #vers 3
         # Save button
         self.saveall_btn = QPushButton()
         self.saveall_btn.setFont(self.button_font)
-        self.saveall_btn.setIcon(self.icon_factory.saveas_icon())
+        self.saveall_btn.setIcon(self.icon_factory.saveas_icon(color=icon_color))
         self.saveall_btn.setText("Save All")
         self.saveall_btn.setIconSize(QSize(20, 20))
         self.saveall_btn.setShortcut("Ctrl+S")
         if self.button_display_mode == 'icons':
             self.saveall_btn.setFixedSize(40, 40)
-        self.saveall_btn.setEnabled(False)  # Enable when modified
+        self.saveall_btn.setEnabled(True)
         self.saveall_btn.setToolTip("Save COL file (Ctrl+S)")
-        #self.saveall_btn.clicked.connect(self._saveall_file)
+        self.saveall_btn.clicked.connect(self._saveall_file)
         #layout.addWidget(self.saveall_btn)
 
         self.export_all_btn = QPushButton("Extract")
         self.export_all_btn.setFont(self.button_font)
-        self.export_all_btn.setIcon(self.icon_factory.package_icon())
+        self.export_all_btn.setIcon(self.icon_factory.package_icon(color=icon_color))
         self.export_all_btn.setIconSize(QSize(20, 20))
         self.export_all_btn.setToolTip("Export all as col, cst or 3ds files")
-        #self.export_all_btn.clicked.connect(self.export_all)
-        self.export_all_btn.setEnabled(False)
+        self.export_all_btn.clicked.connect(self.export_all)
+        self.export_all_btn.setEnabled(True)
         layout.addWidget(self.export_all_btn)
 
         self.undo_btn = QPushButton()
         self.undo_btn.setFont(self.button_font)
-        self.undo_btn.setIcon(self.icon_factory.undo_icon())
+        self.undo_btn.setIcon(self.icon_factory.undo_icon(color=icon_color))
         self.undo_btn.setText("Undo")
         self.undo_btn.setIconSize(QSize(20, 20))
-        #self.undo_btn.clicked.connect(self._undo_last_action)
-        self.undo_btn.setEnabled(False)
+        self.undo_btn.clicked.connect(self._undo_last_action)
+        self.undo_btn.setEnabled(True)
         self.undo_btn.setToolTip("Undo last change")
         layout.addWidget(self.undo_btn)
 
         # Info button
         self.info_btn = QPushButton("")
         self.info_btn.setText("")  # CHANGED from "Info"
-        self.info_btn.setIcon(self.icon_factory.info_icon())
+        self.info_btn.setIcon(self.icon_factory.info_icon(color=icon_color))
         self.info_btn.setMinimumWidth(40)
         self.info_btn.setMaximumWidth(40)
         self.info_btn.setMinimumHeight(30)
@@ -1577,7 +3865,7 @@ class COLWorkshop(QWidget): #vers 3
 
         # Window controls
         self.minimize_btn = QPushButton()
-        self.minimize_btn.setIcon(self.icon_factory.minimize_icon())
+        self.minimize_btn.setIcon(self.icon_factory.minimize_icon(color=icon_color))
         self.minimize_btn.setIconSize(QSize(20, 20))
         self.minimize_btn.setMinimumWidth(40)
         self.minimize_btn.setMaximumWidth(40)
@@ -1587,7 +3875,7 @@ class COLWorkshop(QWidget): #vers 3
         layout.addWidget(self.minimize_btn)
 
         self.maximize_btn = QPushButton()
-        self.maximize_btn.setIcon(self.icon_factory.maximize_icon())
+        self.maximize_btn.setIcon(self.icon_factory.maximize_icon(color=icon_color))
         self.maximize_btn.setIconSize(QSize(20, 20))
         self.maximize_btn.setMinimumWidth(40)
         self.maximize_btn.setMaximumWidth(40)
@@ -1597,7 +3885,7 @@ class COLWorkshop(QWidget): #vers 3
         layout.addWidget(self.maximize_btn)
 
         self.close_btn = QPushButton()
-        self.close_btn.setIcon(self.icon_factory.close_icon())
+        self.close_btn.setIcon(self.icon_factory.close_icon(color=icon_color))
         self.close_btn.setIconSize(QSize(20, 20))
         self.close_btn.setMinimumWidth(40)
         self.close_btn.setMaximumWidth(40)
@@ -1611,6 +3899,7 @@ class COLWorkshop(QWidget): #vers 3
     #Left side vertical panel
     def _create_transform_icon_panel(self): #vers 12
         """Create transform panel with icons - aligned with text panel"""
+        icon_color = self._get_icon_color()
         self.transform_icon_panel = QFrame()
         self.transform_icon_panel.setFrameStyle(QFrame.Shape.StyledPanel)
         self.transform_icon_panel.setMinimumWidth(45)
@@ -1629,51 +3918,55 @@ class COLWorkshop(QWidget): #vers 3
 
         # Flip Vertical
         self.flip_vert_btn = QPushButton()
-        self.flip_vert_btn.setIcon(self.icon_factory.flip_vert_icon())
+        self.flip_vert_btn.setIcon(self.icon_factory.flip_vert_icon(color=icon_color))
         self.flip_vert_btn.setIconSize(icon_size)
         self.flip_vert_btn.setFixedHeight(btn_height)
         self.flip_vert_btn.setMinimumWidth(btn_width)
         self.flip_vert_btn.setEnabled(False)
         self.flip_vert_btn.setToolTip("Flip col vertically")
+        self.flip_vert_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.flip_vertical())
         layout.addWidget(self.flip_vert_btn)
         layout.addSpacing(spacer)
 
         # Flip Horizontal
         self.flip_horz_btn = QPushButton()
-        self.flip_horz_btn.setIcon(self.icon_factory.flip_horz_icon())
+        self.flip_horz_btn.setIcon(self.icon_factory.flip_horz_icon(color=icon_color))
         self.flip_horz_btn.setIconSize(icon_size)
         self.flip_horz_btn.setFixedHeight(btn_height)
         self.flip_horz_btn.setMinimumWidth(btn_width)
         self.flip_horz_btn.setEnabled(False)
         self.flip_horz_btn.setToolTip("Flip col horizontally")
+        self.flip_horz_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.flip_horizontal())
         layout.addWidget(self.flip_horz_btn)
         layout.addSpacing(spacer)
 
         # Rotate Clockwise
         self.rotate_cw_btn = QPushButton()
-        self.rotate_cw_btn.setIcon(self.icon_factory.rotate_cw_icon())
+        self.rotate_cw_btn.setIcon(self.icon_factory.rotate_cw_icon(color=icon_color))
         self.rotate_cw_btn.setIconSize(icon_size)
         self.rotate_cw_btn.setFixedHeight(btn_height)
         self.rotate_cw_btn.setMinimumWidth(btn_width)
         self.rotate_cw_btn.setEnabled(False)
         self.rotate_cw_btn.setToolTip("Rotate 90 degrees clockwise")
+        self.rotate_cw_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.rotate_cw())
         layout.addWidget(self.rotate_cw_btn)
         layout.addSpacing(spacer)
 
         # Rotate Counter-Clockwise
         self.rotate_ccw_btn = QPushButton()
-        self.rotate_ccw_btn.setIcon(self.icon_factory.rotate_ccw_icon())
+        self.rotate_ccw_btn.setIcon(self.icon_factory.rotate_ccw_icon(color=icon_color))
         self.rotate_ccw_btn.setIconSize(icon_size)
         self.rotate_ccw_btn.setFixedHeight(btn_height)
         self.rotate_ccw_btn.setMinimumWidth(btn_width)
         self.rotate_ccw_btn.setEnabled(False)
         self.rotate_ccw_btn.setToolTip("Rotate 90 degrees counter-clockwise")
+        self.rotate_ccw_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.rotate_ccw())
         layout.addWidget(self.rotate_ccw_btn)
         layout.addSpacing(spacer)
 
         # Analyze
         self.analyze_btn = QPushButton()
-        self.analyze_btn.setIcon(self.icon_factory.analyze_icon())
+        self.analyze_btn.setIcon(self.icon_factory.analyze_icon(color=icon_color))
         self.analyze_btn.setIconSize(icon_size)
         self.analyze_btn.setFixedHeight(btn_height)
         self.analyze_btn.setMinimumWidth(btn_width)
@@ -1685,96 +3978,105 @@ class COLWorkshop(QWidget): #vers 3
 
         # Copy
         self.copy_btn = QPushButton()
-        self.copy_btn.setIcon(self.icon_factory.copy_icon())
+        self.copy_btn.setIcon(self.icon_factory.copy_icon(color=icon_color))
         self.copy_btn.setIconSize(icon_size)
         self.copy_btn.setFixedHeight(btn_height)
         self.copy_btn.setMinimumWidth(btn_width)
         self.copy_btn.setEnabled(False)
         self.copy_btn.setToolTip("Copy col to clipboard")
+        self.copy_btn.clicked.connect(self._copy_surface)
         layout.addWidget(self.copy_btn)
         layout.addSpacing(spacer)
 
         # Paste
         self.paste_btn = QPushButton()
-        self.paste_btn.setIcon(self.icon_factory.paste_icon())
+        self.paste_btn.setIcon(self.icon_factory.paste_icon(color=icon_color))
         self.paste_btn.setIconSize(icon_size)
         self.paste_btn.setFixedHeight(btn_height)
         self.paste_btn.setMinimumWidth(btn_width)
         self.paste_btn.setEnabled(False)
         self.paste_btn.setToolTip("Paste col from clipboard")
+        self.paste_btn.clicked.connect(self._paste_surface)
         layout.addWidget(self.paste_btn)
         layout.addSpacing(spacer)
 
         # Create
         self.create_surface_btn = QPushButton()
-        self.create_surface_btn.setIcon(self.icon_factory.add_icon())
+        self.create_surface_btn.setIcon(self.icon_factory.add_icon(color=icon_color))
         self.create_surface_btn.setIconSize(icon_size)
         self.create_surface_btn.setFixedHeight(btn_height)
         self.create_surface_btn.setMinimumWidth(btn_width)
         self.create_surface_btn.setToolTip("Create new blank Collision")
+        self.create_surface_btn.clicked.connect(self._create_new_surface)
         layout.addWidget(self.create_surface_btn)
         layout.addSpacing(spacer)
 
         # Delete
         self.delete_surface_btn = QPushButton()
-        self.delete_surface_btn.setIcon(self.icon_factory.delete_icon())
+        self.delete_surface_btn.setIcon(self.icon_factory.delete_icon(color=icon_color))
         self.delete_surface_btn.setIconSize(icon_size)
         self.delete_surface_btn.setFixedHeight(btn_height)
         self.delete_surface_btn.setMinimumWidth(btn_width)
         self.delete_surface_btn.setEnabled(False)
         self.delete_surface_btn.setToolTip("Remove selected Collision")
+        self.delete_surface_btn.clicked.connect(self._delete_surface)
         layout.addWidget(self.delete_surface_btn)
         layout.addSpacing(spacer)
 
         # Duplicate
         self.duplicate_surface_btn = QPushButton()
-        self.duplicate_surface_btn.setIcon(self.icon_factory.duplicate_icon())
+        self.duplicate_surface_btn.setIcon(self.icon_factory.duplicate_icon(color=icon_color))
         self.duplicate_surface_btn.setIconSize(icon_size)
         self.duplicate_surface_btn.setFixedHeight(btn_height)
         self.duplicate_surface_btn.setMinimumWidth(btn_width)
         self.duplicate_surface_btn.setEnabled(False)
         self.duplicate_surface_btn.setToolTip("Clone selected Collision")
+        self.duplicate_surface_btn.clicked.connect(self._duplicate_surface)
         layout.addWidget(self.duplicate_surface_btn)
         layout.addSpacing(spacer)
 
         # Paint
         self.paint_btn = QPushButton()
-        self.paint_btn.setIcon(self.icon_factory.paint_icon())
+        self.paint_btn.setIcon(self.icon_factory.paint_icon(color=icon_color))
         self.paint_btn.setIconSize(icon_size)
         self.paint_btn.setFixedHeight(btn_height)
         self.paint_btn.setMinimumWidth(btn_width)
         self.paint_btn.setEnabled(False)
-        self.paint_btn.setToolTip("Paint free hand on surface")
+        self.paint_btn.setToolTip("Paint free hand on surface — assign materials")
+        self.paint_btn.clicked.connect(self._open_paint_editor)
         layout.addWidget(self.paint_btn)
         layout.addSpacing(spacer)
 
         # Surface Type
         self.surface_type_btn = QPushButton()
-        self.surface_type_btn.setIcon(self.icon_factory.checkerboard_icon())
+        self.surface_type_btn.setIcon(self.icon_factory.checkerboard_icon(color=icon_color))
         self.surface_type_btn.setIconSize(icon_size)
         self.surface_type_btn.setFixedHeight(btn_height)
         self.surface_type_btn.setMinimumWidth(btn_width)
         self.surface_type_btn.setToolTip("Surface types")
+        self.surface_type_btn.clicked.connect(self._open_surface_type_dialog)
         layout.addWidget(self.surface_type_btn)
         layout.addSpacing(spacer)
 
         # Surface Edit
         self.surface_edit_btn = QPushButton()
-        self.surface_edit_btn.setIcon(self.icon_factory.surfaceedit_icon())
+        self.surface_edit_btn.setIcon(self.icon_factory.surfaceedit_icon(color=icon_color))
         self.surface_edit_btn.setIconSize(icon_size)
         self.surface_edit_btn.setFixedHeight(btn_height)
         self.surface_edit_btn.setMinimumWidth(btn_width)
-        self.surface_edit_btn.setToolTip("Surface Editor")
+        self.surface_edit_btn.setToolTip("Surface Editor — edit mesh faces and vertices")
+        self.surface_edit_btn.clicked.connect(self._open_surface_edit_dialog)
         layout.addWidget(self.surface_edit_btn)
         layout.addSpacing(spacer)
 
         # Build from TXD
         self.build_from_txd_btn = QPushButton()
-        self.build_from_txd_btn.setIcon(self.icon_factory.build_icon())
+        self.build_from_txd_btn.setIcon(self.icon_factory.build_icon(color=icon_color))
         self.build_from_txd_btn.setIconSize(icon_size)
         self.build_from_txd_btn.setFixedHeight(btn_height)
         self.build_from_txd_btn.setMinimumWidth(btn_width)
         self.build_from_txd_btn.setToolTip("Create col surface from txd texture names")
+        self.build_from_txd_btn.clicked.connect(self._build_col_from_txd)
         layout.addWidget(self.build_from_txd_btn)
 
         layout.addStretch()
@@ -1803,6 +4105,7 @@ class COLWorkshop(QWidget): #vers 3
         self.flip_vert_btn.setFixedHeight(btn_height)
         self.flip_vert_btn.setEnabled(False)
         self.flip_vert_btn.setToolTip("Flip col vertically")
+        self.flip_vert_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.flip_vertical())
         layout.addWidget(self.flip_vert_btn)
         layout.addSpacing(spacer)
 
@@ -1812,6 +4115,7 @@ class COLWorkshop(QWidget): #vers 3
         self.flip_horz_btn.setFixedHeight(btn_height)
         self.flip_horz_btn.setEnabled(False)
         self.flip_horz_btn.setToolTip("Flip col horizontally")
+        self.flip_horz_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.flip_horizontal())
         layout.addWidget(self.flip_horz_btn)
         layout.addSpacing(spacer)
 
@@ -1821,6 +4125,7 @@ class COLWorkshop(QWidget): #vers 3
         self.rotate_cw_btn.setFixedHeight(btn_height)
         self.rotate_cw_btn.setEnabled(False)
         self.rotate_cw_btn.setToolTip("Rotate 90 degrees clockwise")
+        self.rotate_cw_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.rotate_cw())
         layout.addWidget(self.rotate_cw_btn)
         layout.addSpacing(spacer)
 
@@ -1830,6 +4135,7 @@ class COLWorkshop(QWidget): #vers 3
         self.rotate_ccw_btn.setFixedHeight(btn_height)
         self.rotate_ccw_btn.setEnabled(False)
         self.rotate_ccw_btn.setToolTip("Rotate 90 degrees counter-clockwise")
+        self.rotate_ccw_btn.clicked.connect(lambda: getattr(self,"preview_widget",None) and self.preview_widget.rotate_ccw())
         layout.addWidget(self.rotate_ccw_btn)
         layout.addSpacing(spacer)
 
@@ -1849,6 +4155,7 @@ class COLWorkshop(QWidget): #vers 3
         self.copy_btn.setFixedHeight(btn_height)
         self.copy_btn.setEnabled(False)
         self.copy_btn.setToolTip("Copy col to clipboard")
+        self.copy_btn.clicked.connect(self._copy_surface)
         layout.addWidget(self.copy_btn)
         layout.addSpacing(spacer)
 
@@ -1858,6 +4165,7 @@ class COLWorkshop(QWidget): #vers 3
         self.paste_btn.setFixedHeight(btn_height)
         self.paste_btn.setEnabled(False)
         self.paste_btn.setToolTip("Paste col from clipboard")
+        self.paste_btn.clicked.connect(self._paste_surface)
         layout.addWidget(self.paste_btn)
         layout.addSpacing(spacer)
 
@@ -1866,6 +4174,7 @@ class COLWorkshop(QWidget): #vers 3
         self.create_surface_btn.setFont(self.button_font)
         self.create_surface_btn.setFixedHeight(btn_height)
         self.create_surface_btn.setToolTip("Create new blank Collision")
+        self.create_surface_btn.clicked.connect(self._create_new_surface)
         layout.addWidget(self.create_surface_btn)
         layout.addSpacing(spacer)
 
@@ -1875,6 +4184,7 @@ class COLWorkshop(QWidget): #vers 3
         self.delete_surface_btn.setFixedHeight(btn_height)
         self.delete_surface_btn.setEnabled(False)
         self.delete_surface_btn.setToolTip("Remove selected Collision")
+        self.delete_surface_btn.clicked.connect(self._delete_surface)
         layout.addWidget(self.delete_surface_btn)
         layout.addSpacing(spacer)
 
@@ -1884,6 +4194,7 @@ class COLWorkshop(QWidget): #vers 3
         self.duplicate_surface_btn.setFixedHeight(btn_height)
         self.duplicate_surface_btn.setEnabled(False)
         self.duplicate_surface_btn.setToolTip("Clone selected Collision")
+        self.duplicate_surface_btn.clicked.connect(self._duplicate_surface)
         layout.addWidget(self.duplicate_surface_btn)
         layout.addSpacing(spacer)
 
@@ -1892,7 +4203,8 @@ class COLWorkshop(QWidget): #vers 3
         self.paint_btn.setFont(self.button_font)
         self.paint_btn.setFixedHeight(btn_height)
         self.paint_btn.setEnabled(False)
-        self.paint_btn.setToolTip("Paint free hand on surface")
+        self.paint_btn.setToolTip("Paint free hand on surface — assign materials")
+        self.paint_btn.clicked.connect(self._open_paint_editor)
         layout.addWidget(self.paint_btn)
         layout.addSpacing(spacer)
 
@@ -1901,6 +4213,7 @@ class COLWorkshop(QWidget): #vers 3
         self.surface_type_btn.setFont(self.button_font)
         self.surface_type_btn.setFixedHeight(btn_height)
         self.surface_type_btn.setToolTip("Surface types")
+        self.surface_type_btn.clicked.connect(self._open_surface_type_dialog)
         layout.addWidget(self.surface_type_btn)
         layout.addSpacing(spacer)
 
@@ -1908,7 +4221,8 @@ class COLWorkshop(QWidget): #vers 3
         self.surface_edit_btn = QPushButton("Surface Edit")
         self.surface_edit_btn.setFont(self.button_font)
         self.surface_edit_btn.setFixedHeight(btn_height)
-        self.surface_edit_btn.setToolTip("Surface Editor")
+        self.surface_edit_btn.setToolTip("Surface Editor — edit mesh faces and vertices")
+        self.surface_edit_btn.clicked.connect(self._open_surface_edit_dialog)
         layout.addWidget(self.surface_edit_btn)
         layout.addSpacing(spacer)
 
@@ -1917,6 +4231,7 @@ class COLWorkshop(QWidget): #vers 3
         self.build_from_txd_btn.setFont(self.button_font)
         self.build_from_txd_btn.setFixedHeight(btn_height)
         self.build_from_txd_btn.setToolTip("Create col surface from txd texture names")
+        self.build_from_txd_btn.clicked.connect(self._build_col_from_txd)
         layout.addWidget(self.build_from_txd_btn)
 
         layout.addStretch()
@@ -1954,67 +4269,167 @@ class COLWorkshop(QWidget): #vers 3
         return panel
 
 
-    def _create_middle_panel(self): #vers 4
-        """Create middle panel with COL models table - theme-aware"""
-        panel = QGroupBox("COL Models")
-
-        # Get theme colors
-        if self.app_settings:
-            colors = self.app_settings.get_theme_colors()
-            bg_color = colors.get('panel_bg', '#2b2b2b')
-            border_color = colors.get('border', '#3a3a3a')
-            text_color = colors.get('text_primary', '#e0e0e0')
-        else:
-            bg_color = '#2b2b2b'
-            border_color = '#3a3a3a'
-            text_color = '#e0e0e0'
+    def _create_middle_panel(self): #vers 6
+        """Create middle panel with COL models table — mini toolbar + view toggle."""
+        panel = QFrame()
+        panel.setFrameStyle(QFrame.Shape.StyledPanel)
+        panel.setMinimumWidth(250)
 
         layout = QVBoxLayout(panel)
-        layout.setSpacing(5)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(4)
 
-        # Model table widget (like TXD Workshop texture_table)
+        # ── Header row: title + [T] view-toggle ──────────────────────────
+        hdr_row = QHBoxLayout()
+        header = QLabel("COL Models")
+        header.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        hdr_row.addWidget(header)
+        hdr_row.addStretch()
+
+        self._col_view_mode = 'detail'   # start in compact thumbnail view
+        self.col_view_toggle_btn = QPushButton("[=]")
+        self.col_view_toggle_btn.setFont(self.button_font)
+        self.col_view_toggle_btn.setFixedWidth(32)
+        self.col_view_toggle_btn.setFixedHeight(22)
+        self.col_view_toggle_btn.setToolTip(
+            "Toggle view: compact list ↔ full details table")
+        self.col_view_toggle_btn.clicked.connect(self._toggle_col_view)
+        hdr_row.addWidget(self.col_view_toggle_btn)
+        layout.addLayout(hdr_row)
+
+        # ── Mini toolbar: Open / Save / Extract / Undo ───────────────────
+        icon_color = self._get_icon_color()
+        self._middle_btn_row = QFrame()
+        btn_layout = QHBoxLayout(self._middle_btn_row)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(3)
+
+        self.open_col_btn = QPushButton("Open")
+        self.open_col_btn.setFont(self.button_font)
+        self.open_col_btn.setIcon(self.icon_factory.open_icon(color=icon_color))
+        self.open_col_btn.setIconSize(QSize(20, 20))
+        self.open_col_btn.setToolTip("Open COL file")
+        self.open_col_btn.clicked.connect(self._open_file)
+        btn_layout.addWidget(self.open_col_btn)
+
+        self.save_col_btn = QPushButton("Save")
+        self.save_col_btn.setFont(self.button_font)
+        self.save_col_btn.setIcon(self.icon_factory.save_icon(color=icon_color))
+        self.save_col_btn.setIconSize(QSize(20, 20))
+        self.save_col_btn.setToolTip("Save COL file")
+        self.save_col_btn.clicked.connect(self._save_file)
+        self.save_col_btn.setEnabled(True)
+        btn_layout.addWidget(self.save_col_btn)
+
+        self.export_col_btn = QPushButton("Extract")
+        self.export_col_btn.setFont(self.button_font)
+        self.export_col_btn.setIcon(self.icon_factory.package_icon(color=icon_color))
+        self.export_col_btn.setIconSize(QSize(20, 20))
+        self.export_col_btn.setToolTip("Export all COL models")
+        self.export_col_btn.clicked.connect(self._export_col_data)
+        self.export_col_btn.setEnabled(True)
+        btn_layout.addWidget(self.export_col_btn)
+
+        self.undo_col_btn = QPushButton()
+        self.undo_col_btn.setFont(self.button_font)
+        self.undo_col_btn.setIcon(self.icon_factory.undo_icon(color=icon_color))
+        self.undo_col_btn.setIconSize(QSize(20, 20))
+        self.undo_col_btn.setToolTip("Undo last change")
+        self.undo_col_btn.clicked.connect(self._undo_last_action)
+        self.undo_col_btn.setEnabled(True)
+        btn_layout.addWidget(self.undo_col_btn)
+
+        btn_layout.addStretch()
+        layout.addWidget(self._middle_btn_row)
+        self._middle_btn_row.setVisible(self.is_docked and not self.standalone_mode)
+
+        # ── Model table (detail view) ────────────────────────────────────
         self.collision_list = QTableWidget()
-        # Compatibility for table functions
+
         class _GuiLayout:
             def __init__(self, table):
                 self.table = table
         self.gui_layout = _GuiLayout(self.collision_list)
+
         self.collision_list.setColumnCount(8)
-        self.collision_list.setHorizontalHeaderLabels(["Model Name", "Type", "Version", "Size", "Spheres", "Boxes", "Vertices", "Faces"])
-        self.collision_list.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.collision_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.collision_list.setHorizontalHeaderLabels([
+            "Model Name", "Type", "Version", "Size",
+            "Spheres", "Boxes", "Vertices", "Faces"])
+        self.collision_list.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows)
+        self.collision_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection)
         self.collision_list.setAlternatingRowColors(True)
         self.collision_list.itemSelectionChanged.connect(self._on_collision_selected)
-        self.collision_list.horizontalHeader().setStretchLastSection(True)  # Details column stretches
+        self.collision_list.horizontalHeader().setStretchLastSection(True)
+        self.collision_list.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
+        self.collision_list.customContextMenuRequested.connect(
+            self._show_collision_context_menu)
+        self.collision_list.setVisible(False)  # hidden at startup — compact view is default
         layout.addWidget(self.collision_list)
-        self.collision_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.collision_list.customContextMenuRequested.connect(self._show_collision_context_menu)
+
+        # ── Compact list (thumbnail + name/version/counts, single row) ───
+        self.col_compact_list = QTableWidget()
+        self.col_compact_list.setColumnCount(2)
+        self.col_compact_list.setHorizontalHeaderLabels(["Preview", "Details"])
+        self.col_compact_list.horizontalHeader().setStretchLastSection(True)
+        self.col_compact_list.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows)
+        self.col_compact_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.col_compact_list.setAlternatingRowColors(True)
+        self.col_compact_list.setIconSize(QSize(64, 64))
+        self.col_compact_list.itemSelectionChanged.connect(
+            self._on_compact_col_selected)
+        self.col_compact_list.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
+        self.col_compact_list.customContextMenuRequested.connect(
+            self._show_collision_context_menu)
+        self.col_compact_list.setVisible(True)    # start in compact view
+        self.col_compact_list.setRowCount(0)      # populated on first file load
+        self.col_compact_list.setWordWrap(True)
+        self.col_compact_list.setItemDelegate(_ColListDelegate(self.col_compact_list))
+        layout.addWidget(self.col_compact_list)
+
         return panel
 
 
     def _create_right_panel(self): #vers 11
         """Create right panel with editing controls - compact layout"""
+        icon_color = self._get_icon_color()
         panel = QFrame()
         panel.setFrameStyle(QFrame.Shape.StyledPanel)
         panel.setMinimumWidth(200)
+        self._right_panel_ref = panel
         has_bumpmap = False
         main_layout = QVBoxLayout(panel)
         #main_layout.setContentsMargins(5, 5, 5, 5)
         top_layout = QHBoxLayout()
 
-        # Transform panel (icon)
+        # Transform panel (icon) — shown when narrow
         transform_icon_panel = self._create_transform_icon_panel()
+        self._transform_icon_panel_ref = transform_icon_panel
         top_layout.setSpacing(2)
         top_layout.addWidget(transform_icon_panel)
+        transform_icon_panel.setVisible(False)  # hidden until panel is narrow
 
-        # Transform panel (text)
+        # Transform panel (text) — shown when wide
         transform_text_panel = self._create_transform_text_panel()
+        self._transform_text_panel_ref = transform_text_panel
         top_layout.setSpacing(2)
         top_layout.addWidget(transform_text_panel)
+        transform_text_panel.setVisible(True)
 
-        # Preview area (center) - 3D Viewport
+        # Preview area (center) — viewport widget
         self.preview_widget = COL3DViewport()
+        self.preview_widget._workshop_ref = self  # direct ref — no parent-chain walk needed
         top_layout.addWidget(self.preview_widget, stretch=2)
+
+        # Floating paint bar — child of the viewport, always visible on top
+        self._create_paint_bar()
+
+        # paint_toolbar built by _build_float_paint_bar() — floats over preview_widget
 
         # Preview controls (right side, vertical)
         self.preview_controls = self._create_preview_controls()
@@ -2025,7 +4440,7 @@ class COLWorkshop(QWidget): #vers 3
         info_group = QGroupBox("")
         info_group.setFont(self.title_font)
         info_layout = QVBoxLayout(info_group)
-        info_group.setMaximumHeight(140)
+        info_group.setMaximumHeight(180)  # extra 40px for paint row
 
         # === LINE 1: collision name ===
         name_layout = QHBoxLayout()
@@ -2044,273 +4459,254 @@ class COLWorkshop(QWidget): #vers 3
         name_layout.addWidget(self.info_name, stretch=1)
         info_layout.addLayout(name_layout)
 
-        # === LINES 2 & 3: Adaptive based on display mode ===
-        if self.button_display_mode == 'icons':
-            # MERGED: Single compact line for icon mode
-            merged_line = self._create_merged_icons_line()
-            info_layout.addLayout(merged_line)
-        else:
-            # SEPARATE: Original two-line layout for text/both modes
-            # Line 2: Format controls
-            format_layout = QHBoxLayout()
-            format_layout.setSpacing(5)
+        # === LINES 2 & 3: Build BOTH rows, show/hide based on panel width ===
+        # ── Text+label row (wide) ────────────────────────────────────────
+        self._bottom_text_row = QWidget()
+        tr_lay = QVBoxLayout(self._bottom_text_row)
+        tr_lay.setContentsMargins(0, 0, 0, 0)
+        tr_lay.setSpacing(2)
 
-            self.format_combo = QComboBox()
-            self.format_combo.setFont(self.panel_font)
-            self.format_combo.addItems(["COL", "COL2", "COL3", "COL4"])
-            #self.format_combo.currentTextChanged.connect(self._change_format)
-            self.format_combo.setEnabled(False)
-            self.format_combo.setMaximumWidth(100)
-            format_layout.addWidget(self.format_combo)
+        fmt_lay = QHBoxLayout()
+        fmt_lay.setSpacing(5)
+        self.format_combo = QComboBox()
+        self.format_combo.setFont(self.panel_font)
+        self.format_combo.addItems(["COL", "COL2", "COL3", "COL4"])
+        self.format_combo.currentTextChanged.connect(self._change_format)
+        self.format_combo.setMaximumWidth(100)
+        fmt_lay.addWidget(self.format_combo)
+        fmt_lay.addStretch()
+        for attr, label, icon_fn, tip, slot in [
+            ('switch_btn',     'Mesh',       'flip_vert_icon',  'Cycle render mode',   'switch_surface_view'),
+            ('convert_btn',    'Convert',    'convert_icon',    'Convert format',      '_convert_surface'),
+            ('compress_btn',   'Compress',   'compress_icon',   'Compress',            '_compress_surface'),
+            ('uncompress_btn', 'Uncompress', 'uncompress_icon', 'Uncompress',          '_uncompress_surface'),
+            ('import_btn',     'Import',     'import_icon',     'Import col/cst/3ds',  '_import_selected'),
+            ('export_btn',     'Export',     'export_icon',     'Export col/cst/3ds',  'export_selected'),
+        ]:
+            b = QPushButton(label)
+            b.setFont(self.button_font)
+            b.setIcon(getattr(self.icon_factory, icon_fn)(color=icon_color))
+            b.setIconSize(QSize(20, 20))
+            b.setToolTip(tip)
+            b.clicked.connect(getattr(self, slot))
+            b.setEnabled(False)
+            setattr(self, attr, b)
+            fmt_lay.addWidget(b)
+        tr_lay.addLayout(fmt_lay)
 
-            format_layout.addStretch()
+        shd_lay = QHBoxLayout()
+        shd_lay.setSpacing(5)
+        self.info_format = QLabel("Shadow Mesh: ")
+        self.info_format.setFont(self.panel_font)
+        self.info_format.setMinimumWidth(100)
+        shd_lay.addWidget(self.info_format)
+        for attr, label, icon_fn, tip, slot in [
+            ('show_shadow_btn',   'View',   'view_icon',   'View Shadow Mesh',   '_open_mipmap_manager'),
+            ('create_shadow_btn', 'Create', 'add_icon',    'Create Shadow Mesh', 'shadow_dialog'),
+            ('remove_shadow_btn', 'Remove', 'delete_icon', 'Remove Shadow Mesh', '_remove_shadow'),
+        ]:
+            b = QPushButton(label)
+            b.setFont(self.button_font)
+            b.setIcon(getattr(self.icon_factory, icon_fn)(color=icon_color))
+            b.setIconSize(QSize(20, 20))
+            b.setToolTip(tip)
+            b.clicked.connect(getattr(self, slot))
+            b.setEnabled(False)
+            setattr(self, attr, b)
+            shd_lay.addWidget(b)
+        tr_lay.addLayout(shd_lay)
+        info_layout.addWidget(self._bottom_text_row)
 
-            # Switch button
-            self.switch_btn = QPushButton("Mesh")
-            self.switch_btn.setFont(self.button_font)
-            self.switch_btn.setIcon(self.icon_factory.flip_vert_icon())
-            self.switch_btn.setIconSize(QSize(20, 20))
-            #self.switch_btn.clicked.connect(self.switch_surface_view)
-            self.switch_btn.setEnabled(False)
-            self.switch_btn.setToolTip("Cycle: Wireframe → Mesh → Painted → Overlay")
-            format_layout.addWidget(self.switch_btn)
+        # ── Icon-only row (narrow) ─────────────────────────────────────────
+        self._bottom_icon_row = QWidget()
+        ir_lay = QHBoxLayout(self._bottom_icon_row)
+        ir_lay.setContentsMargins(0, 0, 0, 0)
+        ir_lay.setSpacing(2)
+        fmt_ico = QComboBox()
+        fmt_ico.addItems(["COL","COL2","COL3","COL4"])
+        fmt_ico.currentTextChanged.connect(self._change_format)
+        fmt_ico.setMaximumWidth(65)
+        ir_lay.addWidget(fmt_ico)
+        for icon_fn, tip, slot in [
+            ('flip_vert_icon',  'Cycle render mode',  'switch_surface_view'),
+            ('convert_icon',    'Convert',            '_convert_surface'),
+            ('compress_icon',   'Compress',           '_compress_surface'),
+            ('uncompress_icon', 'Uncompress',         '_uncompress_surface'),
+            ('import_icon',     'Import',             '_import_selected'),
+            ('export_icon',     'Export',             'export_selected'),
+            ('view_icon',       'View Shadow',        '_open_mipmap_manager'),
+            ('add_icon',        'Create Shadow',      'shadow_dialog'),
+            ('delete_icon',     'Remove Shadow',      '_remove_shadow'),
+        ]:
+            b = QPushButton()
+            b.setIcon(getattr(self.icon_factory, icon_fn)(color=icon_color))
+            b.setIconSize(QSize(18, 18))
+            b.setFixedSize(30, 30)
+            b.setToolTip(tip)
+            b.clicked.connect(getattr(self, slot))
+            b.setEnabled(False)
+            ir_lay.addWidget(b)
+        ir_lay.addStretch()
+        info_layout.addWidget(self._bottom_icon_row)
+        self._bottom_icon_row.setVisible(False)
 
-            # Convert
-            self.convert_btn = QPushButton("Convert")
-            self.convert_btn.setFont(self.button_font)
-            self.convert_btn.setIcon(self.icon_factory.convert_icon())
-            self.convert_btn.setIconSize(QSize(20, 20))
-            self.convert_btn.setToolTip("Convert Collision format")
-            #self.convert_btn.clicked.connect(self._convert_surface)
-            self.convert_btn.setEnabled(False)
-            format_layout.addWidget(self.convert_btn)
-
-            # Line 3: shadow + Bumpmaps
-            mipbump_layout = QHBoxLayout()
-            mipbump_layout.setSpacing(5)
-
-            self.info_format = QLabel("Shadow Mesh: ")
-            self.info_format.setFont(self.panel_font)
-            self.info_format.setMinimumWidth(100)
-            mipbump_layout.addWidget(self.info_format)
-
-            self.show_shadow_btn = QPushButton("View")
-            self.show_shadow_btn.setFont(self.button_font)
-            self.show_shadow_btn.setIcon(self.icon_factory.view_icon())
-            self.show_shadow_btn.setIconSize(QSize(20, 20))
-            self.show_shadow_btn.setToolTip("View all levels")
-            #self.show_shadow_btn.clicked.connect(self._open_mipmap_manager)
-            self.show_shadow_btn.setEnabled(False)
-            mipbump_layout.addWidget(self.show_shadow_btn)
-
-            self.create_shadow_btn = QPushButton("Create")
-            self.create_shadow_btn.setFont(self.button_font)
-            self.create_shadow_btn.setIcon(self.icon_factory.add_icon())
-            self.create_shadow_btn.setIconSize(QSize(20, 20))
-            self.create_shadow_btn.setToolTip("Generate Shadow Mesh")
-            #self.create_shadow_btn.clicked.connect(self.shadow_dialog)
-            self.create_shadow_btn.setEnabled(False)
-            mipbump_layout.addWidget(self.create_shadow_btn)
-
-            self.remove_shadow_btn = QPushButton("Remove")
-            self.remove_shadow_btn.setFont(self.button_font)
-            self.remove_shadow_btn.setIcon(self.icon_factory.delete_icon())
-            self.remove_shadow_btn.setIconSize(QSize(20, 20))
-            self.remove_shadow_btn.setToolTip("Remove Shodow Mesh")
-            #self.remove_shadow_btn.clicked.connect(self._remove_shadow)
-            self.remove_shadow_btn.setEnabled(False)
-            mipbump_layout.addWidget(self.remove_shadow_btn)
-
-            mipbump_layout.addSpacing(30)
-            view_layout = QHBoxLayout()
-
-            self.compress_btn = QPushButton("Compress")
-            self.compress_btn.setFont(self.button_font)
-            self.compress_btn.setIcon(self.icon_factory.compress_icon())
-            self.compress_btn.setIconSize(QSize(20, 20))
-            self.compress_btn.setToolTip("Compress Collision")
-            #self.compress_btn.clicked.connect(self._compress_surface)
-            self.compress_btn.setEnabled(False)
-            format_layout.addWidget(self.compress_btn)
-
-            self.uncompress_btn = QPushButton("Uncompress")
-            self.uncompress_btn.setFont(self.button_font)
-            self.uncompress_btn.setIcon(self.icon_factory.uncompress_icon())
-            self.uncompress_btn.setIconSize(QSize(20, 20))
-            self.uncompress_btn.setToolTip("Uncompress Collision")
-            #self.uncompress_btn.clicked.connect(self._uncompress_surface)
-            self.uncompress_btn.setEnabled(False)
-            format_layout.addWidget(self.uncompress_btn)
-
-            self.import_btn = QPushButton("Import")
-            self.import_btn.setFont(self.button_font)
-            self.import_btn.setIcon(self.icon_factory.import_icon())
-            self.import_btn.setIconSize(QSize(20, 20))
-            self.import_btn.setToolTip("Import col, cst, 3ds files")
-            #self.import_btn.clicked.connect(self._import_selected)
-            self.import_btn.setEnabled(False)
-            format_layout.addWidget(self.import_btn)
-
-            self.export_btn = QPushButton("Export")
-            self.export_btn.setFont(self.button_font)
-            self.export_btn.setIcon(self.icon_factory.export_icon())
-            self.export_btn.setIconSize(QSize(20, 20))
-            self.export_btn.setToolTip("Export col, cst, 3ds files")
-            #self.export_btn.clicked.connect(self.export_selected)
-            self.export_btn.setEnabled(False)
-            format_layout.addWidget(self.export_btn)
-
-            info_layout.addLayout(format_layout)
-            info_layout.addLayout(view_layout)
-            info_layout.addLayout(mipbump_layout)
-
+        # ── Paint mode row (hidden until paint mode active) ───────────────
         main_layout.addWidget(info_group, stretch=0)
         return panel
 
 
-    def _create_preview_controls(self): #vers 5
-        """Create preview control buttons - vertical layout on right"""
-        controls_frame = QFrame()
-        controls_frame.setFrameStyle(QFrame.Shape.StyledPanel)
-        controls_frame.setMaximumWidth(50)
-        controls_layout = QVBoxLayout(controls_frame)
-        controls_layout.setContentsMargins(5, 5, 5, 5)
-        controls_layout.setSpacing(5)
 
-        # Check if using 3D viewport or 2D preview
-        is_3d_viewport = VIEWPORT_AVAILABLE and isinstance(self.preview_widget, COL3DViewport)
 
-        # Zoom In
-        zoom_in_btn = QPushButton()
-        zoom_in_btn.setIcon(self.icon_factory.zoom_in_icon())
-        zoom_in_btn.setIconSize(QSize(20, 20))
-        zoom_in_btn.setFixedSize(40, 40)
-        zoom_in_btn.setToolTip("Zoom In")
-        #zoom_in_btn.clicked.connect(self.preview_widget.zoom_in)
-        controls_layout.addWidget(zoom_in_btn)
+    def _create_paint_bar(self): #vers 3
+        """Floating paint bar — QWidget child of preview_widget, sits at top of viewport.
+        Called once from _create_right_panel after preview_widget is created."""
+        vp = self.preview_widget
+        ic = self._get_icon_color()
 
-        # Zoom Out
-        zoom_out_btn = QPushButton()
-        zoom_out_btn.setIcon(self.icon_factory.zoom_out_icon())
-        zoom_out_btn.setIconSize(QSize(20, 20))
-        zoom_out_btn.setFixedSize(40, 40)
-        zoom_out_btn.setToolTip("Zoom Out")
-        #zoom_out_btn.clicked.connect(self.preview_widget.zoom_out)
-        controls_layout.addWidget(zoom_out_btn)
+        bar = QWidget(vp)
+        bar.setObjectName("paint_bar")
+        bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        bar.setStyleSheet(
+            "QWidget#paint_bar { background:#1a1a2e; border-bottom:2px solid #ff8c00; }"
+            "QLabel  { color:#ddd; background:transparent; }"
+            "QComboBox { background:#252535; color:#eee; border:1px solid #555; }"
+            "QPushButton { background:#252535; color:#eee; border:1px solid #555; border-radius:3px; }"
+            "QPushButton:hover   { background:#353548; }"
+            "QPushButton:checked { background:#ff8c00; color:#000; border:1px solid #ff8c00; }"
+        )
+        bar.setFixedHeight(34)
 
-        # Reset
-        reset_btn = QPushButton()
-        reset_btn.setIcon(self.icon_factory.reset_icon())
-        reset_btn.setIconSize(QSize(20, 20))
-        reset_btn.setFixedSize(40, 40)
-        reset_btn.setToolTip("Reset View")
-        #reset_btn.clicked.connect(self.preview_widget.reset_view)
-        controls_layout.addWidget(reset_btn)
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(6, 3, 6, 3)
+        lay.setSpacing(4)
 
-        # Fit
-        fit_btn = QPushButton()
-        fit_btn.setIcon(self.icon_factory.fit_icon())
-        fit_btn.setIconSize(QSize(20, 20))
-        fit_btn.setFixedSize(40, 40)
-        fit_btn.setToolTip("Fit to Window")
-        #fit_btn.clicked.connect(self.preview_widget.fit_to_window)
-        controls_layout.addWidget(fit_btn)
+        lay.addWidget(QLabel("Mat:"))
 
-        controls_layout.addSpacing(10)
+        self.paint_swatch = QLabel()
+        self.paint_swatch.setFixedSize(16, 16)
+        self.paint_swatch.setStyleSheet(
+            "background:#808080; border:1px solid #aaa; border-radius:2px;")
+        lay.addWidget(self.paint_swatch)
 
-        # Pan Up
-        pan_up_btn = QPushButton()
-        pan_up_btn.setIcon(self.icon_factory.arrow_up_icon())
-        pan_up_btn.setIconSize(QSize(20, 20))
-        pan_up_btn.setFixedSize(40, 40)
-        pan_up_btn.setToolTip("Pan Up")
-        #pan_up_btn.clicked.connect(lambda: self._pan_preview(0, -20))
-        controls_layout.addWidget(pan_up_btn)
+        self.paint_mat_combo = QComboBox()
+        self.paint_mat_combo.setFixedHeight(26)
+        self.paint_mat_combo.setMinimumWidth(160)
+        self.paint_mat_combo.setMaximumWidth(260)
+        lay.addWidget(self.paint_mat_combo)
 
-        # Pan Down
-        pan_down_btn = QPushButton()
-        pan_down_btn.setIcon(self.icon_factory.arrow_down_icon())
-        pan_down_btn.setIconSize(QSize(20, 20))
-        pan_down_btn.setFixedSize(40, 40)
-        pan_down_btn.setToolTip("Pan Down")
-        #pan_down_btn.clicked.connect(lambda: self._pan_preview(0, 20))
-        controls_layout.addWidget(pan_down_btn)
+        lay.addSpacing(4)
 
-        # Pan Left
-        pan_left_btn = QPushButton()
-        pan_left_btn.setIcon(self.icon_factory.arrow_left_icon())
-        pan_left_btn.setIconSize(QSize(20, 20))
-        pan_left_btn.setFixedSize(40, 40)
-        pan_left_btn.setToolTip("Pan Left")
-        #pan_left_btn.clicked.connect(lambda: self._pan_preview(-20, 0))
-        controls_layout.addWidget(pan_left_btn)
+        def _tbtn(attr, icon_fn, tip, tool):
+            b = QPushButton()
+            try:
+                b.setIcon(getattr(self.icon_factory, icon_fn)(color=ic))
+            except Exception:
+                b.setText(tool[0].upper())
+            b.setIconSize(QSize(16, 16))
+            b.setFixedSize(28, 28)
+            b.setToolTip(tip)
+            b.setCheckable(True)
+            b.clicked.connect(lambda *_: self._set_paint_tool(tool))
+            setattr(self, attr, b)
+            lay.addWidget(b)
 
-        # Pan Right
-        pan_right_btn = QPushButton()
-        pan_right_btn.setIcon(self.icon_factory.arrow_right_icon())
-        pan_right_btn.setIconSize(QSize(20, 20))
-        pan_right_btn.setFixedSize(40, 40)
-        pan_right_btn.setToolTip("Pan Right")
-        #pan_right_btn.clicked.connect(lambda: self._pan_preview(20, 0))
-        controls_layout.addWidget(pan_right_btn)
+        _tbtn('tool_paint_btn',   'paint_icon',   'Paint faces',   'paint')
+        _tbtn('tool_dropper_btn', 'dropper_icon', 'Dropper',       'dropper')
+        _tbtn('tool_fill_btn',    'fill_icon',    'Flood fill',    'fill')
+        if self.tool_paint_btn:
+            self.tool_paint_btn.setChecked(True)
 
-        # Color picker
-        bg_custom_btn = QPushButton()
-        bg_custom_btn.setIcon(self.icon_factory.color_picker_icon())
-        bg_custom_btn.setIconSize(QSize(20, 20))
-        bg_custom_btn.setFixedSize(40, 40)
-        bg_custom_btn.setToolTip("Pick Background Color")
-        #bg_custom_btn.clicked.connect(self._pick_background_color)
-        controls_layout.addWidget(bg_custom_btn)
+        self.paint_undo_btn = QPushButton()
+        try:
+            self.paint_undo_btn.setIcon(self.icon_factory.undo_paint_icon(color=ic))
+        except Exception:
+            self.paint_undo_btn.setText("↩")
+        self.paint_undo_btn.setIconSize(QSize(16, 16))
+        self.paint_undo_btn.setFixedSize(28, 28)
+        self.paint_undo_btn.setToolTip("Undo last paint op")
+        self.paint_undo_btn.setEnabled(False)
+        self.paint_undo_btn.clicked.connect(self._undo_last_action)
+        lay.addWidget(self.paint_undo_btn)
 
-        controls_layout.addSpacing(5)
+        lay.addStretch()
 
-        # View Spheres toggle
-        self.view_spheres_btn = QPushButton()
-        self.view_spheres_btn.setIcon(self.icon_factory.sphere_icon())
-        self.view_spheres_btn.setIconSize(QSize(20, 20))
-        self.view_spheres_btn.setFixedSize(40, 40)
-        self.view_spheres_btn.setCheckable(True)
-        self.view_spheres_btn.setChecked(True)
-        self.view_spheres_btn.setToolTip("Toggle Spheres")
-        #self.view_spheres_btn.clicked.connect(self._toggle_spheres)
-        controls_layout.addWidget(self.view_spheres_btn)
+        self.paint_exit_btn = QPushButton("✕")
+        self.paint_exit_btn.setFixedSize(28, 28)
+        self.paint_exit_btn.setToolTip("Exit paint mode")
+        self.paint_exit_btn.setStyleSheet(
+            "color:#ff6b35; font-weight:bold; background:#252535; border:1px solid #555; border-radius:3px;")
+        self.paint_exit_btn.clicked.connect(self._exit_paint_mode)
+        lay.addWidget(self.paint_exit_btn)
 
-        # View Boxes toggle
-        self.view_boxes_btn = QPushButton()
-        self.view_boxes_btn.setIcon(self.icon_factory.box_icon())
-        self.view_boxes_btn.setIconSize(QSize(20, 20))
-        self.view_boxes_btn.setFixedSize(40, 40)
-        self.view_boxes_btn.setCheckable(True)
-        self.view_boxes_btn.setChecked(True)
-        self.view_boxes_btn.setToolTip("Toggle Boxes")
-        #self.view_boxes_btn.clicked.connect(self._toggle_boxes)
-        controls_layout.addWidget(self.view_boxes_btn)
+        self.paint_toolbar = bar
+        bar.setGeometry(0, 0, vp.width(), 34)
+        bar.hide()
 
-        # View Mesh toggle
-        self.view_mesh_btn = QPushButton()
-        self.view_mesh_btn.setIcon(self.icon_factory.mesh_icon())
-        self.view_mesh_btn.setIconSize(QSize(20, 20))
-        self.view_mesh_btn.setFixedSize(40, 40)
-        self.view_mesh_btn.setCheckable(True)
-        self.view_mesh_btn.setChecked(True)
-        self.view_mesh_btn.setToolTip("Toggle Mesh")
-        #self.view_mesh_btn.clicked.connect(self._toggle_mesh)
-        controls_layout.addWidget(self.view_mesh_btn)
-        controls_layout.addSpacing(5)
+        # Reposition bar when viewport resizes
+        _orig = vp.resizeEvent
+        def _on_vp_resize(event, _o=_orig, _bar=bar, _vp=vp):
+            _o(event)
+            if _bar.isVisible():
+                _bar.setGeometry(0, 0, _vp.width(), 34)
+                _bar.raise_()
+        vp.resizeEvent = _on_vp_resize
 
-        # Icon label
-        self.backface_btn = QPushButton()
-        self.backface_btn.setIcon(self.icon_factory.backface_icon())
-        self.backface_btn.setIconSize(QSize(20, 20))
-        self.backface_btn.setFixedSize(40, 40)
-        self.backface_btn.setCheckable(True)
-        self.backface_btn.setChecked(False)
-        self.backface_btn.setToolTip("Toggle Backface")
-        #self.backface_btn.clicked.connect(self._toggle_backface_culling)
-        controls_layout.addWidget(self.backface_btn)
+    def _create_preview_controls(self): #vers 6
+        """Vertical button strip to the right of the preview viewport."""
+        icon_color = self._get_icon_color()
+        pw = self.preview_widget   # guaranteed to exist — called after _create_right_panel creates it
 
-        return controls_frame
+        f = QFrame()
+        f.setFrameStyle(QFrame.Shape.StyledPanel)
+        f.setMaximumWidth(50)
+        lay = QVBoxLayout(f)
+        lay.setContentsMargins(5, 5, 5, 5)
+        lay.setSpacing(4)
+
+        def btn(tip, icon_fn, callback, checkable=False, checked=False):
+            b = QPushButton()
+            b.setIcon(icon_fn(color=icon_color))
+            b.setIconSize(QSize(20, 20))
+            b.setFixedSize(40, 40)
+            b.setToolTip(tip)
+            if checkable:
+                b.setCheckable(True)
+                b.setChecked(checked)
+            b.clicked.connect(callback)
+            lay.addWidget(b)
+            return b
+
+        btn("Zoom In",      self.icon_factory.zoom_in_icon,   pw.zoom_in)
+        btn("Zoom Out",     self.icon_factory.zoom_out_icon,  pw.zoom_out)
+        btn("Reset View",   self.icon_factory.reset_icon,     pw.reset_view)
+        btn("Fit to Window",self.icon_factory.fit_icon,       pw.fit_to_window)
+
+        lay.addSpacing(6)
+        btn("Pan Up",    self.icon_factory.arrow_up_icon,    lambda: pw.pan( 0,  20))
+        btn("Pan Down",  self.icon_factory.arrow_down_icon,  lambda: pw.pan( 0, -20))
+        btn("Pan Left",  self.icon_factory.arrow_left_icon,  lambda: pw.pan(-20,  0))
+        btn("Pan Right", self.icon_factory.arrow_right_icon, lambda: pw.pan( 20,  0))
+
+        lay.addSpacing(6)
+        btn("Render / Background Settings",
+            self.icon_factory.color_picker_icon, self._open_render_settings_dialog)
+
+        lay.addSpacing(6)
+        self.view_spheres_btn = btn("Toggle Spheres", self.icon_factory.sphere_icon,
+                                    lambda checked: pw.set_show_spheres(checked),
+                                    checkable=True, checked=True)
+        self.view_boxes_btn   = btn("Toggle Boxes",   self.icon_factory.box_icon,
+                                    lambda checked: pw.set_show_boxes(checked),
+                                    checkable=True, checked=True)
+        self.view_mesh_btn    = btn("Toggle Mesh",    self.icon_factory.mesh_icon,
+                                    lambda checked: pw.set_show_mesh(checked),
+                                    checkable=True, checked=True)
+        self.backface_btn     = btn("Toggle Backface",self.icon_factory.backface_icon,
+                                    lambda checked: pw.set_backface(checked),
+                                    checkable=True, checked=False)
+
+        lay.addStretch()
+        return f
 
 
     def _update_toolbar_for_docking_state(self): #vers 1
@@ -3327,27 +5723,44 @@ class COLWorkshop(QWidget): #vers 3
 
     def _enable_move_mode(self): #vers 2
         """Enable move window mode using system move"""
-        # Use Qt's system move which works on Windows, Linux, etc.
-        if hasattr(self.windowHandle(), 'startSystemMove'):
-            self.windowHandle().startSystemMove()
-        else:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(self, "Move Window",
-                "Drag the titlebar to move the window")
+        handle = self.windowHandle()
+        if handle and hasattr(handle, 'startSystemMove'):
+            handle.startSystemMove()
 
     def _toggle_upscale_native(self): #vers 1
         """Toggle upscale native resolution"""
         # Placeholder for upscale native functionality
         print("Upscale Native toggled")
 
-    def _show_shaders_dialog(self): #vers 1
-        """Show shaders configuration dialog"""
-        from PyQt6.QtWidgets import QMessageBox
-        QMessageBox.information(self, "Shaders",
-            "Shader configuration coming soon!\n\nThis will allow you to:\n"
-            "- Select shader presets\n"
-            "- Configure CRT effects\n"
-            "- Adjust visual filters")
+    def _show_shaders_dialog(self): #vers 2
+        """Viewport render style presets."""
+        from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QLabel,
+                                      QRadioButton, QButtonGroup, QPushButton)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Viewport Render Style")
+        dlg.setFixedSize(260, 200)
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel("<b>Render style (viewport display only)</b>"))
+        presets = [("Wireframe", "wireframe"), ("Solid", "solid"),
+                   ("Painted (material colours)", "painted")]
+        grp = QButtonGroup(dlg)
+        current = getattr(self, '_render_mode', 'wireframe')
+        for label, key in presets:
+            rb = QRadioButton(label)
+            rb.setChecked(key == current)
+            def _set(checked, k=key):
+                if checked:
+                    self._render_mode = k
+                    pw = getattr(self, 'preview_widget', None)
+                    if pw and hasattr(pw, '_refresh'):
+                        pw._refresh()
+            rb.toggled.connect(_set)
+            grp.addButton(rb)
+            lay.addWidget(rb)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dlg.accept)
+        lay.addWidget(close_btn)
+        dlg.exec()
 
     def _show_window_context_menu(self, pos): #vers 1
         """Show context menu for titlebar right-click"""
@@ -3379,12 +5792,12 @@ class COLWorkshop(QWidget): #vers 3
         menu.exec(self.mapToGlobal(pos))
 
 
-    def _get_icon_color(self): #vers 1
-        """Get icon color from current theme"""
+    def _get_icon_color(self): #vers 2
+        """Get icon colour from current theme — returns text_primary."""
         if APPSETTINGS_AVAILABLE and self.app_settings:
             colors = self.app_settings.get_theme_colors()
-            return colors.get('text_primary', '#ffffff')
-        return '#ffffff'
+            return colors.get('text_primary', '#000000')
+        return '#000000'
 
 
     def _apply_fonts_to_widgets(self): #vers 1
@@ -3527,6 +5940,473 @@ class COLWorkshop(QWidget): #vers 3
             QMessageBox.critical(self, "Error", f"Failed to open file:\n{str(e)}")
 
 
+
+    def _toggle_col_view(self): #vers 1
+        """Toggle between detail table and compact thumbnail+name list."""
+        if self._col_view_mode == 'list':
+            self._col_view_mode = 'detail'
+            self.collision_list.setVisible(False)
+            self.col_compact_list.setVisible(True)
+            self.col_view_toggle_btn.setText("[=]")
+            self.col_view_toggle_btn.setToolTip("Switch to detail table view")
+            if (self.col_compact_list.rowCount() == 0
+                    and self.collision_list.rowCount() > 0
+                    and self.current_col_file):
+                self._populate_compact_col_list()
+        else:
+            self._col_view_mode = 'list'
+            self.col_compact_list.setVisible(False)
+            self.collision_list.setVisible(True)
+            self.col_view_toggle_btn.setText("[T]")
+            self.col_view_toggle_btn.setToolTip("Switch to compact thumbnail view")
+
+    def _populate_compact_col_list(self): #vers 1
+        """Fill compact two-column list (icon + name/version/counts)."""
+        try:
+            self.col_compact_list.setRowCount(0)
+            models = getattr(self.current_col_file, 'models', [])
+            for i, model in enumerate(models):
+                self.col_compact_list.insertRow(i)
+
+                # Col 0: real collision thumbnail
+                icon_item = QTableWidgetItem()
+                pm = self._generate_collision_thumbnail(model, 64, 64,
+                                yaw=self._thumb_yaw, pitch=self._thumb_pitch)
+                icon_item.setData(Qt.ItemDataRole.DecorationRole, pm)
+                self.col_compact_list.setItem(i, 0, icon_item)
+
+                # Col 1: name + stats
+                name = getattr(model, 'name', '') or f'model_{i}'
+                ver  = getattr(model, 'version', None)
+                ver_str = ver.name if hasattr(ver, 'name') else str(ver) if ver else '?'
+                spheres = len(getattr(model, 'spheres',  []))
+                boxes   = len(getattr(model, 'boxes',    []))
+                verts   = len(getattr(model, 'vertices', []))
+                faces   = len(getattr(model, 'faces',    []))
+
+                line1 = name
+                line2 = "Version: " + ver_str
+                line3 = "Spheres: " + str(spheres) + "  Boxes: " + str(boxes)
+                line4 = "Verts: "   + str(verts)   + "  Faces: " + str(faces)
+                details = line1 + "\n" + line2 + "\n" + line3 + "\n" + line4
+
+                det_item = QTableWidgetItem(details)
+                det_item.setToolTip(details)
+                self.col_compact_list.setItem(i, 1, det_item)
+                self.col_compact_list.setRowHeight(i, 72)
+
+            self.col_compact_list.setColumnWidth(0, 72)
+        except Exception as e:
+            print("_populate_compact_col_list error: " + str(e))
+
+    def _on_compact_col_selected(self): #vers 3
+        """Handle compact [=] list selection."""
+        try:
+            rows = self.col_compact_list.selectionModel().selectedRows()
+            if rows:
+                self._select_model_by_row(rows[0].row())
+        except Exception as e:
+            print("_on_compact_col_selected error: " + str(e))
+
+    def _push_undo(self, model_index, description=""): #vers 1
+        """Deep-copy model[model_index] onto undo stack before any edit."""
+        import copy
+        if not self.current_col_file:
+            return
+        models = getattr(self.current_col_file, 'models', [])
+        if model_index < 0 or model_index >= len(models):
+            return
+        self.undo_stack.append({
+            'description': description,
+            'model_index': model_index,
+            'model_data':  copy.deepcopy(models[model_index]),
+        })
+        if len(self.undo_stack) > 50:
+            self.undo_stack.pop(0)
+        if hasattr(self, 'undo_col_btn'):
+            self.undo_col_btn.setEnabled(True)
+        # Also enable the paint toolbar undo button if paint mode active
+        if hasattr(self, 'paint_undo_btn') and getattr(self, 'paint_toolbar', None)                 and self.paint_toolbar.isVisible():
+            self.paint_undo_btn.setEnabled(True)
+
+    def _undo_last_action(self): #vers 2
+        """Restore the last deep-copied model from the undo stack."""
+        try:
+            if not self.undo_stack:
+                return
+            entry = self.undo_stack.pop()
+            idx   = entry['model_index']
+            saved = entry['model_data']
+            desc  = entry.get('description', '')
+            if self.current_col_file:
+                models = getattr(self.current_col_file, 'models', [])
+                if idx < len(models):
+                    models[idx] = saved
+                    self._populate_collision_list()
+                    self._populate_compact_col_list()
+                    if hasattr(self, 'preview_widget'):
+                        self.preview_widget.set_current_model(saved, idx)
+            if hasattr(self, 'undo_col_btn'):
+                self.undo_col_btn.setEnabled(bool(self.undo_stack))
+            msg = f"Undo: {desc}" if desc else "Undo applied"
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(msg)
+        except Exception as e:
+            print(f"Undo error: {e}")
+
+    # ── Selection helpers ─────────────────────────────────────────────────
+
+    def _select_all_models(self): #vers 1
+        """Select all entries in the active list (Ctrl+A)."""
+        lw = (self.col_compact_list if getattr(self,'_col_view_mode','detail')=='detail'
+              else self.collision_list)
+        lw.selectAll()
+
+    def _invert_selection(self): #vers 1
+        """Invert the current selection."""
+        lw = (self.col_compact_list if getattr(self,'_col_view_mode','detail')=='detail'
+              else self.collision_list)
+        selected = {i.row() for i in lw.selectionModel().selectedRows()}
+        lw.clearSelection()
+        lw.setSelectionMode(lw.selectionMode())  # keep mode
+        for r in range(lw.rowCount()):
+            if r not in selected:
+                lw.selectRow(r)  # QTableWidget multi-select needs blockSignals trick
+        # Proper invert via selection model
+        from PyQt6.QtCore import QItemSelection, QItemSelectionModel
+        sel_model = lw.selectionModel()
+        full = QItemSelection()
+        full.select(lw.model().index(0, 0),
+                    lw.model().index(lw.rowCount()-1, lw.columnCount()-1))
+        sel_model.select(full, QItemSelectionModel.SelectionFlag.Toggle)
+
+    # ── Sort ──────────────────────────────────────────────────────────────
+
+    def _sort_models(self, key: str = 'name'): #vers 1
+        """Sort collision models in place by key: 'name','version','faces','boxes','spheres','vertices'."""
+        if not self.current_col_file: return
+        models = getattr(self.current_col_file, 'models', [])
+        if not models: return
+
+        def sort_key(m):
+            if key == 'name':     return (getattr(m,'name','') or '').lower()
+            if key == 'version':  return getattr(getattr(m,'version',None),'value',0)
+            if key == 'faces':    return len(getattr(m,'faces',[]))
+            if key == 'boxes':    return len(getattr(m,'boxes',[]))
+            if key == 'spheres':  return len(getattr(m,'spheres',[]))
+            if key == 'vertices': return len(getattr(m,'vertices',[]))
+            return 0
+
+        models.sort(key=sort_key)
+        self._populate_collision_list()
+        self._populate_compact_col_list()
+        self._set_status(f"Sorted by {key}.")
+
+    def _show_sort_menu(self): #vers 1
+        """Show sort options popup."""
+        from PyQt6.QtWidgets import QMenu
+        m = QMenu(self)
+        m.addAction("Sort by Name (A→Z)",     lambda: self._sort_models('name'))
+        m.addAction("Sort by Version",         lambda: self._sort_models('version'))
+        m.addAction("Sort by Faces (most)",    lambda: self._sort_models_desc('faces'))
+        m.addAction("Sort by Boxes (most)",    lambda: self._sort_models_desc('boxes'))
+        m.addAction("Sort by Spheres (most)",  lambda: self._sort_models_desc('spheres'))
+        m.addAction("Sort by Vertices (most)", lambda: self._sort_models_desc('vertices'))
+        m.exec(self.cursor().pos())
+
+    def _sort_models_desc(self, key: str): #vers 1
+        """Sort descending (largest first)."""
+        if not self.current_col_file: return
+        models = getattr(self.current_col_file, 'models', [])
+        def k(m):
+            return len(getattr(m, key, []))
+        models.sort(key=k, reverse=True)
+        self._populate_collision_list()
+        self._populate_compact_col_list()
+        self._set_status(f"Sorted by {key} (descending).")
+
+    # ── Pin / lock entries from editing ───────────────────────────────────
+
+    def _toggle_pin_selected(self): #vers 1
+        """Toggle pin (edit-lock) on selected models. Pinned models can't be deleted/renamed."""
+        if not self.current_col_file: return
+        lw = (self.col_compact_list if getattr(self,'_col_view_mode','detail')=='detail'
+              else self.collision_list)
+        indices = sorted({i.row() for i in lw.selectionModel().selectedRows()})
+        cr = lw.currentRow()
+        if 0 <= cr: indices = sorted(set(indices) | {cr})
+        models = self.current_col_file.models
+
+        if not hasattr(self, '_pinned_models'):
+            self._pinned_models = set()
+
+        pinned_now = 0
+        for idx in indices:
+            if idx < len(models):
+                name = getattr(models[idx], 'name', f'model_{idx}')
+                if idx in self._pinned_models:
+                    self._pinned_models.discard(idx)
+                else:
+                    self._pinned_models.add(idx)
+                    pinned_now += 1
+
+        # Refresh both lists to show pin state
+        self._populate_collision_list()
+        self._populate_compact_col_list()
+        if pinned_now:
+            self._set_status(f"Pinned {pinned_now} model(s) — protected from editing.")
+        else:
+            self._set_status("Unpinned selected model(s).")
+
+    def _is_model_pinned(self, row: int) -> bool: #vers 1
+        """Return True if model at row is pinned."""
+        return row in getattr(self, '_pinned_models', set())
+
+    # ── IDE-linked operations ─────────────────────────────────────────────
+
+    def _import_via_ide(self): #vers 1
+        """Import COL entries referenced by the currently loaded IDE file."""
+        from PyQt6.QtWidgets import QMessageBox, QFileDialog
+        # Try to get IDE file path from main window DAT browser
+        ide_path = None
+        if self.main_window and hasattr(self.main_window, 'current_ide_path'):
+            ide_path = self.main_window.current_ide_path
+
+        if not ide_path:
+            ide_path, _ = QFileDialog.getOpenFileName(
+                self, "Select IDE File", "",
+                "IDE Files (*.ide);;All Files (*)")
+        if not ide_path:
+            return
+
+        try:
+            # Parse IDE to get model names
+            names = []
+            with open(ide_path, 'r', errors='ignore') as f:
+                in_objs = False
+                for line in f:
+                    line = line.strip()
+                    if line.lower() in ('objs', 'tobj', 'anim'):
+                        in_objs = True; continue
+                    if line == 'end':
+                        in_objs = False; continue
+                    if in_objs and line and not line.startswith('#'):
+                        parts = line.split(',')
+                        if len(parts) >= 2:
+                            names.append(parts[1].strip().lower())
+
+            if not names:
+                QMessageBox.information(self, "IDE Import",
+                    "No model names found in IDE file.")
+                return
+
+            # Find matching models in the current COL file
+            if not self.current_col_file:
+                QMessageBox.warning(self, "No COL File", "Load a COL file first.")
+                return
+
+            models = self.current_col_file.models
+            matched = [m for m in models
+                       if (getattr(m,'name','') or '').lower() in names]
+
+            QMessageBox.information(self, "IDE Import",
+                f"IDE has {len(names)} model names.\n"
+                f"{len(matched)} matching collision models found in current COL file.\n\n"
+                f"Showing matched models in list.")
+
+            # Select matched rows
+            lw = (self.col_compact_list if getattr(self,'_col_view_mode','detail')=='detail'
+                  else self.collision_list)
+            lw.clearSelection()
+            name_set = {(getattr(m,'name','') or '').lower() for m in matched}
+            for i, model in enumerate(models):
+                if (getattr(model,'name','') or '').lower() in name_set:
+                    lw.selectRow(i)
+
+            self._set_status(f"IDE: {len(matched)}/{len(names)} models matched.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "IDE Import Error", str(e))
+
+    def _remove_via_ide(self): #vers 1
+        """Remove collision models NOT referenced by an IDE file (cleanup)."""
+        from PyQt6.QtWidgets import QMessageBox, QFileDialog
+        if not self.current_col_file:
+            QMessageBox.warning(self, "No COL File", "Load a COL file first.")
+            return
+
+        ide_path, _ = QFileDialog.getOpenFileName(
+            self, "Select IDE to remove unref'd COL models", "",
+            "IDE Files (*.ide);;All Files (*)")
+        if not ide_path:
+            return
+
+        try:
+            names = set()
+            with open(ide_path, 'r', errors='ignore') as f:
+                in_objs = False
+                for line in f:
+                    line = line.strip()
+                    if line.lower() in ('objs', 'tobj', 'anim'):
+                        in_objs = True; continue
+                    if line == 'end':
+                        in_objs = False; continue
+                    if in_objs and line and not line.startswith('#'):
+                        parts = line.split(',')
+                        if len(parts) >= 2:
+                            names.add(parts[1].strip().lower())
+
+            models = self.current_col_file.models
+            to_remove = [i for i, m in enumerate(models)
+                         if (getattr(m,'name','') or '').lower() not in names]
+
+            if not to_remove:
+                QMessageBox.information(self, "Remove via IDE",
+                    "All COL models are referenced by the IDE — nothing to remove.")
+                return
+
+            example_names = [models[i].name for i in to_remove[:5]]
+            reply = QMessageBox.question(self, "Remove via IDE",
+                f"Remove {len(to_remove)} unreferenced model(s)?\n\n"
+                f"Examples: {', '.join(example_names)}"
+                + (" ..." if len(to_remove) > 5 else ""),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+            for i in sorted(to_remove, reverse=True):
+                del models[i]
+            self._populate_collision_list()
+            self._populate_compact_col_list()
+            self._set_status(f"Removed {len(to_remove)} unreferenced model(s).")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Remove via IDE Error", str(e))
+
+    def _export_via_ide(self): #vers 1
+        """Export only COL models referenced by an IDE file."""
+        from PyQt6.QtWidgets import QMessageBox, QFileDialog
+        import os
+        from apps.methods.col_workshop_writer import save_col_file
+
+        if not self.current_col_file:
+            QMessageBox.warning(self, "No COL File", "Load a COL file first.")
+            return
+
+        ide_path, _ = QFileDialog.getOpenFileName(
+            self, "Select IDE File for Export", "",
+            "IDE Files (*.ide);;All Files (*)")
+        if not ide_path:
+            return
+
+        out_path, _ = QFileDialog.getSaveFileName(
+            self, "Save filtered COL archive", "",
+            "COL Files (*.col);;All Files (*)")
+        if not out_path:
+            return
+
+        try:
+            names = set()
+            with open(ide_path, 'r', errors='ignore') as f:
+                in_objs = False
+                for line in f:
+                    line = line.strip()
+                    if line.lower() in ('objs', 'tobj', 'anim'):
+                        in_objs = True; continue
+                    if line == 'end':
+                        in_objs = False; continue
+                    if in_objs and line and not line.startswith('#'):
+                        parts = line.split(',')
+                        if len(parts) >= 2:
+                            names.add(parts[1].strip().lower())
+
+            matched = [m for m in self.current_col_file.models
+                       if (getattr(m,'name','') or '').lower() in names]
+
+            if not matched:
+                QMessageBox.warning(self, "No Matches",
+                    "No COL models matched the IDE entries.")
+                return
+
+            if save_col_file(matched, out_path):
+                msg = (f"Exported {len(matched)} IDE-referenced model(s) to:\n"
+                       f"{os.path.basename(out_path)}")
+                self._set_status(msg)
+                QMessageBox.information(self, "Export via IDE", msg)
+            else:
+                QMessageBox.warning(self, "Export Failed", "Could not write output file.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Export via IDE Error", str(e))
+
+    def _export_col_data(self): #vers 2
+        """Extract/export selected COL models (or all) to individual .col files."""
+        import os
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+        from apps.methods.col_workshop_writer import save_col_file
+
+        if not self.current_col_file:
+            QMessageBox.warning(self, "Export", "No COL file loaded.")
+            return
+        models = getattr(self.current_col_file, 'models', [])
+        if not models:
+            QMessageBox.warning(self, "Export", "No collision models to export.")
+            return
+
+        # Determine selection from the VISIBLE list
+        if getattr(self, '_col_view_mode', 'detail') == 'detail':
+            lw = getattr(self, 'col_compact_list', None)
+        else:
+            lw = getattr(self, 'collision_list', None)
+
+        indices = set()
+        if lw is not None:
+            for idx in lw.selectionModel().selectedRows():
+                if idx.row() < len(models):
+                    indices.add(idx.row())
+            # Also include currentRow() in case selectedRows() missed it
+            cr = lw.currentRow()
+            if 0 <= cr < len(models):
+                indices.add(cr)
+        if not indices:
+            indices = set(range(len(models)))
+        indices = sorted(indices)
+
+        if len(indices) == 1:
+            model = models[indices[0]]
+            safe = (getattr(model,'name','model') or 'model').replace(' ','_')
+            out, _ = QFileDialog.getSaveFileName(
+                self, "Export COL Model", safe + '.col', "COL Files (*.col);;All Files (*)")
+            if not out: return
+            ok = save_col_file([model], out)
+            msg = f"Exported {os.path.basename(out)}" if ok else "Export failed."
+            ok_count = 1 if ok else 0
+        else:
+            folder = QFileDialog.getExistingDirectory(
+                self, f"Extract {len(indices)} COL models to folder")
+            if not folder: return
+            ok_count = 0
+            for i in indices:
+                model = models[i]
+                safe = (getattr(model,'name',f'model_{i}') or f'model_{i}').replace(' ','_')
+                out  = os.path.join(folder, safe.lower() + '.col')
+                base, ext = os.path.splitext(out)
+                n = 1
+                while os.path.exists(out):
+                    out = f"{base}_{n}{ext}"; n += 1
+                if save_col_file([model], out):
+                    ok_count += 1
+            msg = f"Extracted {ok_count} of {len(indices)} model(s) to {folder}"
+            ok  = ok_count > 0
+
+        self._set_status(msg)
+        if self.main_window and hasattr(self.main_window,'log_message'):
+            self.main_window.log_message(msg)
+        if ok:
+            QMessageBox.information(self, "Extract Complete", msg)
+        else:
+            QMessageBox.warning(self, "Extract Failed", msg)
+
     def _save_file(self): #vers 1
         """Save current COL file"""
         try:
@@ -3539,17 +6419,27 @@ class COLWorkshop(QWidget): #vers 3
                 self._save_file_as()
                 return
 
-            # Save to current path
-            if self.current_col_file.save():
+            # Save to current path — write raw_data back (COLFile has no serialiser yet)
+            raw = getattr(self.current_col_file, 'raw_data', None)
+            if not raw:
+                QMessageBox.warning(self, "Save",
+                    "No raw COL data available to save.\n"
+                    "The file can only be saved if it was loaded from disk.")
+                return
+            try:
+                with open(self.current_file_path, 'wb') as f:
+                    f.write(raw)
                 if self.main_window and hasattr(self.main_window, 'log_message'):
-                    self.main_window.log_message(f"Saved COL: {os.path.basename(self.current_file_path)}")
-
-                QMessageBox.information(self, "Save", f"COL file saved successfully:\n{os.path.basename(self.current_file_path)}")
-                print(f"Saved COL file: {self.current_file_path}")
-            else:
-                error_msg = self.current_col_file.save_error if hasattr(self.current_col_file, 'save_error') else "Unknown error"
-                QMessageBox.critical(self, "Save Error", f"Failed to save COL file:\n{error_msg}")
-                print(f"Save failed: {error_msg}")
+                    self.main_window.log_message(
+                        f"Saved COL: {os.path.basename(self.current_file_path)}")
+                QMessageBox.information(self, "Save",
+                    f"Saved:\n{os.path.basename(self.current_file_path)}")
+                if hasattr(self, 'save_col_btn'):
+                    self.save_col_btn.setEnabled(True)
+                if hasattr(self, 'save_btn'):
+                    self.save_btn.setEnabled(True)
+            except Exception as write_err:
+                QMessageBox.critical(self, "Save Error", str(write_err))
 
         except Exception as e:
             print(f"Error saving file: {str(e)}")
@@ -3631,9 +6521,35 @@ class COLWorkshop(QWidget): #vers 3
             #if not col_file:  # Just check if None
             #    return False
 
-            col_file = COLFile(debug=True)
-            if not col_file.load(file_path):
-                return False
+            # Large file warning + progress feedback
+            import os as _os
+            _fsize = _os.path.getsize(file_path)
+            _fsize_mb = _fsize / 1024 / 1024
+            if _fsize > 512 * 1024 * 1024:  # > 512 MB
+                from PyQt6.QtWidgets import QMessageBox
+                reply = QMessageBox.question(
+                    self, "Large COL File",
+                    f"{os.path.basename(file_path)} is {_fsize_mb:.0f} MB.\n\n"
+                    "Loading uses memory-mapped I/O to minimise RAM usage, "
+                    "but parsing may take 30–60 seconds for very large archives.\n\n"
+                    "Continue?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if reply != QMessageBox.StandardButton.Yes:
+                    return False
+
+            # Show busy cursor for large files
+            if _fsize > 32 * 1024 * 1024:
+                from PyQt6.QtWidgets import QApplication
+                from PyQt6.QtCore import Qt
+                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+            col_file = COLFile(debug=(_fsize_mb > 64))
+            try:
+                if not col_file.load(file_path):
+                    return False
+            finally:
+                if _fsize > 32 * 1024 * 1024:
+                    QApplication.restoreOverrideCursor()
 
             # Store loaded file
             self.current_col_file = col_file
@@ -3644,22 +6560,33 @@ class COLWorkshop(QWidget): #vers 3
             version_str = f"COL ({model_count} models)"
             self.setWindowTitle(f"{App_name} - {os.path.basename(file_path)} - {version_str}")
 
-            # Populate UI
-            #self._populate_collision_list()  # ADD THIS LINE
-            setup_col_table_structure(self)
-            populate_col_table(self, col_file)
+            # Populate UI — compact view is default, also populate detail table
+            self._populate_compact_col_list()
+            self._populate_collision_list()
 
             # Select first model by default
-            if self.collision_list.rowCount() > 0:
-                self.collision_list.selectRow(0)
-                self._on_collision_selected()
+            active_list = (self.col_compact_list
+                          if self._col_view_mode == 'detail'
+                          else self.collision_list)
+            if active_list.rowCount() > 0:
+                active_list.selectRow(0)
+                self._select_model_by_row(0)
 
 
-            # Enable buttons
-            if hasattr(self, 'save_btn'):
-                self.save_btn.setEnabled(True)
-            if hasattr(self, 'analyze_btn'):
-                self.analyze_btn.setEnabled(True)
+
+            # Enable all buttons that require a loaded file
+            # Transform buttons: use helper to cover BOTH icon and text panels
+            self._set_col_buttons_enabled(True)
+            for btn_name in [
+                'save_btn', 'save_col_btn', 'saveall_btn',
+                'export_col_btn', 'export_all_btn', 'export_btn',
+                'import_btn', 'undo_btn', 'undo_col_btn',
+                'create_surface_btn', 'paste_btn',
+            ]:
+                btn = getattr(self, btn_name, None)
+                if btn:
+                    btn.setEnabled(True)
+
 
             if self.main_window and hasattr(self.main_window, 'log_message'):
                 self.main_window.log_message(f"✅ Loaded COL: {os.path.basename(file_path)} ({model_count} models)")
@@ -3673,17 +6600,175 @@ class COLWorkshop(QWidget): #vers 3
             return False
 
 
-    def load_from_img_archive(self, img_path): #vers 1
-        """Load COL files from IMG archive"""
+
+    def _find_all_paint_btns(self): #vers 1
+        """Return all paint buttons from both icon and text panels."""
+        btns = []
+        b = getattr(self, 'paint_btn', None)
+        if b: btns.append(b)
+        # Walk icon panel for any other paint_btn that was overwritten
+        ip = getattr(self, '_transform_icon_panel_ref', None)
+        if ip:
+            from PyQt6.QtWidgets import QPushButton
+            for child in ip.findChildren(QPushButton):
+                if child.toolTip() and 'paint' in child.toolTip().lower()                    and child not in btns:
+                    btns.append(child)
+        return btns
+
+    def _set_col_buttons_enabled(self, enabled: bool): #vers 1
+        """Enable/disable all transform buttons in BOTH icon and text panels.
+        The text panel overwrites self.X refs, so when the icon panel is visible
+        (narrow mode) those refs point to hidden buttons. Walk the icon panel too.
+        """
+        col_btn_attrs = [
+            'flip_vert_btn', 'flip_horz_btn', 'rotate_cw_btn', 'rotate_ccw_btn',
+            'analyze_btn', 'copy_btn', 'delete_surface_btn', 'duplicate_surface_btn',
+            'paint_btn', 'surface_type_btn', 'surface_edit_btn', 'build_from_txd_btn',
+            'show_shadow_btn', 'create_shadow_btn', 'remove_shadow_btn',
+            'compress_btn', 'uncompress_btn', 'switch_btn', 'convert_btn',
+        ]
+        for attr in col_btn_attrs:
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                btn.setEnabled(enabled)
+        icon_panel = getattr(self, '_transform_icon_panel_ref', None)
+        if icon_panel:
+            from PyQt6.QtWidgets import QPushButton
+            for btn in icon_panel.findChildren(QPushButton):
+                btn.setEnabled(enabled)
+
+    def _pick_col_from_current_img(self): #vers 1
+        """Pick a COL entry from the IMG currently loaded in IMG Factory and open it."""
         try:
-            # TODO: Implement IMG archive COL loading
-            # This would extract COL files from the IMG and populate the list
+            # Get the main IMG Factory window and its loaded IMG
+            mw = self.main_window
+            img = getattr(mw, 'current_img', None) if mw else None
 
+            if not img or not getattr(img, 'entries', None):
+                QMessageBox.information(self, "No IMG Loaded",
+                    "No IMG archive is currently open in IMG Factory.\n"
+                    "Open an IMG file first, then use From IMG.")
+                return
+
+            col_entries = [e for e in img.entries
+                           if getattr(e, 'name', '').lower().endswith('.col')]
+
+            if not col_entries:
+                QMessageBox.information(self, "No COL Entries",
+                    f"No .col entries found in {os.path.basename(img.file_path)}.")
+                return
+
+            # Show a picker dialog
+            from PyQt6.QtWidgets import QDialog, QListWidget, QDialogButtonBox, QVBoxLayout, QLabel
+            dlg = QDialog(self)
+            dlg.setWindowTitle(f"Pick COL — {os.path.basename(img.file_path)}")
+            dlg.setMinimumSize(320, 400)
+            v = QVBoxLayout(dlg)
+            v.addWidget(QLabel(f"{len(col_entries)} COL entries in {os.path.basename(img.file_path)}:"))
+            lst = QListWidget()
+            for e in col_entries:
+                lst.addItem(e.name)
+            lst.setCurrentRow(0)
+            v.addWidget(lst)
+            btns = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Open |
+                QDialogButtonBox.StandardButton.Cancel)
+            btns.accepted.connect(dlg.accept)
+            btns.rejected.connect(dlg.reject)
+            v.addWidget(btns)
+            lst.doubleClicked.connect(dlg.accept)
+
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            row = lst.currentRow()
+            if row < 0:
+                return
+
+            entry = col_entries[row]
+            self._open_col_from_img_entry(img, entry)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to pick COL from IMG:\n{e}")
+
+    def _open_col_from_img_entry(self, img, entry): #vers 1
+        """Extract a COL entry from an IMGFile and load it into the workshop."""
+        try:
+            import tempfile
+            data = img.read_entry_data(entry)
+            if not data:
+                QMessageBox.warning(self, "Extract Failed",
+                    f"Could not extract {entry.name} from IMG.")
+                return
+
+            stem = os.path.splitext(entry.name)[0]
+            tmp = tempfile.NamedTemporaryFile(
+                delete=False, suffix='.col', prefix=stem + '_')
+            tmp.write(data)
+            tmp.close()
+
+            self.open_col_file(tmp.name)
+            # Retitle with original name
+            self.setWindowTitle(
+                f"COL Workshop — {entry.name} (from {os.path.basename(img.file_path)})")
             if self.main_window and hasattr(self.main_window, 'log_message'):
-                self.main_window.log_message(f"Loading COL files from IMG: {os.path.basename(img_path)}")
+                self.main_window.log_message(
+                    f"COL Workshop: opened {entry.name} from {os.path.basename(img.file_path)}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open {entry.name}:\n{e}")
 
-            print(f"IMG archive COL loading - not yet implemented: {img_path}")
-            return False
+    def open_img_archive(self): #vers 1
+        """Open file dialog to select an IMG archive and load COL entries from it"""
+        try:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Open IMG Archive",
+                "",
+                "IMG Archives (*.img);;All Files (*)"
+            )
+            if file_path:
+                self.load_from_img_archive(file_path)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open IMG:\n{str(e)}")
+
+
+    def load_from_img_archive(self, img_path): #vers 2
+        """Load all COL entries from an IMG archive and populate the collision list"""
+        try:
+            from apps.methods.img_core_classes import IMGFile
+            from apps.methods.col_workshop_loader import COLFile
+
+            img = IMGFile(img_path)
+            img.open()
+            self.current_img = img
+
+            img_name = os.path.basename(img_path)
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(f"Scanning {img_name} for COL entries...")
+
+            col_entries = [e for e in img.entries
+                           if getattr(e, 'name', '').lower().endswith('.col')]
+
+            if not col_entries:
+                QMessageBox.information(self, "No COL Files",
+                    f"No .col entries found in {img_name}")
+                return False
+
+            # Populate the collision list widget with COL entries
+            if hasattr(self, 'collision_list'):
+                self.collision_list.clear()
+                for entry in col_entries:
+                    item = QListWidgetItem(entry.name)
+                    item.setData(Qt.ItemDataRole.UserRole, entry)
+                    self.collision_list.addItem(item)
+
+            count = len(col_entries)
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(
+                    f"Loaded {count} COL entr{'ies' if count != 1 else 'y'} from {img_name}")
+
+            self.setWindowTitle(f"COL Workshop: {img_name}")
+            return True
 
         except Exception as e:
             print(f"Error loading from IMG archive: {str(e)}")
@@ -3747,88 +6832,712 @@ class COLWorkshop(QWidget): #vers 3
             return None
 
 
-    def _on_collision_selected(self): #vers 6
-        """Handle COL model selection from table"""
+
+    def _paint_model_onto(self, painter, model, W, H,
+                          yaw, pitch, zoom, pan_x, pan_y,
+                          flip_h, flip_v,
+                          show_spheres, show_boxes, show_mesh,
+                          backface, render_style, bg_color,
+                          gizmo_mode='translate', viewport=None): #vers 4
+        """Paint COL model: grid → geometry → gizmo → HUD.
+        Uses viewport's own projection when available (consistent coords)."""
+        from PyQt6.QtGui import QPen, QBrush, QColor, QFont, QPolygonF
+        from PyQt6.QtCore import QPointF
+        import math
+
+        # ── Use viewport's projection if available ────────────────────────
+        if viewport is not None:
+            vp = viewport
+        else:
+            vp = getattr(self, 'preview_widget', None)
+
+        if vp is not None:
+            scale, ox, oy = vp._get_scale_origin()
+            def proj3(x,y,z): return vp._proj(x,y,z)
+            def to_screen(x,y,z):
+                px,py = proj3(x,y,z)
+                return px*scale+ox, py*scale+oy
+        else:
+            # Fallback standalone projection
+            yr = math.radians(yaw);   cy, sy = math.cos(yr), math.sin(yr)
+            pr = math.radians(pitch); cp, sp = math.cos(pr), math.sin(pr)
+            def proj3(x,y,z):
+                rx=x*cy-y*sy; ry=x*sy+y*cy
+                return rx, ry*cp-z*sp
+            scale, ox, oy, _ = self._project_model_2d(model, W, H, padding=20,
+                                                        yaw=yaw, pitch=pitch)
+            def to_screen(x,y,z):
+                px,py=proj3(x,y,z); return px*scale+ox, py*scale+oy
+
+        # ── Model geometry extent for grid sizing ─────────────────────────
+        verts = getattr(model, 'vertices', [])
+        if verts:
+            xs=[v.x for v in verts]; ys=[v.y for v in verts]; zs=[v.z for v in verts]
+            extent = max(max(abs(x) for x in xs+ys+zs), 1.0)
+        else:
+            extent = 5.0
+
+        # ── Reference grid (XY plane Z=0) ────────────────────────────────
+        raw_step = extent / 4.0
+        mag  = 10 ** math.floor(math.log10(max(raw_step, 0.001)))
+        step = round(raw_step / mag) * mag; step = max(step, 0.01)
+        half = math.ceil(extent / step + 1) * step
+        n    = int(half / step)
+
+        painter.setRenderHint(painter.renderHints().__class__.Antialiasing, False)
+        for i in range(-n, n+1):
+            v2 = i * step
+            col = QColor(75, 80, 105) if i == 0 else QColor(50, 55, 72)
+            painter.setPen(QPen(col, 1))
+            x0,y0 = to_screen(-half, v2, 0); x1,y1 = to_screen(half, v2, 0)
+            painter.drawLine(int(x0),int(y0),int(x1),int(y1))
+            x0,y0 = to_screen(v2, -half, 0); x1,y1 = to_screen(v2, half, 0)
+            painter.drawLine(int(x0),int(y0),int(x1),int(y1))
+        painter.setRenderHint(painter.renderHints().__class__.Antialiasing, True)
+
+        # ── Model geometry (uses viewport's to_screen — zoom/pan consistent) ──
+        from PyQt6.QtGui import QPolygonF as _PF
+        from PyQt6.QtCore import QPointF as _P, QRectF as _R
+
+        def g3(obj):
+            """Get (x,y,z) from vertex, sphere centre, or tuple."""
+            if hasattr(obj,'x'):        return obj.x, obj.y, obj.z
+            if hasattr(obj,'position'): return obj.position.x,obj.position.y,obj.position.z
+            return float(obj[0]),float(obj[1]),float(obj[2])
+
+        # Mesh faces
+        if show_mesh:
+            _verts = getattr(model,'vertices',[])
+            _faces = getattr(model,'faces',[])
+            if _verts and _faces:
+                painter.setPen(QPen(QColor(120,180,120,180), 0.5))
+                painter.setBrush(QBrush(QColor(60,120,60,80)))
+                for face in _faces:
+                    idx = getattr(face,'vertex_indices',None)
+                    if idx is None:
+                        fa = getattr(face,'a',None)
+                        if fa is not None: idx=(fa,face.b,face.c)
+                    if idx and len(idx)==3:
+                        try:
+                            pts=[_P(*to_screen(*g3(_verts[i]))) for i in idx]
+                            painter.drawPolygon(_PF(pts))
+                        except (IndexError,AttributeError):
+                            pass
+
+        # Boxes
+        if show_boxes:
+            painter.setPen(QPen(QColor(220,180,50),1.5))
+            painter.setBrush(QBrush(QColor(220,180,50,40)))
+            for box in getattr(model,'boxes',[]):
+                bmin = box.min_point if hasattr(box,'min_point') else box.min
+                bmax = box.max_point if hasattr(box,'max_point') else box.max
+                x1,y1=to_screen(*g3(bmin)); x2,y2=to_screen(*g3(bmax))
+                painter.drawRect(_R(min(x1,x2),min(y1,y2),abs(x2-x1) or 2,abs(y2-y1) or 2))
+
+        # Spheres
+        if show_spheres:
+            painter.setPen(QPen(QColor(80,200,220),1.5))
+            painter.setBrush(QBrush(QColor(80,200,220,40)))
+            for sph in getattr(model,'spheres',[]):
+                cx,cy,cz=g3(sph.center) if hasattr(sph,'center') else (0,0,0)
+                r = sph.radius * scale
+                sx,sy=to_screen(cx,cy,cz)
+                painter.drawEllipse(_R(sx-r,sy-r,r*2 or 2,r*2 or 2))
+
+        # ── Gizmo at model centroid ───────────────────────────────────────
+        if verts:
+            cx3=sum(v.x for v in verts)/len(verts)
+            cy3=sum(v.y for v in verts)/len(verts)
+            cz3=sum(v.z for v in verts)/len(verts)
+        else:
+            cx3=cy3=cz3=0.0
+        gx, gy = to_screen(cx3, cy3, cz3)
+        arm = max(45, min(W,H) * 0.15)
+
+        axes = [((1,0,0),QColor(220,60,60),'X'),
+                ((0,1,0),QColor(60,200,60),'Y'),
+                ((0,0,1),QColor(60,120,220),'Z')]
+        sorted_axes = sorted(axes, key=lambda a: proj3(*a[0])[1], reverse=True)
+
+        if gizmo_mode == 'translate':
+            for (dx,dy,dz), color, label in sorted_axes:
+                px,py = proj3(dx,dy,dz)
+                tx,ty = gx+px*arm, gy+py*arm
+                painter.setPen(QPen(color,2))
+                painter.drawLine(int(gx),int(gy),int(tx),int(ty))
+                ang = math.atan2(ty-gy, tx-gx); aw,ah = 12,6
+                tip  = QPointF(tx,ty)
+                lpt  = QPointF(tx-aw*math.cos(ang)+ah*math.sin(ang), ty-aw*math.sin(ang)-ah*math.cos(ang))
+                rpt  = QPointF(tx-aw*math.cos(ang)-ah*math.sin(ang), ty-aw*math.sin(ang)+ah*math.cos(ang))
+                painter.setBrush(QBrush(color)); painter.setPen(QPen(color,1))
+                painter.drawPolygon(QPolygonF([tip,lpt,rpt]))
+                lx=tx+(9 if tx>=gx else -14); ly=ty+(5 if ty>=gy else -3)
+                painter.setFont(QFont('Arial',8,QFont.Weight.Bold))
+                painter.setPen(color); painter.drawText(int(lx),int(ly),label)
+        else:
+            # Rotate rings
+            N = 64
+            rings = [((1,0,0),(0,1,0),(0,0,1),QColor(220,60,60),'X'),
+                     ((0,1,0),(1,0,0),(0,0,1),QColor(60,200,60),'Y'),
+                     ((0,0,1),(1,0,0),(0,1,0),QColor(60,120,220),'Z')]
+            for (_,t1,t2,color,label) in sorted(rings, key=lambda r: proj3(*r[0])[1], reverse=True):
+                t1x,t1y,t1z=t1; t2x,t2y,t2z=t2
+                pts=[]
+                for i in range(N+1):
+                    a2=2*math.pi*i/N
+                    wx=math.cos(a2)*t1x+math.sin(a2)*t2x
+                    wy=math.cos(a2)*t1y+math.sin(a2)*t2y
+                    wz=math.cos(a2)*t1z+math.sin(a2)*t2z
+                    px2,py2=proj3(wx,wy,wz)
+                    pts.append(QPointF(gx+px2*arm, gy+py2*arm))
+                painter.setPen(QPen(color,2)); painter.setBrush(Qt.BrushStyle.NoBrush)
+                for i in range(len(pts)-1): painter.drawLine(pts[i],pts[i+1])
+                p45x=math.cos(math.pi/4)*t1x+math.sin(math.pi/4)*t2x
+                p45y=math.cos(math.pi/4)*t1y+math.sin(math.pi/4)*t2y
+                p45z=math.cos(math.pi/4)*t1z+math.sin(math.pi/4)*t2z
+                lp,lq=proj3(p45x,p45y,p45z)
+                painter.setFont(QFont('Arial',8,QFont.Weight.Bold)); painter.setPen(color)
+                painter.drawText(int(gx+lp*arm+(6 if lp>=0 else -12)),
+                                 int(gy+lq*arm+(5 if lq>=0 else -3)), label)
+
+        # Gizmo centre dot
+        painter.setBrush(QBrush(QColor(230,230,230))); painter.setPen(QPen(QColor(160,160,160),1))
+        painter.drawEllipse(int(gx)-5,int(gy)-5,10,10)
+
+        # ── Toggle button (top-right) ─────────────────────────────────────
+        bx,by,bw,bh = W-70,4,66,22
+        painter.setBrush(QBrush(QColor(40,44,62)))
+        painter.setPen(QPen(QColor(80,90,130),1))
+        painter.drawRoundedRect(bx,by,bw,bh,4,4)
+        painter.setFont(QFont('Arial',8)); painter.setPen(QColor(200,200,220))
+        lbl = '↕ Move [G]' if gizmo_mode=='translate' else '↻ Rotate [R]'
+        painter.drawText(bx+4,by+15,lbl)
+
+        # ── HUD ───────────────────────────────────────────────────────────
+        painter.setFont(QFont('Arial',8)); painter.setPen(QColor(200,200,200))
+        painter.drawText(6,14,getattr(model,'name',''))
+        y2=H-54
+        spheres=getattr(model,'spheres',[]); boxes=getattr(model,'boxes',[])
+        faces=getattr(model,'faces',[])
+        for col_c,txt in [(QColor(100,180,100),f"Mesh  F:{len(faces)} V:{len(verts)}"),
+                          (QColor(220,180,50), f"Boxes  {len(boxes)}"),
+                          (QColor(80,200,220), f"Spheres  {len(spheres)}")]:
+            painter.setPen(col_c); painter.drawText(6,y2,txt); y2+=14
+        painter.setPen(QColor(120,125,140)); painter.setFont(QFont('Arial',7))
+        painter.drawText(6,H-4,f"Y:{yaw:.0f}° P:{pitch:.0f}° Z:{zoom:.2f}x")
+        painter.drawText(W-68,H-4,f"grid {step:.3g}")
+
+
+    def _get_view_coords(self, model, view='xy'): #vers 1
+        """Get all geometry points projected to 2D using the selected view axis."""
+        def vc(v):
+            if hasattr(v, 'position'): return (v.position.x, v.position.y, v.position.z)
+            return (v.x, v.y, v.z)
+        def sc(s):
+            c = s.center
+            if hasattr(c, 'x'): return (c.x, c.y, c.z)
+            return (c[0], c[1], c[2])
+        def bc(b, which):
+            pt = b.min_point if which=='min' else b.max_point if hasattr(b,'min_point') else (b.min if which=='min' else b.max)
+            if hasattr(pt, 'x'): return (pt.x, pt.y, pt.z)
+            return (pt[0], pt[1], pt[2])
+
+        # Map view to (horiz_idx, vert_idx) in 3D coords
+        axes = {'xy': (0,1), 'xz': (0,2), 'yz': (1,2)}
+        hi, vi = axes.get(view, (0,1))
+
+        pts = []
+        for s in getattr(model, 'spheres', []):
+            x,y,z = sc(s); r = s.radius
+            coords = (x,y,z); px,py = coords[hi], coords[vi]
+            pts += [(px-r,py-r),(px+r,py+r)]
+        for b in getattr(model, 'boxes', []):
+            mn = bc(b,'min'); mx = bc(b,'max')
+            pts += [(mn[hi],mn[vi]),(mx[hi],mx[vi])]
+        for v in getattr(model, 'vertices', []):
+            x,y,z = vc(v)
+            coords = (x,y,z)
+            pts.append((coords[hi], coords[vi]))
+        return pts
+
+    def _project_model_2d(self, model, width, height, padding=8,
+                          yaw=0.0, pitch=0.0,
+                          flip_h=False, flip_v=False): #vers 3
+        """Project COL model geometry to 2D canvas using yaw/pitch rotation."""
+        import math
+        def _rot(pts3):
+            result = []
+            yr = math.radians(yaw)
+            pr = math.radians(pitch)
+            cy, sy = math.cos(yr), math.sin(yr)
+            cp, sp = math.cos(pr), math.sin(pr)
+            for x, y, z in pts3:
+                # yaw around Z axis
+                rx = x*cy - y*sy
+                ry = x*sy + y*cy
+                rz = z
+                # pitch around X axis
+                rx2 = rx
+                ry2 = ry*cp - rz*sp
+                rz2 = ry*sp + rz*cp
+                result.append((rx2, ry2))  # project onto screen plane
+            return result
+
+        def _pts3(model):
+            def vc(v):
+                if hasattr(v,'position'): return (v.position.x,v.position.y,v.position.z)
+                return (v.x,v.y,v.z)
+            def sc(s):
+                c = s.center
+                if hasattr(c,'x'): return (c.x,c.y,c.z)
+                return (c[0],c[1],c[2])
+            def bc(b, mn):
+                pt = (b.min_point if mn else b.max_point) if hasattr(b,'min_point') else (b.min if mn else b.max)
+                if hasattr(pt,'x'): return (pt.x,pt.y,pt.z)
+                return (pt[0],pt[1],pt[2])
+            pts = []
+            for s in getattr(model,'spheres',[]): x,y,z=sc(s); r=s.radius; pts+=[(x-r,y-r,z-r),(x+r,y+r,z+r)]
+            for b in getattr(model,'boxes',  []): pts+=[bc(b,True),bc(b,False)]
+            for v in getattr(model,'vertices',[]): pts.append(vc(v))
+            return pts
+
+        pts_3d = _pts3(model)
+        pts_2d = _rot(pts_3d) if pts_3d else []
+        if not pts_2d:
+            return 1.0, width//2, height//2, []
+        xs = [p[0] for p in pts_2d]
+        ys = [p[1] for p in pts_2d]
+        mn_x, mx_x = min(xs), max(xs)
+        mn_y, mx_y = min(ys), max(ys)
+        rng_x = mx_x - mn_x or 1.0
+        rng_y = mx_y - mn_y or 1.0
+        scale = min((width - padding*2) / rng_x, (height - padding*2) / rng_y)
+        cx = (mn_x + mx_x) / 2
+        cy = (mn_y + mx_y) / 2
+        ox = width  / 2 - cx * scale
+        oy = height / 2 - cy * scale
+
+        result = []
+        for px, py in pts_2d:
+            sx = px * scale + ox
+            sy = py * scale + oy
+            if flip_h: sx = width - sx
+            if flip_v: sy = height - sy
+            result.append((sx, sy))
+        return scale, ox, oy, result
+
+    def _draw_col_model(self, painter, model, width, height, padding=4,
+                       yaw=0.0, pitch=0.0,
+                       flip_h=False, flip_v=False): #vers 3
+        """Draw COL model onto a QPainter — used by both thumbnail and preview."""
+        from PyQt6.QtGui import QPen, QBrush, QColor
+        from PyQt6.QtCore import QRectF, QPointF
+        import math
+
+        import math
+        scale, ox, oy, _ = self._project_model_2d(
+            model, width, height, padding,
+            yaw=yaw, pitch=pitch, flip_h=flip_h, flip_v=flip_v)
+
+        yr = math.radians(yaw);  cy, sy = math.cos(yr), math.sin(yr)
+        pr = math.radians(pitch); cp, sp = math.cos(pr), math.sin(pr)
+
+        def _to2d(x, y, z):
+            rx  = x*cy - y*sy
+            ry  = x*sy + y*cy
+            rx2 = rx
+            ry2 = ry*cp - z*sp
+            sx = rx2 * scale + ox
+            sy2 = ry2 * scale + oy
+            if flip_h: sx  = width  - sx
+            if flip_v: sy2 = height - sy2
+            return sx, sy2
+
+        def _get3(obj):
+            if hasattr(obj,'x'):        return obj.x, obj.y, obj.z
+            elif hasattr(obj,'position'): return obj.position.x, obj.position.y, obj.position.z
+            else: return float(obj[0]), float(obj[1]), float(obj[2])
+
+        def proj_pt(obj):
+            return _to2d(*_get3(obj))
+
+        def wx(v): return (width  - (v*scale+ox)) if flip_h else (v*scale+ox)
+        def wy(v): return (height - (v*scale+oy)) if flip_v else (v*scale+oy)
+
+        # Mesh faces — filled triangles (grey)
+        verts = getattr(model, 'vertices', [])
+        faces = getattr(model, 'faces', [])
+        if verts and faces:
+            painter.setPen(QPen(QColor(120, 180, 120, 180), 0.5))
+            painter.setBrush(QBrush(QColor(60, 120, 60, 80)))
+            from PyQt6.QtGui import QPolygonF
+            for face in faces:
+                idx = getattr(face, 'vertex_indices', None)
+                if idx is None:
+                    fa = getattr(face, 'a', None)
+                    if fa is not None:
+                        idx = (fa, face.b, face.c)
+                if idx and len(idx) == 3:
+                    try:
+                        p0x, p0y = proj_pt(verts[idx[0]])
+                        p1x, p1y = proj_pt(verts[idx[1]])
+                        p2x, p2y = proj_pt(verts[idx[2]])
+                        poly = QPolygonF([
+                            QPointF(p0x, p0y),
+                            QPointF(p1x, p1y),
+                            QPointF(p2x, p2y),
+                        ])
+                        painter.drawPolygon(poly)
+                    except (IndexError, AttributeError):
+                        pass
+
+        # Boxes — yellow outline
+        painter.setPen(QPen(QColor(220, 180, 50), max(1.0, scale * 0.05)))
+        painter.setBrush(QBrush(QColor(220, 180, 50, 40)))
+        for box in getattr(model, 'boxes', []):
+            bmin_obj = box.min_point if hasattr(box, 'min_point') else box.min
+            bmax_obj = box.max_point if hasattr(box, 'max_point') else box.max
+            x1, y1 = proj_pt(bmin_obj)
+            x2, y2 = proj_pt(bmax_obj)
+            painter.drawRect(QRectF(min(x1,x2), min(y1,y2),
+                                    abs(x2-x1) or 2, abs(y2-y1) or 2))
+
+        # Spheres — cyan outline
+        painter.setPen(QPen(QColor(80, 200, 220), max(1.0, scale * 0.05)))
+        painter.setBrush(QBrush(QColor(80, 200, 220, 40)))
+        for sph in getattr(model, 'spheres', []):
+            r = sph.radius * scale
+            cx, cy = proj_pt(sph.center)
+            painter.drawEllipse(QRectF(cx - r, cy - r, r * 2 or 2, r * 2 or 2))
+
+    def _generate_collision_thumbnail(self, model, width=64, height=64,
+                                      yaw=0.0, pitch=0.0): #vers 2
+        """Generate a small QPixmap thumbnail of a COL model."""
+        from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen
+        pixmap = QPixmap(width, height)
+        pixmap.fill(QColor(30, 30, 40))
+        has_data = (getattr(model, 'spheres', []) or
+                    getattr(model, 'boxes', []) or
+                    getattr(model, 'vertices', []))
+        if not has_data:
+            painter = QPainter(pixmap)
+            painter.setPen(QPen(QColor(80, 80, 80), 1))
+            painter.drawLine(4, 4, width-4, height-4)
+            painter.drawLine(width-4, 4, 4, height-4)
+            painter.end()
+            return pixmap
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._draw_col_model(painter, model, width, height, padding=4,
+                             yaw=yaw, pitch=pitch)
+        painter.end()
+        return pixmap
+
+    def _render_collision_preview(self, model, width=400, height=400,
+                                  yaw=0.0, pitch=0.0,
+                                  flip_h=False, flip_v=False): #vers 3
+        """Render a full-size QPixmap preview of a COL model.
+        yaw/pitch are Euler angles in degrees for free rotation.
+        """
+        from PyQt6.QtGui import QPixmap, QPainter, QColor, QFont
+        from PyQt6.QtCore import Qt
+        pixmap = QPixmap(width, height)
+        pixmap.fill(QColor(25, 25, 35))
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        has_data = (getattr(model, 'spheres', []) or
+                    getattr(model, 'boxes', []) or
+                    getattr(model, 'vertices', []))
+
+        if not has_data:
+            painter.setPen(QColor(120, 120, 120))
+            painter.setFont(QFont('Arial', 11))
+            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "No geometry data")
+            painter.end()
+            return pixmap
+
+        self._draw_col_model(painter, model, width, height, padding=20,
+                            yaw=yaw, pitch=pitch,
+                            flip_h=flip_h, flip_v=flip_v)
+
+        # Legend
+        painter.setFont(QFont('Arial', 8))
+        y = height - 52
+        for color, label in [
+            (QColor(60, 120, 60),   f"Mesh  F:{len(getattr(model,'faces',[]))} V:{len(getattr(model,'vertices',[]))}"),
+            (QColor(220, 180, 50),  f"Boxes  {len(getattr(model,'boxes',[]))}"),
+            (QColor(80, 200, 220),  f"Spheres  {len(getattr(model,'spheres',[]))}"),
+        ]:
+            painter.setPen(color)
+            painter.drawText(6, y, label)
+            y += 14
+
+        # Model name
+        name = getattr(model, 'name', '')
+        if name:
+            painter.setPen(QColor(200, 200, 200))
+            painter.setFont(QFont('Arial', 9))
+            painter.drawText(6, 14, name)
+
+        painter.end()
+        return pixmap
+
+    def _on_collision_selected(self): #vers 8
+        """Handle [T] detail table selection."""
         try:
-            selected_rows = self.collision_list.selectionModel().selectedRows()
-            if not selected_rows:
-                print("No rows selected")
+            rows = self.collision_list.selectionModel().selectedRows()
+            if rows:
+                self._select_model_by_row(rows[0].row())
+        except Exception as e:
+            print("_on_collision_selected error: " + str(e))
+
+    def _select_model_by_row(self, row): #vers 2
+        """Load model by row index into preview — works for both list views."""
+        try:
+            if not self.current_col_file:
                 return
-
-            row = selected_rows[0].row()
-            details_item = self.collision_list.item(row, 1)
-
-            if not details_item:
-                print("No details item found")
+            models = getattr(self.current_col_file, 'models', [])
+            if row < 0 or row >= len(models):
                 return
+            model = models[row]
+            model_name = getattr(model, 'name', f'Model_{row}')
 
-            model_index = details_item.data(Qt.ItemDataRole.UserRole)
-            print(f"Selected row {row}, model index {model_index}")
+            # Debug counts
+            nb = len(getattr(model,'boxes',[]));  ns = len(getattr(model,'spheres',[]))
+            nv = len(getattr(model,'vertices',[])); nf = len(getattr(model,'faces',[]))
+            print(f"SELECT [{row}] {model_name}: V={nv} F={nf} B={nb} S={ns}")
 
-            if not self.current_col_file or not hasattr(self.current_col_file, 'models'):
-                print("No COL file or models")
-                return
-
-            if model_index is None or model_index < 0 or model_index >= len(self.current_col_file.models):
-                print(f"Invalid model index: {model_index}")
-                return
-
-            # Get selected model
-            model = self.current_col_file.models[model_index]
-            model_name = getattr(model, 'name', f'Model_{model_index}')
-
-            # Update info display
+            # Name field
             if hasattr(self, 'info_name'):
                 self.info_name.setText(model_name)
 
-            # Update preview widget
-            if hasattr(self, 'preview_widget'):
-                if VIEWPORT_AVAILABLE and isinstance(self.preview_widget, COL3DViewport):
-                    # Use 3D viewport
-                    self.preview_widget.set_current_model(model, model_index)
-                    print(f"3D viewport updated for {model_name}")
+            # Push model into viewport
+            pw = getattr(self, 'preview_widget', None)
+            if pw:
+                if VIEWPORT_AVAILABLE and isinstance(pw, COL3DViewport):
+                    pw.set_current_model(model, row)
                 else:
-                    # Use 2D preview fallback
-                    width = max(400, self.preview_widget.width())
-                    height = max(400, self.preview_widget.height())
-                    print(f"Rendering 2D preview: {width}x{height} for {model_name}")
-                    preview_pixmap = self._render_collision_preview(model, width, height)
-                    self.preview_widget.setPixmap(preview_pixmap)
-                    self.preview_widget.setScaledContents(False)
-                    print(f"2D preview updated for {model_name}")
-            else:
-                print("No preview_widget attribute found")
+                    w = max(400, pw.width()); h = max(400, pw.height())
+                    pw.setPixmap(self._render_collision_preview(model, w, h))
+                    pw.setScaledContents(False)
+
+            # Spin thumbnail in detail list
+            self._start_thumbnail_spin(row, model)
 
         except Exception as e:
-            print(f"Error selecting model: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            import traceback; traceback.print_exc()
+            print(f"_select_model_by_row error: {e}")
 
 
-    def _show_collision_context_menu(self, position): #vers 1
-        """Show context menu for collision list"""
-        item = self.collision_list.itemAt(position)
+    def _show_collision_context_menu(self, position): #vers 4
+        """Right-click context menu for both collision model lists."""
+        # Work out which list sent the signal and find the row
+        sender = self.sender()
+        if sender is self.col_compact_list:
+            source_list = self.col_compact_list
+        else:
+            source_list = self.collision_list
+
+        item = source_list.itemAt(position)
         if not item:
-            return
+            # Still show thumbnail-view submenu even on empty area
+            row, model = -1, None
+        else:
+            row = source_list.row(item)
+            if row < 0: row = -1
+            models = getattr(self.current_col_file, 'models', []) if self.current_col_file else []
+            model = models[row] if 0 <= row < len(models) else None
 
         menu = QMenu(self)
 
-        # Get model index
-        row = self.collision_list.row(item)
-        if row < 0 or not self.current_col_file:
-            return
+        # ── Thumbnail view submenu (always shown) ─────────────────────────
+        view_menu = menu.addMenu("Thumbnail View")
+        axes = [
+            ("Top  (XY — Z up)",    0,   0),
+            ("Front (XZ — Y fwd)", 0,  90),
+            ("Side  (YZ — X right)",90,  0),
+            ("Isometric",          45,  35),
+            ("Bottom",              0, 180),
+            ("Back",              180,  90),
+        ]
+        for label, yaw, pitch in axes:
+            # Tick current selection
+            is_current = (abs(self._thumb_yaw - yaw) < 0.5 and
+                          abs(self._thumb_pitch - pitch) < 0.5)
+            act = view_menu.addAction(("✓ " if is_current else "    ") + label)
+            act.triggered.connect(
+                lambda _=False, y=yaw, p=pitch, l=label:
+                    self._set_thumbnail_view(y, p, l))
 
-        model = self.current_col_file.models[row]
+        if model is not None:
+            menu.addSeparator()
 
-        # Show Details action
-        details_action = menu.addAction("📋 Show Details")
-        details_action.triggered.connect(lambda: self._show_model_details(model, row))
+            # ── Info ──────────────────────────────────────────────────────
+            details_action = menu.addAction("Show Details")
+            details_action.triggered.connect(lambda: self._show_model_details(model, row))
 
-        # Copy Info action
-        copy_action = menu.addAction("Copy Info to Clipboard")
-        copy_action.triggered.connect(lambda: self._copy_model_info(model, row))
+            copy_action = menu.addAction("Copy Info to Clipboard")
+            copy_action.triggered.connect(lambda: self._copy_model_info(model, row))
 
-        menu.exec(self.collision_list.mapToGlobal(position))
+            menu.addSeparator()
+
+            # ── Rename ────────────────────────────────────────────────────
+            rename_action = menu.addAction("Rename Model...")
+            rename_action.triggered.connect(lambda: self._rename_col_model(model, row))
+
+            menu.addSeparator()
+
+            # ── Export / Replace ──────────────────────────────────────────
+            export_action = menu.addAction("Export Model as COL...")
+            export_action.triggered.connect(lambda: self._export_col_model(model, row))
+
+            import_action = menu.addAction("Replace with COL file...")
+            import_action.triggered.connect(lambda: self._import_replace_col_model(row))
+
+            menu.addSeparator()
+
+            # ── Pin (protect from editing) ─────────────────────────────
+            is_pinned = self._is_model_pinned(row)
+            pin_action = menu.addAction(
+                "📌 Unpin (allow editing)" if is_pinned else "📌 Pin (protect from editing)")
+            pin_action.triggered.connect(self._toggle_pin_selected)
+
+        menu.addSeparator()
+
+        # ── Select / Sort ──────────────────────────────────────────────
+        menu.addAction("Select All  [Ctrl+A]",  self._select_all_models)
+        menu.addAction("Invert Selection  [Ctrl+I]", self._invert_selection)
+        menu.addAction("Sort…",                 self._show_sort_menu)
+
+        menu.addSeparator()
+
+        # ── IDE-linked operations ──────────────────────────────────────
+        ide_menu = menu.addMenu("IDE Operations")
+        ide_menu.addAction("Import matched by IDE…",    self._import_via_ide)
+        ide_menu.addAction("Export matched by IDE…",    self._export_via_ide)
+        ide_menu.addAction("Remove unreferenced by IDE…", self._remove_via_ide)
+
+        menu.exec(source_list.mapToGlobal(position))
+
+    def _rename_col_model(self, model, row): #vers 1
+        """Rename a collision model entry in the list."""
+        try:
+            from PyQt6.QtWidgets import QInputDialog
+            old_name = getattr(model, 'name', f'Model_{row}')
+            new_name, ok = QInputDialog.getText(
+                self, "Rename Model", "New model name:", text=old_name)
+            if not ok or not new_name.strip():
+                return
+            new_name = new_name.strip()
+            model.name = new_name
+            # Update table cell
+            name_item = self.collision_list.item(row, 0)
+            if name_item:
+                name_item.setText(new_name)
+            # Mark file as modified
+            if hasattr(self, 'save_btn'):
+                self.save_btn.setEnabled(True)
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(
+                    f"Renamed model {row}: '{old_name}' → '{new_name}'")
+        except Exception as e:
+            QMessageBox.critical(self, "Rename Error", str(e))
+
+    def _export_col_model(self, model, row): #vers 1
+        """Export a single collision model as a standalone COL file."""
+        try:
+            model_name = getattr(model, 'name', f'model_{row}')
+            default_name = model_name.lower().replace(' ', '_') + '.col'
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Export COL Model",
+                default_name, "COL Files (*.col);;All Files (*)")
+            if not file_path:
+                return
+
+            # Build a minimal COL file containing just this model
+            from apps.methods.col_workshop_loader import COLFile
+            out = COLFile()
+            out.models = [model]
+            if hasattr(out, 'save'):
+                if not out.save(file_path):
+                    QMessageBox.warning(self, "Export Failed",
+                        "Could not save COL model — save() returned False.")
+                    return
+            else:
+                # Fallback: write the raw bytes of the model
+                raw = getattr(model, '_raw_bytes', None)
+                if raw:
+                    with open(file_path, 'wb') as f:
+                        f.write(raw)
+                else:
+                    QMessageBox.warning(self, "Export Failed",
+                        "No serialisation method available for this model.")
+                    return
+
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(
+                    f"Exported model '{model_name}' → {os.path.basename(file_path)}")
+            QMessageBox.information(self, "Export OK",
+                f"Model '{model_name}' exported to:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", str(e))
+
+    def _import_replace_col_model(self, row): #vers 1
+        """Replace a collision model entry from an external COL file."""
+        try:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Import COL to Replace Model",
+                "", "COL Files (*.col);;All Files (*)")
+            if not file_path:
+                return
+
+            from apps.methods.col_workshop_loader import COLFile
+            new_col = COLFile()
+            if not new_col.load(file_path):
+                QMessageBox.warning(self, "Import Failed",
+                    f"Could not load {os.path.basename(file_path)}")
+                return
+
+            new_models = getattr(new_col, 'models', [])
+            if not new_models:
+                QMessageBox.warning(self, "No Models",
+                    f"No collision models found in {os.path.basename(file_path)}")
+                return
+
+            # If multiple models in the source, ask which one to use
+            src_model = new_models[0]
+            if len(new_models) > 1:
+                from PyQt6.QtWidgets import QInputDialog
+                names = [f"[{i}] {getattr(m,'name',f'Model_{i}')}"
+                         for i, m in enumerate(new_models)]
+                choice, ok = QInputDialog.getItem(
+                    self, "Choose Model",
+                    f"{len(new_models)} models in file — pick one to import:",
+                    names, 0, False)
+                if not ok:
+                    return
+                idx = names.index(choice)
+                src_model = new_models[idx]
+
+            old_name = getattr(
+                self.current_col_file.models[row], 'name', f'Model_{row}')
+            src_model.name = old_name  # preserve existing name
+            self.current_col_file.models[row] = src_model
+
+            # Refresh the table row
+            from apps.methods.populate_col_table import populate_col_table
+            populate_col_table(self, self.current_col_file)
+            self.collision_list.selectRow(row)
+
+            if hasattr(self, 'save_btn'):
+                self.save_btn.setEnabled(True)
+            if self.main_window and hasattr(self.main_window, 'log_message'):
+                self.main_window.log_message(
+                    f"Replaced model {row} ('{old_name}') from "
+                    f"{os.path.basename(file_path)}")
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", str(e))
 
 
     def _show_model_details(self, model, index): #vers 1
@@ -3865,7 +7574,10 @@ class COLWorkshop(QWidget): #vers 3
             info_text += "\nVertices:\n"
             for i in range(min(30000, len(model.vertices))):
                 v = model.vertices[i]
-                info_text += f"  [{i}] ({v.position.x:.3f}, {v.position.y:.3f}, {v.position.z:.3f})\n"
+                if hasattr(v, 'position'):
+                    info_text += f"  [{i}] ({v.position.x:.3f}, {v.position.y:.3f}, {v.position.z:.3f})\n"
+                else:
+                    info_text += f"  [{i}] ({v.x:.3f}, {v.y:.3f}, {v.z:.3f})\n"
 
         # Add material info from faces
         if len(model.faces) > 0:
@@ -3910,57 +7622,114 @@ class COLWorkshop(QWidget): #vers 3
         clipboard.setText(text)
 
 
-    def _populate_collision_list(self): #vers 4
-        """Populate collision table with models - matches TXD Workshop style"""
+    def _populate_collision_list(self): #vers 7
+        """Populate [T] detail table — 8 columns, icon badges on counts > 0."""
         try:
             self.collision_list.setRowCount(0)
-
             if not self.current_col_file or not hasattr(self.current_col_file, 'models'):
                 return
 
-            for i, model in enumerate(self.current_col_file.models):
-                # Get model info
-                name = getattr(model, 'name', f'Model_{i}')
-                version = getattr(model, 'version', COLVersion.COL_1)
+            # Build icon pixmaps once (16px, themed colour)
+            icon_color = self._get_icon_color()
+            from apps.methods.imgfactory_svg_icons import SVGIconFactory as _SVG
+            from PyQt6.QtGui import QPixmap
 
-                # Count collision elements
-                spheres = len(getattr(model, 'spheres', []))
-                boxes = len(getattr(model, 'boxes', []))
-                faces = len(getattr(model, 'faces', []))
+            def _px(icon_fn, color=None):
+                """Get 14px QPixmap from an SVG icon factory method."""
+                try:
+                    ico = icon_fn(size=14, color=color or icon_color)
+                    return ico.pixmap(14, 14)
+                except Exception:
+                    return QPixmap()
+
+            sphere_px = _px(_SVG.sphere_icon, '#50c8e0')   # cyan
+            box_px    = _px(_SVG.box_icon,    '#dcb432')   # yellow
+            face_px   = _px(_SVG.mesh_icon,   '#6496dc')   # blue
+            # No dedicated vert icon — draw a tiny dot pixmap inline
+            vert_px   = QPixmap(14, 14)
+            from PyQt6.QtGui import QPainter, QColor, QBrush
+            from PyQt6.QtCore import QRectF
+            vert_px.fill(QColor(0, 0, 0, 0))
+            vp = QPainter(vert_px)
+            vp.setRenderHint(QPainter.RenderHint.Antialiasing)
+            vp.setBrush(QBrush(QColor(100, 200, 120)))
+            vp.setPen(QColor(100, 200, 120))
+            for ox, oy in [(2,2),(8,2),(5,9)]:
+                vp.drawEllipse(QRectF(ox, oy, 4, 4))
+            vp.end()
+
+            icon_map = {4: sphere_px, 5: box_px, 6: vert_px, 7: face_px}
+
+            models = self.current_col_file.models
+            self.collision_list.setUpdatesEnabled(False)
+
+            for i, model in enumerate(models):
+                name     = getattr(model, 'name', '') or f'model_{i}'
+                version  = getattr(model, 'version', None)
+                ver_str  = version.name if hasattr(version,'name') else str(version) if version else '?'
+                ver_short = ver_str.replace('COL_','COL').replace('COLVersion.','')
+                # Type = fourcc string, Version = game target label
+                header   = getattr(model, 'header', None)
+                fourcc   = getattr(header, 'fourcc', b'') if header else b''
+                try:    type_str = fourcc.decode('ascii').rstrip('\x00')
+                except Exception: type_str = str(fourcc)
+                ver_label = {'COL1':'GTA III/VC','COL2':'SA PS2',
+                             'COL3':'SA PC/Xbox','COL4':'SA (unused)'
+                             }.get(ver_short, ver_short)
+                spheres  = len(getattr(model, 'spheres',  []))
+                boxes    = len(getattr(model, 'boxes',    []))
                 vertices = len(getattr(model, 'vertices', []))
+                faces    = len(getattr(model, 'faces',    []))
+                bounds   = getattr(model, 'bounds', None)
+                radius   = getattr(bounds, 'radius', 0.0) if bounds else 0.0
 
-                # Add row
                 row = self.collision_list.rowCount()
                 self.collision_list.insertRow(row)
 
-                # Create thumbnail item
-                thumb_item = QTableWidgetItem()
-                thumbnail = self._generate_collision_thumbnail(model, 64, 64)
-                thumb_item.setData(Qt.ItemDataRole.DecorationRole, thumbnail)
-                thumb_item.setFlags(thumb_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                def _item(text, col=None, idx=None):
+                    it = QTableWidgetItem(str(text))
+                    it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    it.setTextAlignment(Qt.AlignmentFlag.AlignCenter |
+                                        Qt.AlignmentFlag.AlignVCenter)
+                    if idx is not None:
+                        it.setData(Qt.ItemDataRole.UserRole, idx)
+                    # Add icon if count > 0 and we have a pixmap for this col
+                    if col in icon_map and isinstance(text, int) and text > 0:
+                        it.setIcon(QIcon(icon_map[col]))
+                    return it
 
-                # Create details text
-                details = f"Name: {name}\n"
-                details += f"Version: {version.name}\n"
-                details += f"Spheres: {spheres} | Boxes: {boxes}\n"
-                details += f"Faces: {faces} | Vertices: {vertices}"
+                from PyQt6.QtGui import QIcon
 
-                details_item = QTableWidgetItem(details)
-                details_item.setFlags(details_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                details_item.setData(Qt.ItemDataRole.UserRole, i)  # Store model index
+                name_it = QTableWidgetItem(name)
+                name_it.setFlags(name_it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                name_it.setTextAlignment(Qt.AlignmentFlag.AlignLeft |
+                                         Qt.AlignmentFlag.AlignVCenter)
+                name_it.setData(Qt.ItemDataRole.UserRole, i)
 
-                # Set items
-                self.collision_list.setItem(row, 0, thumb_item)
-                self.collision_list.setItem(row, 1, details_item)
+                self.collision_list.setItem(row, 0, name_it)
+                self.collision_list.setItem(row, 1, _item(type_str))
+                self.collision_list.setItem(row, 2, _item(ver_label))
+                self.collision_list.setItem(row, 3, _item(f"{radius:.2f}"))
+                self.collision_list.setItem(row, 4, _item(spheres,  col=4))
+                self.collision_list.setItem(row, 5, _item(boxes,    col=5))
+                self.collision_list.setItem(row, 6, _item(vertices, col=6))
+                self.collision_list.setItem(row, 7, _item(faces,    col=7))
+                self.collision_list.setRowHeight(row, 22)
 
-                # Set row height
-                self.collision_list.setRowHeight(row, 100)
+            # Column widths
+            self.collision_list.setIconSize(QSize(14, 14))
+            hdr = self.collision_list.horizontalHeader()
+            hdr.resizeSection(0, 160)
+            for c in range(1, 8):
+                hdr.resizeSection(c, 68)
+            hdr.setStretchLastSection(True)
 
-            print(f"Populated collision table with {len(self.current_col_file.models)} models")
+            self.collision_list.setUpdatesEnabled(True)
+            self.collision_list.viewport().update()
 
         except Exception as e:
+            import traceback; traceback.print_exc()
             print(f"Error populating collision table: {str(e)}")
-
 
     def _create_preview_widget(self, level_data=None): #vers 3
         """Create preview widget - large collision preview like TXD Workshop"""
@@ -4165,9 +7934,14 @@ class COLWorkshop(QWidget): #vers 3
 
         # === NAVIGATION ===
 
-        # Select All (Ctrl+A) - reserved for future
+        # Select All (Ctrl+A)
         self.hotkey_select_all = QShortcut(QKeySequence.StandardKey.SelectAll, self)
-        # Not connected - reserved for future multi-select
+        self.hotkey_select_all.activated.connect(self._select_all_models)
+
+        # Invert Selection (Ctrl+I)
+        from PyQt6.QtGui import QKeySequence as _KS
+        self.hotkey_invert = QShortcut(_KS("Ctrl+I"), self)
+        self.hotkey_invert.activated.connect(self._invert_selection)
 
         # Find (Ctrl+F)
         self.hotkey_find = QShortcut(QKeySequence.StandardKey.Find, self)
@@ -4418,7 +8192,7 @@ class COLWorkshop(QWidget): #vers 3
         layout.setSpacing(15)
 
         # Header
-        header = QLabel("COL Workshop for IMG Factory 1.5")
+        header = QLabel(f"COL Workshop - {App_name}")
         header.setFont(QFont("Arial", 14, QFont.Weight.Bold))
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
@@ -4773,7 +8547,7 @@ class COLEditorDialog(QDialog): #vers 3
     def __init__(self, parent=None):
         self.icon_factory = SVGIconFactory()
         super().__init__(parent)
-        self.setWindowTitle(App_name + " - IMG Factory 1.5")
+        self.setWindowTitle(App_name)
         self.setModal(False)  # Allow non-modal operation
         self.resize(1000, 700)
 
@@ -5040,6 +8814,7 @@ class COLEditorDialog(QDialog): #vers 3
 
 
     def _create_viewport_controls(self): #vers 1
+        icon_color = self._get_icon_color()
         """Create 3D viewport controls - 3DS Max style toolbar at bottom"""
         if not VIEWPORT_AVAILABLE:
             return QWidget()
@@ -5080,7 +8855,7 @@ class COLEditorDialog(QDialog): #vers 3
 
         # View mode buttons
         btn_spheres = QPushButton()
-        btn_spheres.setIcon(self.icon_factory.sphere_icon())
+        btn_spheres.setIcon(self.icon_factory.sphere_icon(color=icon_color))
         btn_spheres.setCheckable(True)
         btn_spheres.setChecked(True)
         btn_spheres.setToolTip("Toggle Spheres")
@@ -5089,7 +8864,7 @@ class COLEditorDialog(QDialog): #vers 3
         )
 
         btn_boxes = QPushButton()
-        btn_boxes.setIcon(self.icon_factory.box_icon())
+        btn_boxes.setIcon(self.icon_factory.box_icon(color=icon_color))
         btn_boxes.setCheckable(True)
         btn_boxes.setChecked(True)
         btn_boxes.setToolTip("Toggle Boxes")
@@ -5098,7 +8873,7 @@ class COLEditorDialog(QDialog): #vers 3
         )
 
         btn_mesh = QPushButton()
-        btn_mesh.setIcon(self.icon_factory.mesh_icon())
+        btn_mesh.setIcon(self.icon_factory.mesh_icon(color=icon_color))
         btn_mesh.setCheckable(True)
         btn_mesh.setChecked(True)
         btn_mesh.setToolTip("Toggle Mesh")
@@ -5107,7 +8882,7 @@ class COLEditorDialog(QDialog): #vers 3
         )
 
         btn_wireframe = QPushButton()
-        btn_wireframe.setIcon(self.icon_factory.wireframe_icon())
+        btn_wireframe.setIcon(self.icon_factory.wireframe_icon(color=icon_color))
         btn_wireframe.setCheckable(True)
         btn_wireframe.setChecked(True)
         btn_wireframe.setToolTip("Toggle Wireframe")
@@ -5116,7 +8891,7 @@ class COLEditorDialog(QDialog): #vers 3
         )
 
         btn_bounds = QPushButton()
-        btn_bounds.setIcon(self.icon_factory.bounds_icon())
+        btn_bounds.setIcon(self.icon_factory.bounds_icon(color=icon_color))
         btn_bounds.setCheckable(True)
         btn_bounds.setChecked(True)
         btn_bounds.setToolTip("Toggle Bounding Box")
@@ -5132,7 +8907,7 @@ class COLEditorDialog(QDialog): #vers 3
 
         # Camera controls
         btn_reset = QPushButton()
-        btn_reset.setIcon(self.icon_factory.reset_view_icon())
+        btn_reset.setIcon(self.icon_factory.reset_view_icon(color=icon_color))
         btn_reset.setToolTip("Reset View")
         btn_reset.clicked.connect(self.viewer_3d.reset_view)
 
@@ -5310,28 +9085,50 @@ class COLEditorDialog(QDialog): #vers 3
             print(f"Error adding import/export functionality: {str(e)}")
 
 
-    def _import_col_data(self): #vers 1
-        """Import COL data from external source"""
-        try:
-            if self.main_window and hasattr(self.main_window, 'log_message'):
-                self.main_window.log_message(f"{App_name} import functionality - not yet implemented")
-                # TODO: Implement actual import functionality
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.information(self, "Import", "Import functionality coming soon!")
-        except Exception as e:
-            print(f"Error importing COL data: {str(e)}")
+    def _import_col_data(self): #vers 2
+        """Import one or more COL models from .col file(s) into the current archive."""
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+        if not self.current_col_file:
+            # No file loaded yet — open the files directly
+            self._open_file()
+            return
+
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Import COL File(s)", "",
+            "COL Files (*.col);;All Files (*)")
+        if not paths:
+            return
+
+        from apps.methods.col_workshop_loader import COLFile
+        added = 0
+        for path in paths:
+            cf = COLFile()
+            if cf.load_from_file(path):
+                for model in cf.models:
+                    self.current_col_file.models.append(model)
+                    added += 1
+            else:
+                print(f"Import failed: {path}")
+
+        if added:
+            self._populate_collision_list()
+            self._populate_compact_col_list()
+            # Select last added
+            last = len(self.current_col_file.models) - 1
+            active = (self.col_compact_list
+                      if getattr(self,'_col_view_mode','list')=='detail'
+                      else self.collision_list)
+            if active.rowCount() > last:
+                active.selectRow(last)
+            msg = f"Imported {added} model(s) from {len(paths)} file(s)."
+            self._set_status(msg)
+            if self.main_window and hasattr(self.main_window,'log_message'):
+                self.main_window.log_message(msg)
+        else:
+            QMessageBox.warning(self, "Import", "No models could be imported.")
 
 
-    def _export_col_data(self): #vers 1
-        """Export COL data to external source"""
-        try:
-            if self.main_window and hasattr(self.main_window, 'log_message'):
-                self.main_window.log_message(f"{App_name} export functionality - not yet implemented")
-                # TODO: Implement actual export functionality
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.information(self, "Export", "Export functionality coming soon!")
-        except Exception as e:
-            print(f"Error exporting COL data: {str(e)}")
+    # _export_col_data implemented above (line ~5136) — this stub removed
 
 
 # Convenience functions
@@ -5515,22 +9312,56 @@ def open_workshop(main_window, img_path=None): #vers 3
 COLEditorDialog = COLWorkshop  #vers 1
 
 
-def open_col_workshop(main_window, img_path=None): #vers 1
-    """Open COL Workshop - matches TXD Workshop pattern"""
+def open_col_workshop(main_window, img_path=None): #vers 2
+    """Open COL Workshop - embedded in tab if main_window has tab widget, standalone otherwise"""
     try:
-        workshop = COLWorkshop(main_window, main_window)
-        if img_path:
-            if img_path.lower().endswith(".col"):
-                if hasattr(workshop, "open_col_file"):
+        from PyQt6.QtWidgets import QVBoxLayout, QWidget
+
+        # Standalone mode
+        if not main_window or not hasattr(main_window, 'main_tab_widget'):
+            workshop = COLWorkshop(None, main_window)
+            workshop.setWindowFlags(Qt.WindowType.Window)
+            if img_path and img_path.lower().endswith('.col'):
+                if hasattr(workshop, 'open_col_file'):
                     workshop.open_col_file(img_path)
-                elif hasattr(workshop, "load_col_file"):
+                elif hasattr(workshop, 'load_col_file'):
                     workshop.load_col_file(img_path)
-        workshop.setWindowTitle("COL Workshop - IMG Factory 1.5")
+            workshop.setWindowTitle(f"COL Workshop - {App_name}")
+            workshop.resize(1200, 800)
+            workshop.show()
+            return workshop
+
+        # Embedded mode - add as tab
+        import os
+        tab_container = QWidget()
+        tab_layout = QVBoxLayout(tab_container)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+
+        workshop = COLWorkshop(tab_container, main_window)
+        workshop.setWindowFlags(Qt.WindowType.Widget)
+        tab_layout.addWidget(workshop)
+
+        if img_path and img_path.lower().endswith('.col'):
+            if hasattr(workshop, 'open_col_file'):
+                workshop.open_col_file(img_path)
+            elif hasattr(workshop, 'load_col_file'):
+                workshop.load_col_file(img_path)
+
+        tab_label = os.path.splitext(os.path.basename(img_path))[0] if img_path else "COL Workshop"
+        try:
+            from apps.methods.imgfactory_svg_icons import get_col_file_icon
+            icon = get_col_file_icon()
+            idx = main_window.main_tab_widget.addTab(tab_container, icon, tab_label)
+        except Exception:
+            idx = main_window.main_tab_widget.addTab(tab_container, tab_label)
+        main_window.main_tab_widget.setCurrentIndex(idx)
+
         workshop.show()
         return workshop
+
     except Exception as e:
-        if main_window and hasattr(main_window, "log_message"):
-            main_window.log_message(f"Error: {str(e)}")
+        if main_window and hasattr(main_window, 'log_message'):
+            main_window.log_message(f"Error opening COL Workshop: {str(e)}")
         return None
 
 COLEditorDialog = COLWorkshop
@@ -5561,5 +9392,4 @@ if __name__ == "__main__":
         print(f"ERROR: {e}")
         traceback.print_exc()
         sys.exit(1)
-
 
