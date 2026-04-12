@@ -9108,7 +9108,7 @@ class COLEditorDialog(QDialog): #vers 3
 
 
 
-    def closeEvent(self, event): #vers 1
+    def (self, event): #vers 1
         """Handle close event"""
         if self.is_modified:
             reply = QMessageBox.question(
@@ -9432,6 +9432,7 @@ def open_col_workshop(main_window, img_path=None): #vers 2
         if main_window and hasattr(main_window, 'log_message'):
             main_window.log_message(f"Error opening COL Workshop: {str(e)}")
         return None
+
 
 COLEditorDialog = COLWorkshop
 
