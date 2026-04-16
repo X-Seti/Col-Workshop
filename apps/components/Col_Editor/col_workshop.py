@@ -55,6 +55,7 @@ from apps.methods.col_workshop_classes import (
 from apps.methods.col_workshop_structures import setup_col_table_structure, populate_col_table
 from apps.methods.col_workshop_parser import COLParser
 from apps.methods.col_workshop_loader import COLFile
+from apps.gui.tool_menu_mixin import ToolMenuMixin
 
 
 # Temporary 3D viewport placeholder
@@ -1352,8 +1353,33 @@ class _ColListDelegate(QStyledItemDelegate): #vers 1
             Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignTop, text)
         return QSize(w, max(72, r.height() + 12))
 
-class COLWorkshop(QWidget): #vers 3
+class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
     """COL Workshop - Main window"""
+
+    # ── ToolMenuMixin implementation ─────────────────────────────────────
+
+    def get_menu_title(self) -> str: #vers 1
+        """Return menu label for imgfactory menu bar."""
+        return "COL Workshop"
+
+    def _build_menus_into_qmenu(self, parent_menu): #vers 1
+        """Populate parent_menu with COL Workshop actions."""
+        # File
+        fm = parent_menu.addMenu("File")
+        fm.addAction("Open COL…",        self._open_file)
+        fm.addAction("Save COL",         self._save_file)
+        fm.addAction("Save COL As…",     self._save_file_as)
+        fm.addSeparator()
+        fm.addAction("Import COL…",      self._import_col_data)
+        fm.addAction("Export COL…",      self._export_col_data)
+
+        # Edit
+        em = parent_menu.addMenu("Edit")
+        em.addAction("Undo",             lambda: getattr(self, 'undo_action', lambda: None) and self.undo_action())
+
+        # View
+        vm = parent_menu.addMenu("View")
+        vm.addAction("Sort Models",      self._show_sort_menu if hasattr(self, '_show_sort_menu') else lambda: None)
 
     workshop_closed = pyqtSignal()
     window_closed = pyqtSignal()
@@ -4327,9 +4353,31 @@ class COLWorkshop(QWidget): #vers 3
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(5, 5, 5, 5)
 
+        # Header row with search button
+        hdr_row = QHBoxLayout()
         header = QLabel("COL Files")
         header.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-        layout.addWidget(header)
+        hdr_row.addWidget(header)
+        hdr_row.addStretch()
+        self.col_search_btn = QPushButton()
+        self.col_search_btn.setFixedSize(24, 24)
+        try:
+            from apps.methods.imgfactory_svg_icons import SVGIconFactory
+            self.col_search_btn.setIcon(SVGIconFactory.search_icon(16))
+            self.col_search_btn.setIconSize(QSize(16, 16))
+        except Exception:
+            pass  # No icon — button still works
+        self.col_search_btn.setToolTip("Search COL files")
+        self.col_search_btn.clicked.connect(self._show_col_search)
+        hdr_row.addWidget(self.col_search_btn)
+        layout.addLayout(hdr_row)
+
+        # Search box (hidden by default)
+        self.col_search_box = QLineEdit()
+        self.col_search_box.setPlaceholderText("Search COL files...")
+        self.col_search_box.setVisible(False)
+        self.col_search_box.textChanged.connect(self._filter_col_list)
+        layout.addWidget(self.col_search_box)
 
         self.col_list_widget = QListWidget()
         self.col_list_widget.setAlternatingRowColors(True)
@@ -4842,7 +4890,7 @@ class COLWorkshop(QWidget): #vers 3
                     self.col_list_widget.addItem(item)
 
             if self.main_window and hasattr(self.main_window, 'log_message'):
-                self.main_window.log_message(f"📋 Found {len(self.txd_list)} COL files")
+                self.main_window.log_message(f"📋 Found {len(self.col_list)} COL files")
         except Exception as e:
             if self.main_window and hasattr(self.main_window, 'log_message'):
                 self.main_window.log_message(f"Error loading COL list: {str(e)}")
@@ -6874,19 +6922,50 @@ class COLWorkshop(QWidget): #vers 3
             QMessageBox.critical(self, "Error", f"Failed to analyze file:\n{str(e)}")
 
 
-    def _on_col_selected(self, item): #vers 1
-        """Handle COL file selection"""
+    def showEvent(self, event): #vers 1
+        """When COL workshop becomes visible, try to populate from loaded IMG."""
+        super().showEvent(event)
+        if (not self.standalone_mode and
+                hasattr(self, 'col_list_widget') and
+                self.col_list_widget is not None and
+                self.col_list_widget.count() == 0):
+            # Try to get current IMG from main window
+            if self.main_window and hasattr(self.main_window, 'current_img'):
+                img = self.main_window.current_img
+                if img and img != getattr(self, 'current_img', None):
+                    self.current_img = img
+                    self._load_img_col_list()
+
+    def _on_col_selected(self, item): #vers 2
+        """Handle COL file selection from left panel list."""
         try:
             entry = item.data(Qt.ItemDataRole.UserRole)
-            if entry:
-                txd_data = self._extract_col_from_img(entry)
-                if txd_data:
-                    self.current_col_data = col_data
-                    self.current_col_name = entry.name
-                    self._load_col_files(col_data, entry.name)
+            if entry and self.current_img:
+                self._open_col_from_img_entry(self.current_img, entry)
         except Exception as e:
+            err = str(e)
             if self.main_window and hasattr(self.main_window, 'log_message'):
-                self.main_window.log_message(f"Error selecting COL: {str(e)}")
+                self.main_window.log_message(f"Error selecting COL: {err}")
+            else:
+                QMessageBox.critical(self, "Error selecting COL", err)
+
+
+    def _show_col_search(self): #vers 1
+        """Toggle COL search box visibility."""
+        if hasattr(self, 'col_search_box'):
+            visible = not self.col_search_box.isVisible()
+            self.col_search_box.setVisible(visible)
+            if visible:
+                self.col_search_box.setFocus()
+            else:
+                self.col_search_box.clear()
+
+    def _filter_col_list(self, text: str): #vers 1
+        """Filter COL list by search text."""
+        if not hasattr(self, 'col_list_widget'): return
+        for i in range(self.col_list_widget.count()):
+            item = self.col_list_widget.item(i)
+            item.setHidden(bool(text) and text.lower() not in item.text().lower())
 
 
     def _extract_col_from_img(self, entry): #vers 2
@@ -9108,7 +9187,7 @@ class COLEditorDialog(QDialog): #vers 3
 
 
 
-    def (self, event): #vers 1
+    def closeEvent(self, event): #vers 1
         """Handle close event"""
         if self.is_modified:
             reply = QMessageBox.question(
@@ -9432,7 +9511,6 @@ def open_col_workshop(main_window, img_path=None): #vers 2
         if main_window and hasattr(main_window, 'log_message'):
             main_window.log_message(f"Error opening COL Workshop: {str(e)}")
         return None
-
 
 COLEditorDialog = COLWorkshop
 
