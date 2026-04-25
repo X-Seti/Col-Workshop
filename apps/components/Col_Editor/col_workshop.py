@@ -7,6 +7,10 @@ components/Col_Editor/col_workshop.py
 COL Editor - Main collision editor interface
 """
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).parent / "depends"))
+
 import os
 # Force X11/GLX backend for NVIDIA on Wayland
 os.environ['QT_QPA_PLATFORM'] = 'xcb'
@@ -47,14 +51,14 @@ from PyQt6.QtSvg import QSvgRenderer
 from apps.methods.imgfactory_svg_icons import SVGIconFactory
 
 # COL Workshop parser system
-from apps.methods.col_workshop_classes import (
+from col_workshop_classes import (
     COLModel, COLVersion, COLHeader, COLBounds,
     COLSphere, COLBox, COLVertex, COLFace
 )
 
-from apps.methods.col_workshop_structures import setup_col_table_structure, populate_col_table
-from apps.methods.col_workshop_parser import COLParser
-from apps.methods.col_workshop_loader import COLFile
+from col_workshop_structures import setup_col_table_structure, populate_col_table
+from col_workshop_parser import COLParser
+from col_workshop_loader import COLFile
 from apps.gui.tool_menu_mixin import ToolMenuMixin
 
 
@@ -10033,4 +10037,3 @@ if __name__ == "__main__":
         print(f"ERROR: {e}")
         traceback.print_exc()
         sys.exit(1)
-
