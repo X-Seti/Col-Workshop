@@ -776,10 +776,10 @@ class COL3DViewport(QWidget): #vers 2
             _game = COLGame.VC if getattr(getattr(model,'version',None),'value',3)==1 else COLGame.SA
             def mat_col(mat_id):
                 c = get_material_qcolor(mat_id, _game)
-                return c if c else QColor(120,120,120)
+                return c if c else self._get_ui_color('viewport_text')
         except Exception:
             def mat_col(mat_id):
-                return QColor(120,120,120)
+                return self._get_ui_color('viewport_text')
 
         #    Mesh faces                                                     
         rs = self._render_style  # 'wireframe' | 'semi' | 'solid'
@@ -931,7 +931,7 @@ class COL3DViewport(QWidget): #vers 2
                 lp,lq=self._proj(p45x,p45y,p45z)
                 p.setFont(QFont('Arial',8,QFont.Weight.Bold)); p.setPen(color)
                 p.drawText(int(gx+lp*arm+(6 if lp>=0 else -12)),int(gy+lq*arm+(5 if lq>=0 else -3)),label)
-        p.setBrush(QBrush(QColor(230,230,230))); p.setPen(QPen(QColor(160,160,160),1))
+        p.setBrush(QBrush(self._get_ui_color('border'))); p.setPen(QPen(self._get_ui_color('viewport_text'),1))
         p.drawEllipse(int(gx)-5,int(gy)-5,10,10)
 
         #    Top-right overlay — normal mode: Move/Rotate + Render chips   
@@ -1065,14 +1065,14 @@ class COL3DViewport(QWidget): #vers 2
             lbl='↕ Move [G]' if self._gizmo_mode=='translate' else '↻ Rotate [R]'
             p.drawText(bx+4,by+15,lbl)
             mode_lbl={'wireframe':'Wire','semi':'Semi','solid':'Solid'}.get(rs,'?')
-            mode_col={'wireframe':QColor(100,180,100),'semi':QColor(180,180,100),'solid':QColor(100,140,220)}.get(rs,QColor(180,180,180))
+            mode_col={'wireframe':QColor(100,180,100),'semi':QColor(180,180,100),'solid':QColor(100,140,220)}.get(rs,self._get_ui_color('border'))
             p.setBrush(QBrush(QColor(40,44,62))); p.setPen(QPen(mode_col,1))
             p.drawRoundedRect(W-70,28,66,18,3,3)
             p.setPen(mode_col); p.setFont(QFont('Arial',7))
             p.drawText(W-66,41,f"[V] {mode_lbl}")
 
         #    HUD                                                            
-        p.setFont(QFont('Arial',8)); p.setPen(QColor(200,200,200))
+        p.setFont(QFont('Arial',8)); p.setPen(self._get_ui_color('border'))
         p.drawText(6,14,getattr(model,'name','') or '')
         y2=H-54
         for col_c,txt in [(QColor(100,180,100),f"Mesh  F:{len(faces)} V:{len(verts)}"),
@@ -3195,7 +3195,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         apply_btn = QPushButton("Apply Settings")
         apply_btn.setStyleSheet("""
             QPushButton {
-                background: #0078d4;
+                background: palette(highlight);
                 color: white;
                 padding: 10px 24px;
                 font-weight: bold;
@@ -3203,7 +3203,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
                 font-size: 13px;
             }
             QPushButton:hover {
-                background: #1984d8;
+                background: palette(highlight);
             }
         """)
 
@@ -3381,22 +3381,22 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         # Amiga Workbench styling
         dialog.setStyleSheet("""
             QDialog {
-                background-color: #aaaaaa;
-                border: 2px solid #ffffff;
+                background-color: palette(placeholderText);
+                border: 2px solid palette(buttonText);
             }
             QLabel {
-                color: #000000;
-                background-color: #aaaaaa;
+                color: palette(windowText);
+                background-color: palette(placeholderText);
             }
             QPushButton {
-                background-color: #8899aa;
-                color: #000000;
-                border: 2px outset #ffffff;
+                background-color: palette(mid);
+                color: palette(windowText);
+                border: 2px outset palette(buttonText);
                 padding: 5px 15px;
                 min-width: 80px;
             }
             QPushButton:pressed {
-                border: 2px inset #555555;
+                border: 2px inset palette(mid);
             }
         """)
 
@@ -5073,7 +5073,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         self.paint_swatch = QLabel()
         self.paint_swatch.setFixedSize(16, 16)
         self.paint_swatch.setStyleSheet(
-            "background:#808080; border:1px solid #aaa; border-radius:2px;")
+            "background:#808080; border:1px solid palette(mid); border-radius:2px;")
         lay.addWidget(self.paint_swatch)
 
         self.paint_mat_combo = QComboBox()
@@ -5363,13 +5363,13 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         card.setFrameStyle(QFrame.Shape.StyledPanel)
         card.setStyleSheet("""
             QFrame {
-                background: #1e1e1e;
+                background: palette(base);
                 border: 1px solid palette(mid);
                 border-radius: 5px;
             }
             QFrame:hover {
-                border-color: #4a6fa5;
-                background: #252525;
+                border-color: palette(highlight);
+                background: palette(base);
             }
         """)
         card.setMinimumHeight(140)
@@ -5411,7 +5411,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         preview.setFixedSize(preview_size, preview_size)
         preview.setStyleSheet("""
             QLabel {
-                background: #0a0a0a;
+                background: palette(base);
                 border: 2px solid palette(mid);
                 border-radius: 3px;
             }
@@ -5451,7 +5451,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         level_badge = QLabel(f"Level {level_num}")
         level_badge.setStyleSheet("""
             QLabel {
-                background: #0d47a1;
+                background: palette(highlight);
                 color: white;
                 padding: 4px 12px;
                 border-radius: 3px;
@@ -5518,7 +5518,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         stat = QFrame()
         stat.setStyleSheet("""
             QFrame {
-                background: #252525;
+                background: palette(base);
                 border-radius: 3px;
                 padding: 6px 10px;
             }
@@ -5589,14 +5589,14 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
             edit_btn.setStyleSheet("""
                 QPushButton {
                     background: palette(mid);
-                    border: 1px solid #4a4a4a;
+                    border: 1px solid palette(mid);
                     color: white;
                     padding: 6px 12px;
                     border-radius: 3px;
                     font-size: 11px;
                 }
                 QPushButton:hover {
-                    background: #4a4a4a;
+                    background: palette(mid);
                 }
             """)
             edit_btn.clicked.connect(self._edit_main_surface)
@@ -7630,7 +7630,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
                                  int(gy+lq*arm+(5 if lq>=0 else -3)), label)
 
         # Gizmo centre dot
-        painter.setBrush(QBrush(QColor(230,230,230))); painter.setPen(QPen(QColor(160,160,160),1))
+        painter.setBrush(QBrush(self._get_ui_color('border'))); painter.setPen(QPen(self._get_ui_color('viewport_text'),1))
         painter.drawEllipse(int(gx)-5,int(gy)-5,10,10)
 
         #    Toggle button (top-right)                                      
@@ -7643,7 +7643,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         painter.drawText(bx+4,by+15,lbl)
 
         #    HUD                                                            
-        painter.setFont(QFont('Arial',8)); painter.setPen(QColor(200,200,200))
+        painter.setFont(QFont('Arial',8)); painter.setPen(self._get_ui_color('border'))
         painter.drawText(6,14,getattr(model,'name',''))
         y2=H-54
         spheres=getattr(model,'spheres',[]); boxes=getattr(model,'boxes',[])
@@ -7844,13 +7844,13 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         """Generate a small QPixmap thumbnail of a COL model."""
         from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen
         pixmap = QPixmap(width, height)
-        pixmap.fill(QColor(30, 30, 40))
+        pixmap.fill(self._get_ui_color('viewport_bg'))
         has_data = (getattr(model, 'spheres', []) or
                     getattr(model, 'boxes', []) or
                     getattr(model, 'vertices', []))
         if not has_data:
             painter = QPainter(pixmap)
-            painter.setPen(QPen(QColor(80, 80, 80), 1))
+            painter.setPen(QPen(self._get_ui_color('viewport_text'), 1))
             painter.drawLine(4, 4, width-4, height-4)
             painter.drawLine(width-4, 4, 4, height-4)
             painter.end()
@@ -7871,7 +7871,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         from PyQt6.QtGui import QPixmap, QPainter, QColor, QFont
         from PyQt6.QtCore import Qt
         pixmap = QPixmap(width, height)
-        pixmap.fill(QColor(25, 25, 35))
+        pixmap.fill(self._get_ui_color('viewport_bg'))
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -7880,7 +7880,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
                     getattr(model, 'vertices', []))
 
         if not has_data:
-            painter.setPen(QColor(120, 120, 120))
+            painter.setPen(self._get_ui_color('viewport_text'))
             painter.setFont(QFont('Arial', 11))
             painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "No geometry data")
             painter.end()
@@ -7905,7 +7905,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         # Model name
         name = getattr(model, 'name', '')
         if name:
-            painter.setPen(QColor(200, 200, 200))
+            painter.setPen(self._get_ui_color('border'))
             painter.setFont(QFont('Arial', 9))
             painter.drawText(6, 14, name)
 
@@ -8369,7 +8369,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
             preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
             preview.setStyleSheet("""
                 QLabel {
-                    background: #0a0a0a;
+                    background: palette(base);
                     border: 2px solid palette(mid);
                     border-radius: 3px;
                     color: #888;
@@ -9041,7 +9041,7 @@ class ZoomablePreview(QLabel): #vers 2
             painter.drawPixmap(x, y, self.scaled_pixmap)
         elif self.placeholder_text:
             # Draw placeholder text
-            painter.setPen(QColor(150, 150, 150))
+            painter.setPen(self._get_ui_color('viewport_text'))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.placeholder_text)
 
 
@@ -9061,8 +9061,8 @@ class ZoomablePreview(QLabel): #vers 2
     def _draw_checkerboard(self, painter): #vers 1
         """Draw checkerboard background pattern"""
         size = self._checkerboard_size
-        color1 = QColor(200, 200, 200)
-        color2 = QColor(150, 150, 150)
+        color1 = self._get_ui_color('border')
+        color2 = self._get_ui_color('viewport_text')
 
         for y in range(0, self.height(), size):
             for x in range(0, self.width(), size):
@@ -9462,27 +9462,27 @@ class COLEditorDialog(QDialog): #vers 3
         controls_widget.setStyleSheet("""
             QFrame {
                 background-color: palette(mid);
-                border: 1px solid #555555;
+                border: 1px solid palette(mid);
                 border-radius: 3px;
                 padding: 3px;
             }
             QPushButton {
-                background-color: #4a4a4a;
-                border: 1px solid #666666;
+                background-color: palette(mid);
+                border: 1px solid palette(mid);
                 border-radius: 2px;
                 padding: 4px;
                 min-width: 28px;
                 min-height: 28px;
             }
             QPushButton:hover {
-                background-color: #5a5a5a;
-                border: 1px solid #888888;
+                background-color: palette(mid);
+                border: 1px solid palette(placeholderText);
             }
             QPushButton:pressed {
-                background-color: #2a2a2a;
+                background-color: palette(base);
             }
             QPushButton:checked {
-                background-color: #006699;
+                background-color: palette(highlight);
                 border: 1px solid #0088cc;
             }
         """)
@@ -9541,7 +9541,7 @@ class COLEditorDialog(QDialog): #vers 3
         separator1 = QFrame()
         separator1.setFrameShape(QFrame.Shape.VLine)
         separator1.setFrameShadow(QFrame.Shadow.Sunken)
-        separator1.setStyleSheet("color: #666666;")
+        separator1.setStyleSheet("color: palette(mid);")
 
         # Camera controls
         btn_reset = QPushButton()

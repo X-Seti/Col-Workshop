@@ -41,7 +41,7 @@ def _build_material_color_cache(game: COLGame = COLGame.SA) -> dict: #vers 1
 # Default caches (SA) — rebuilt when game version changes
 _MAT_COLORS_SA = _build_material_color_cache(COLGame.SA)
 _MAT_COLORS_VC = _build_material_color_cache(COLGame.VC)
-_DEFAULT_MAT_COLOR = QColor(120, 120, 120)
+_DEFAULT_MAT_COLOR = self._get_ui_color('viewport_text')
 
 
 ##class COLMeshEditorViewport -
@@ -84,7 +84,7 @@ class COLMeshEditorViewport(QWidget):
         self._drag         = None
         self._proj_cache   = []    # [(sx,sy)] per vertex, rebuilt each paint
         self._face_centres = []    # [(sx,sy)] per face centre, rebuilt each paint
-        self.setStyleSheet("background-color: #14141e;")
+        self.setStyleSheet("background-color: palette(base);")
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -361,11 +361,11 @@ class COLMeshEditorViewport(QWidget):
             p.drawPolygon(QPolygonF([tip, lpt, rpt]))
             p.setFont(QFont('Arial', 7, QFont.Weight.Bold)); p.setPen(col)
             p.drawText(tx+(7 if tx>=gx else -12), ty+(5 if ty>=gy else -2), lbl)
-        p.setBrush(QBrush(QColor(220,220,220))); p.setPen(QPen(QColor(180,180,180),1))
+        p.setBrush(QBrush(self._get_ui_color('border'))); p.setPen(QPen(self._get_ui_color('border'),1))
         p.drawEllipse(gx-3, gy-3, 6, 6)
 
         # - HUD
-        p.setPen(QColor(180, 180, 180))
+        p.setPen(self._get_ui_color('border'))
         p.setFont(QFont('Arial', 7))
         p.drawText(4, 12, f"F:{len(faces)} V:{len(verts)}")
         p.drawText(4, H-4, f"Y:{self._yaw:.0f}° P:{self._pitch:.0f}°")
@@ -438,7 +438,7 @@ class COLMeshEditor(QDialog): #vers 1
         # - Status + game selector
         stat_row = QHBoxLayout()
         self._status = QLabel("Ready")
-        self._status.setStyleSheet("color:#aaa;font-size:10px;")
+        self._status.setStyleSheet("color:palette(mid);font-size:10px;")
         stat_row.addWidget(self._status, 1)
         stat_row.addWidget(QLabel("Game:"))
         self._game_combo = QComboBox()
