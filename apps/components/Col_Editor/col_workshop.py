@@ -7,10 +7,6 @@ components/Col_Editor/col_workshop.py
 COL Editor - Main collision editor interface
 """
 
-import sys as _sys
-from pathlib import Path as _Path
-_sys.path.insert(0, str(_Path(__file__).parent / "depends"))
-
 import os
 # Force X11/GLX backend for NVIDIA on Wayland
 os.environ['QT_QPA_PLATFORM'] = 'xcb'
@@ -51,14 +47,14 @@ from PyQt6.QtSvg import QSvgRenderer
 from apps.methods.imgfactory_svg_icons import SVGIconFactory
 
 # COL Workshop parser system
-from col_workshop_classes import (
+from apps.methods.col_workshop_classes import (
     COLModel, COLVersion, COLHeader, COLBounds,
     COLSphere, COLBox, COLVertex, COLFace
 )
 
-from col_workshop_structures import setup_col_table_structure, populate_col_table
-from col_workshop_parser import COLParser
-from col_workshop_loader import COLFile
+from apps.methods.col_workshop_structures import setup_col_table_structure, populate_col_table
+from apps.methods.col_workshop_parser import COLParser
+from apps.methods.col_workshop_loader import COLFile
 from apps.gui.tool_menu_mixin import ToolMenuMixin
 
 
@@ -4949,6 +4945,8 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         # Information group below
         info_group = QGroupBox("")
         info_group.setFont(self.title_font)
+        info_group.setAutoFillBackground(True)
+        info_group.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         info_layout = QVBoxLayout(info_group)
         info_group.setMaximumHeight(180)  # extra 40px for paint row
 
@@ -5078,10 +5076,10 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         bar.setStyleSheet(
             "QWidget#paint_bar { background:palette(base); border-bottom:2px solid palette(highlight); }"
-            "QLabel  { color:#ddd; background:transparent; }"
+            "QLabel  { color:palette(windowText); background:transparent; }"
             "QComboBox { background:palette(base); color:palette(text); border:1px solid palette(mid); }"
             "QPushButton { background:palette(button); color:palette(buttonText); border:1px solid palette(mid); border-radius:3px; }"
-            "QPushButton:hover   { background:#353548; }"
+            "QPushButton:hover   { background:palette(dark); }"
             "QPushButton:checked { background:palette(highlight); color:palette(highlightedText); border:1px solid palette(highlight); }"
         )
         bar.setFixedHeight(34)
@@ -10037,3 +10035,4 @@ if __name__ == "__main__":
         print(f"ERROR: {e}")
         traceback.print_exc()
         sys.exit(1)
+
