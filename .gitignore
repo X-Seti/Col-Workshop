@@ -2,3 +2,7 @@
 apps/components/Col_Editor/__pycache__/col_workshop.cpython-313.pyc
 /apps/gui/__pycache__
 /apps/debug/__pycache__
+apps/__pycache__/__init__.cpython-314.pyc
+apps/components/__pycache__/__init__.cpython-314.pyc
+apps/components/Col_Editor/__pycache__/__init__.cpython-314.pyc
+apps/components/Col_Editor/__pycache__/col_workshop.cpython-314.pyc
