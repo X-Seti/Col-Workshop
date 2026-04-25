@@ -18,9 +18,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import pyqtSignal, Qt
 
 # Import existing RW version functions - KEPT ALL ORIGINAL IMPORTS
-from apps.methods.rw_versions import get_rw_version_name, parse_rw_version, get_model_format_version
+from rw_versions import get_rw_version_name, parse_rw_version, get_model_format_version
 from apps.debug.debug_functions import img_debugger
-from apps.methods.populate_img_table import DragSelectTableWidget
+from populate_img_table import DragSelectTableWidget
 
 def _find_companion(base_path: str, new_ext: str) -> str:
     # Find companion file case-insensitively.

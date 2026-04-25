@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QFont
-from apps.methods.img_factory_settings import IMGFactorySettings
+from img_factory_settings import IMGFactorySettings
 
 ##Methods list -
 # apply_compact_buttons

@@ -11,7 +11,7 @@ import struct
 import os
 from typing import Dict, List, Tuple, Optional
 from apps.debug.debug_functions import img_debugger
-from apps.methods.col_core_classes import is_col_debug_enabled
+from col_core_classes import is_col_debug_enabled
 
 ##Methods list -
 # load_col_file_safely

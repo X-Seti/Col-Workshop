@@ -13,7 +13,7 @@ from PyQt6.QtCore import Qt
 
 # Import IMG debug system and COL classes
 from apps.debug.debug_functions import img_debugger
-from apps.methods.col_core_classes import COLFile, COLModel
+from col_core_classes import COLFile, COLModel
 
 ##Methods list -
 # load_col_file_object

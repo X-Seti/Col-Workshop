@@ -23,7 +23,7 @@ except ImportError:
 # Import IMG debug system and COL components
 from apps.debug.debug_functions import img_debugger
 from apps.debug.debug_functions import col_debug_log
-from apps.methods.col_core_classes import COLFile, COLModel, COLVersion
+from col_core_classes import COLFile, COLModel, COLVersion
 
 ##Methods list -
 # add_col_context_menu_items

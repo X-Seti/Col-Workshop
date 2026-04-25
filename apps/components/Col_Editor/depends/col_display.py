@@ -14,9 +14,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor
 
 # Import COL classes and IMG debug system
-from apps.methods.col_core_classes import COLFile, COLModel
+from col_core_classes import COLFile, COLModel
 from apps.debug.debug_functions import img_debugger
-from apps.methods.col_core_classes import is_col_debug_enabled
+from col_core_classes import is_col_debug_enabled
 
 ##Methods list -
 # create_table_item
