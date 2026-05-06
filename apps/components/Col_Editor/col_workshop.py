@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#this belongs in apps/components/Col_Editor/col_workshop.py - Version: 76
+#this belongs in apps/components/Col_Editor/col_workshop.py - Version: 77
 # X-Seti - August10 2025 - Converted col editor using gui base template.
 
 """
@@ -46,16 +46,128 @@ from PyQt6.QtSvg import QSvgRenderer
 # Import project modules AFTER path setup
 from apps.methods.imgfactory_svg_icons import SVGIconFactory
 
-# COL Workshop parser system
-from apps.methods.col_workshop_classes import (
-    COLModel, COLVersion, COLHeader, COLBounds,
-    COLSphere, COLBox, COLVertex, COLFace
-)
-
-from apps.methods.col_workshop_structures import setup_col_table_structure, populate_col_table
-from apps.methods.col_workshop_parser import COLParser
-from apps.methods.col_workshop_loader import COLFile
+from apps.components.Col_Editor.depends.col_workshop_structures import setup_col_table_structure, populate_col_table
+from apps.components.Col_Editor.depends.col_workshop_parser import COLParser
+from apps.components.Col_Editor.depends.col_workshop_loader import COLFile
 from apps.gui.tool_menu_mixin import ToolMenuMixin
+# COL Workshop parser system
+from apps.components.Col_Editor.depends.col_workshop_classes import (COLModel, COLVersion, COLHeader, COLBounds,COLSphere, COLBox, COLVertex, COLFace)
+
+VIEWPORT_AVAILABLE = True
+
+# Add root directory to path
+App_name = "Col Workshop"
+DEBUG_STANDALONE = False
+
+##Methods list -
+# COL3DViewport._apply_to_all_faces
+# COL3DViewport._apply_to_selected_faces
+# COL3DViewport._cycle_render_style
+# COL3DViewport._find_workshop
+# COL3DViewport._get_scale_origin
+# COL3DViewport._gizmo_arm
+# COL3DViewport._gizmo_centre
+# COL3DViewport._hit_gizmo
+# COL3DViewport._pick_face
+# COL3DViewport._proj
+# COL3DViewport._set_angles
+# COL3DViewport._set_gizmo
+# COL3DViewport._set_theme_bg
+# COL3DViewport._show_face_context_menu
+# COL3DViewport._to_screen
+# COL3DViewport.contextMenuEvent
+# COL3DViewport.fit_to_window
+# COL3DViewport.flip_horizontal
+# COL3DViewport.flip_vertical
+# COL3DViewport.keyPressEvent
+# COL3DViewport.mouseMoveEvent
+# COL3DViewport.mousePressEvent
+# COL3DViewport.mouseReleaseEvent
+# COL3DViewport.paintEvent
+# COL3DViewport.pan
+# COL3DViewport.reset_view
+# COL3DViewport.resizeEvent
+# COL3DViewport.rotate_ccw
+# COL3DViewport.rotate_cw
+# COL3DViewport.set_backface
+# COL3DViewport.set_background_color
+# COL3DViewport.set_current_file
+# COL3DViewport.set_current_model
+# COL3DViewport.set_paint_mode
+# COL3DViewport.set_render_style
+# COL3DViewport.set_show_boxes
+# COL3DViewport.set_show_mesh
+# COL3DViewport.set_show_spheres
+# COL3DViewport.set_view_options
+# COL3DViewport.toggle_gizmo_mode
+# COL3DViewport.wheelEvent
+# COL3DViewport.zoom_in
+# COL3DViewport.zoom_out
+# COLEditorDialog._add_import_export_functionality
+# COLEditorDialog._create_viewport_controls
+# COLEditorDialog._import_col_data
+# COLEditorDialog._set_camera_view
+# COLEditorDialog._svg_to_icon
+# COLEditorDialog.analyze_file
+# COLEditorDialog.closeEvent
+# COLEditorDialog.connect_signals
+# COLEditorDialog.load_col_file
+# COLEditorDialog.on_model_selected
+# COLEditorDialog.on_property_changed
+# COLEditorDialog.open_file
+# COLEditorDialog.save_file
+# COLEditorDialog.save_file_as
+# COLEditorDialog.setup_ui
+# COLModelListWidget.on_selection_changed
+# COLModelListWidget.populate_models
+# COLModelListWidget.show_context_menu
+# COLWorkshop._analyze_collision
+# COLWorkshop._apply_always_on_top
+# COLWorkshop._apply_button_font
+# COLWorkshop._apply_button_mode
+# COLWorkshop._apply_fonts_to_widgets
+# COLWorkshop._apply_hotkey_settings
+# COLWorkshop._apply_infobar_font
+# COLWorkshop._apply_panel_font
+# COLWorkshop._apply_settings
+# COLWorkshop._apply_theme
+# COLWorkshop._apply_title_font
+# COLWorkshop._apply_to_selected_faces_paint
+# COLWorkshop._apply_window_flags
+# COLWorkshop._build_col_from_txd
+# COLWorkshop._build_menus_into_qmenu
+# COLWorkshop._change_format
+# COLWorkshop._close_col_tab
+# COLWorkshop._col_place_ctrl_grid
+# COLWorkshop._col_place_icon_grid
+# COLWorkshop._compress_col
+# COLWorkshop._compress_surface
+# COLWorkshop._connect_all_buttons
+# COLWorkshop._convert_surface
+# COLWorkshop._copy_model_info
+# COLWorkshop._copy_model_to_clipboard
+# COLWorkshop._copy_surface
+# COLWorkshop._copy_text_to_clipboard
+# COLWorkshop._create_action_section
+# COLWorkshop._create_info_section
+# COLWorkshop._create_left_panel
+# COLWorkshop._create_level_card
+# COLWorkshop._create_middle_panel
+# COLWorkshop._create_new_model
+# COLWorkshop._create_new_surface
+# COLWorkshop._create_paint_bar
+# COLWorkshop._create_preview_controls
+# COLWorkshop._create_preview_widget
+# COLWorkshop._create_right_panel
+# COLWorkshop._create_shadow_mesh
+
+# Import AppSettings
+try:
+    from apps.utils.app_settings_system import AppSettings, SettingsDialog
+    APPSETTINGS_AVAILABLE = True
+except ImportError:
+    APPSETTINGS_AVAILABLE = False
+    print("Warning: AppSettings not available")
 
 
 # Temporary 3D viewport placeholder
@@ -1296,121 +1408,6 @@ class COL3DViewport(QWidget): #vers 2
             if isinstance(p, COLWorkshop): return p
             p = p.parent() if callable(getattr(p, 'parent', None)) else None
         return None
-VIEWPORT_AVAILABLE = True
-
-# Add root directory to path
-App_name = "Col Workshop"
-DEBUG_STANDALONE = False
-
-##Methods list -
-# COL3DViewport._apply_to_all_faces
-# COL3DViewport._apply_to_selected_faces
-# COL3DViewport._cycle_render_style
-# COL3DViewport._find_workshop
-# COL3DViewport._get_scale_origin
-# COL3DViewport._gizmo_arm
-# COL3DViewport._gizmo_centre
-# COL3DViewport._hit_gizmo
-# COL3DViewport._pick_face
-# COL3DViewport._proj
-# COL3DViewport._set_angles
-# COL3DViewport._set_gizmo
-# COL3DViewport._set_theme_bg
-# COL3DViewport._show_face_context_menu
-# COL3DViewport._to_screen
-# COL3DViewport.contextMenuEvent
-# COL3DViewport.fit_to_window
-# COL3DViewport.flip_horizontal
-# COL3DViewport.flip_vertical
-# COL3DViewport.keyPressEvent
-# COL3DViewport.mouseMoveEvent
-# COL3DViewport.mousePressEvent
-# COL3DViewport.mouseReleaseEvent
-# COL3DViewport.paintEvent
-# COL3DViewport.pan
-# COL3DViewport.reset_view
-# COL3DViewport.resizeEvent
-# COL3DViewport.rotate_ccw
-# COL3DViewport.rotate_cw
-# COL3DViewport.set_backface
-# COL3DViewport.set_background_color
-# COL3DViewport.set_current_file
-# COL3DViewport.set_current_model
-# COL3DViewport.set_paint_mode
-# COL3DViewport.set_render_style
-# COL3DViewport.set_show_boxes
-# COL3DViewport.set_show_mesh
-# COL3DViewport.set_show_spheres
-# COL3DViewport.set_view_options
-# COL3DViewport.toggle_gizmo_mode
-# COL3DViewport.wheelEvent
-# COL3DViewport.zoom_in
-# COL3DViewport.zoom_out
-# COLEditorDialog._add_import_export_functionality
-# COLEditorDialog._create_viewport_controls
-# COLEditorDialog._import_col_data
-# COLEditorDialog._set_camera_view
-# COLEditorDialog._svg_to_icon
-# COLEditorDialog.analyze_file
-# COLEditorDialog.closeEvent
-# COLEditorDialog.connect_signals
-# COLEditorDialog.load_col_file
-# COLEditorDialog.on_model_selected
-# COLEditorDialog.on_property_changed
-# COLEditorDialog.open_file
-# COLEditorDialog.save_file
-# COLEditorDialog.save_file_as
-# COLEditorDialog.setup_ui
-# COLModelListWidget.on_selection_changed
-# COLModelListWidget.populate_models
-# COLModelListWidget.show_context_menu
-# COLWorkshop._analyze_collision
-# COLWorkshop._apply_always_on_top
-# COLWorkshop._apply_button_font
-# COLWorkshop._apply_button_mode
-# COLWorkshop._apply_fonts_to_widgets
-# COLWorkshop._apply_hotkey_settings
-# COLWorkshop._apply_infobar_font
-# COLWorkshop._apply_panel_font
-# COLWorkshop._apply_settings
-# COLWorkshop._apply_theme
-# COLWorkshop._apply_title_font
-# COLWorkshop._apply_to_selected_faces_paint
-# COLWorkshop._apply_window_flags
-# COLWorkshop._build_col_from_txd
-# COLWorkshop._build_menus_into_qmenu
-# COLWorkshop._change_format
-# COLWorkshop._close_col_tab
-# COLWorkshop._col_place_ctrl_grid
-# COLWorkshop._col_place_icon_grid
-# COLWorkshop._compress_col
-# COLWorkshop._compress_surface
-# COLWorkshop._connect_all_buttons
-# COLWorkshop._convert_surface
-# COLWorkshop._copy_model_info
-# COLWorkshop._copy_model_to_clipboard
-# COLWorkshop._copy_surface
-# COLWorkshop._copy_text_to_clipboard
-# COLWorkshop._create_action_section
-# COLWorkshop._create_info_section
-# COLWorkshop._create_left_panel
-# COLWorkshop._create_level_card
-# COLWorkshop._create_middle_panel
-# COLWorkshop._create_new_model
-# COLWorkshop._create_new_surface
-# COLWorkshop._create_paint_bar
-# COLWorkshop._create_preview_controls
-# COLWorkshop._create_preview_widget
-# COLWorkshop._create_right_panel
-# COLWorkshop._create_shadow_mesh
-
-# Import AppSettings
-try:
-    from apps.utils.app_settings_system import AppSettings, SettingsDialog
-    APPSETTINGS_AVAILABLE = True
-except ImportError:
-    APPSETTINGS_AVAILABLE = False
-    print("Warning: AppSettings not available")
 
 
 class COLModelListWidget(QListWidget): #vers 1
@@ -1601,6 +1598,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
                 self.app_settings = None
         if hasattr(self.app_settings, 'theme_changed'):
             self.app_settings.theme_changed.connect(self._refresh_icons)
+            self.app_settings.theme_changed.connect(self._on_theme_changed)
 
         self._show_boxes = True
         self._show_mesh = True
@@ -1645,7 +1643,6 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         if parent:
             parent_pos = parent.pos()
             self.move(parent_pos.x() + 50, parent_pos.y() + 80)
-
 
         # Paint toolbar attrs — set by _create_paint_bar() called from _create_right_panel
         self.paint_toolbar   = None
@@ -1729,6 +1726,9 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         self._refresh_icons()
         self._connect_all_buttons()
 
+        # Apply theme once at end so all panels inherit correct palette
+        self._apply_theme()
+
 
     def _connect_all_buttons(self): #vers 2
         """Wire flip/rotate transform buttons to preview_widget.
@@ -1756,7 +1756,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         from PyQt6.QtWidgets import QInputDialog
         name, ok = QInputDialog.getText(self, "New Model", "Model name:")
         if not ok or not name.strip(): return
-        from apps.methods.col_workshop_classes import COLModel, COLHeader, COLVersion, COLBounds
+        from apps.apps.components.Col_Editor.depends.col_workshop_classes import COLModel, COLHeader, COLVersion, COLBounds
         m = COLModel()
         m.name = name.strip(); m.version = COLVersion.COL_1
         if not self.current_col_file: return
@@ -1940,7 +1940,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
             btn.setStyleSheet("color:palette(link); font-weight:bold;")
 
         self._set_status(
-            "Paint mode — click faces to paint  |  ◀▶ change material  "
+            "Paint mode — click faces to paint | change material  "
             "|  Shift+drag to select  |  Esc to exit")
 
 
@@ -2297,7 +2297,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "No File", "Load a COL file first.")
             return
-        from apps.methods.col_workshop_classes import COLModel, COLHeader, COLBounds, COLVersion
+        from apps.components.Col_Editor.depends.col_workshop_classes import COLModel, COLHeader, COLBounds, COLVersion
         from apps.methods.col_core_classes import Vector3
         hdr = COLHeader(fourcc=b'COLL', size=0, name='new_model',
                         model_id=0, version=COLVersion.COL_1)
@@ -2327,7 +2327,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         """Create stub COL models for each texture name in a loaded TXD."""
         from PyQt6.QtWidgets import QFileDialog, QMessageBox
         from apps.methods.col_workshop_loader import COLFile
-        from apps.methods.col_workshop_classes import COLModel, COLVersion, COLBounds
+        from apps.components.Col_Editor.depends.col_workshop_classes import COLModel, COLVersion, COLBounds
         txd_path, _ = QFileDialog.getOpenFileName(
             self, "Select TXD file", "", "TXD Files (*.txd);;All Files (*)")
         if not txd_path:
@@ -2389,7 +2389,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
     def _convert_surface(self): #vers 2
         """Convert selected model to a different COL version."""
         from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QMessageBox
-        from apps.methods.col_workshop_classes import COLVersion
+        from apps.components.Col_Editor.depends.col_workshop_classes import COLVersion
         model = self._get_selected_model()
         if not model:
             QMessageBox.warning(self, "No Selection", "Select a collision model first.")
@@ -2451,7 +2451,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
             QMessageBox.warning(self, "No Mesh", f"'{model.name}' has no vertex/face data.")
             return
         # Upgrade to COL3 if needed
-        from apps.methods.col_workshop_classes import COLVersion
+        from apps.components.Col_Editor.depends.col_workshop_classes import COLVersion
         if getattr(model.version, 'value', 0) < 3:
             reply = QMessageBox.question(self, "Upgrade to COL3",
                 "Shadow mesh requires COL3. Upgrade this model?",
@@ -3979,7 +3979,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
             if btr: btr.setVisible(wide)
             if bir: bir.setVisible(not wide)
 
-    def resizeEvent(self, event): #vers 4
+    def resizeEvent(self, event): #vers 5
         """Keep resize grip in corner; auto-collapse panels; adaptive button display."""
         super().resizeEvent(event)
         if hasattr(self, 'size_grip'):
@@ -3988,10 +3988,11 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         # Auto icon-only when window is narrow (overrides saved mode only if narrower)
         try:
             from apps.methods.imgfactory_ui_settings import apply_compact_buttons
-            apply_compact_buttons(
-                getattr(self, '_col_compact_btns', []),
-                self.width(),
-                compact_threshold=480)
+            btns = getattr(self, '_col_compact_btns', [])
+            if btns:
+                row = getattr(self, '_middle_btn_row', None)
+                w = row.width() if (row and row.width() > 0) else self.width()
+                apply_compact_buttons(btns, w, compact_threshold=320)
         except Exception:
             pass
 
@@ -4777,6 +4778,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
 
         self.col_list_widget = QListWidget()
         self.col_list_widget.setAlternatingRowColors(True)
+        #self.col_list_widget.setAutoFillBackground(True)
         self.col_list_widget.itemClicked.connect(self._on_col_selected)
         layout.addWidget(self.col_list_widget)
         return panel
@@ -4794,7 +4796,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
 
         #    Header row: title + [T] view-toggle                           
         hdr_row = QHBoxLayout()
-        self._col_models_header = QLabel("COL Models")
+        self._col_models_header = QLabel("Collisions")
         self._col_models_header.setFont(QFont("Arial", 10, QFont.Weight.Bold))
         hdr_row.addWidget(self._col_models_header)
         hdr_row.addStretch()
@@ -4817,7 +4819,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         btn_layout.setContentsMargins(0, 0, 0, 0)
         btn_layout.setSpacing(3)
 
-        self.open_col_btn = QPushButton("Open")
+        self.open_col_btn = QPushButton("")
         self.open_col_btn.setFont(self.button_font)
         self.open_col_btn.setIcon(self.icon_factory.open_icon(color=icon_color))
         self.open_col_btn.setIconSize(QSize(20, 20))
@@ -4825,7 +4827,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         self.open_col_btn.clicked.connect(self._open_file)
         btn_layout.addWidget(self.open_col_btn)
 
-        self.save_col_btn = QPushButton("Save")
+        self.save_col_btn = QPushButton("")
         self.save_col_btn.setFont(self.button_font)
         self.save_col_btn.setIcon(self.icon_factory.save_icon(color=icon_color))
         self.save_col_btn.setIconSize(QSize(20, 20))
@@ -4834,7 +4836,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         self.save_col_btn.setEnabled(True)
         btn_layout.addWidget(self.save_col_btn)
 
-        self.export_col_btn = QPushButton("Extract")
+        self.export_col_btn = QPushButton("")
         self.export_col_btn.setFont(self.button_font)
         self.export_col_btn.setIcon(self.icon_factory.package_icon(color=icon_color))
         self.export_col_btn.setIconSize(QSize(20, 20))
@@ -6418,6 +6420,24 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
         print("======================\n")
 
 
+    def _on_theme_changed(self): #vers 1
+        """Called when app theme switches -- reset viewport bg and repaint panels."""
+        # Reset viewport so _set_theme_bg re-reads the new theme color
+        pw = getattr(self, 'preview_widget', None)
+        if pw and hasattr(pw, '_theme_bg_set'):
+            pw._theme_bg_set = False
+            pw.update()
+        # Force palette refresh on left panel list widget
+        if hasattr(self, 'col_list_widget') and self.col_list_widget:
+            self.dff_list_widget.setStyleSheet(
+                "QListWidget { background: palette(base); color: palette(windowText); "
+                "border: none; } "
+                "QListWidget::item:selected { background: palette(highlight); "
+                "color: palette(highlightedText); }")
+        # Repaint the whole workshop
+        self.update()
+
+
     def _apply_theme(self): #vers 6
         """Apply global app theme — uses QApplication stylesheet set by app_settings."""
         try:
@@ -7463,6 +7483,7 @@ class COLWorkshop(ToolMenuMixin, QWidget): #vers 4
                 self.col_search_box.setFocus()
             else:
                 self.col_search_box.clear()
+
 
     def _filter_col_list(self, text: str): #vers 1
         """Filter COL list by search text."""
