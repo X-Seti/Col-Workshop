@@ -1,6 +1,46 @@
-#this belongs in root /ChangeLog.md - Version: 32
+#this belongs in root /ChangeLog.md - Version: 33
 
-## March–April 2026 — TXD GTA3/VC fixes, COL ops, log dedup
+## July 2026 — Native QToolBar ribbon rebuild
+
+**col_workshop.py:**
+- Replaced the old DockableToolbar-based panels (_create_transform_icon_panel,
+  _create_preview_controls, plus their reflow/grid helpers) with a native
+  QMainWindow + QToolBar system - Transform, Navigation, Render ribbons.
+  RibbonManagerDialog added: two-pane dialog to reassign actions between
+  toolbars, create/delete toolbars, save/load named presets, drag to
+  reorder, plus an icon-size slider (was only reachable via toolbar
+  right-click before).
+- Bottom info panel (COL name field, format combo, switch/convert/
+  compress/uncompress/import/export, shadow mesh view/create/remove) had
+  a dual wide-row/narrow-row duplication (two full sets of buttons,
+  toggled by panel width via resizeEvent) - replaced with three more
+  ribbons: Name, Format, Shadow Mesh. The old width-based row toggle
+  simplified to a no-op now that QToolBar compacts natively.
+- Mid-cleanup mistake: a dead-code deletion pass accidentally removed
+  the live Surface Data tab (_create_surface_tab + 9 helper methods) that
+  happened to sit between two genuinely-dead ribbon functions in the same
+  line range - caught from the resulting crash (AttributeError on
+  startup), restored verbatim from the pre-rebuild commit. Every
+  subsequent deletion in this file was diffed against a snapshot before
+  committing, from that point on.
+- Icon-scale persistence bug fixed: the Ribbon Manager's icon-size
+  slider wrote to col_workshop.json but nothing ever read it back on the
+  next launch, so icon size silently reset to 20px every time regardless
+  of what was saved.
+- Ribbon layout save/restore made version-aware: a _RIBBON_LAYOUT_VERSION
+  class constant (bumped 1 -> 2 when Name/Format/Shadow Mesh were added)
+  is now passed into QMainWindow.saveState()/restoreState(), so a stale
+  save from an older ribbon structure is cleanly rejected instead of Qt
+  silently failing to restore anything. restoreState()'s return value is
+  checked/logged, and all 6 ribbons are force-shown after every restore
+  attempt regardless of outcome - there's no user-facing way to have
+  intentionally hidden one, so any hidden result is corrected rather than
+  respected.
+- Dedicated quad_view_icon added to imgfactory_svg_icons.py for Model
+  Workshop's new 4-Pane View toggle (was reusing fit_grid_icon, which
+  means "zoom to fit" not "split view").
+
+
 
 ### Build 180 — Fix PAL8/PAL4 pixel data offset (4-byte size prefix)
 - **Root cause**: GTA3/VC TXD PAL8 layout is `palette(1024 raw) + pixel_size(4) + pixels(w*h)`
