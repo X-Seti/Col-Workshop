@@ -1,0 +1,40 @@
+# this belongs in root /.github/workflows/windows-build.yml - Version: 1
+# X-Seti - Sept 29 2026 - Col Workshop - Windows exe build (PyInstaller)
+name: Windows build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller PyQt6 numpy PyOpenGL pycryptodome mss Pillow
+
+      - name: Optional LZO support
+        continue-on-error: true
+        run: pip install python-lzo
+
+      - name: Build exe
+        run: pyinstaller --noconfirm col_workshop.spec
+
+      - name: Import check
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          python -c "import sys; sys.path.insert(0, '.'); from PyQt6.QtWidgets import QApplication; app = QApplication(sys.argv); from apps.components.Col_Editor.col_workshop import COLWorkshop; w = COLWorkshop(); print('COLWorkshop OK')"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Col_Workshop_Windows
+          path: dist/Col_Workshop

@@ -1,4 +1,8 @@
-#this belongs in root /ChangeLog.md - Version: 36
+#this belongs in root /ChangeLog.md - Version: 37
+
+## Sep 29 2026 - Windows exe build
+- col_workshop.spec (PyInstaller, onedir) and GitHub Actions windows-build.yml; artifact Col_Workshop_Windows.
+- xcb platform forced on Linux only (col_workshop, model_viewer); Windows now starts.
 
 ## Sep 29 2026 - COL Workshop fixes, Build 431.92
 - Mesh/surface editor, duplicate, copy used hidden list; now use selected model.
