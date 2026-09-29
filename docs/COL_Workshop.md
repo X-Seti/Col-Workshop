@@ -83,7 +83,7 @@ Hotkeys can be changed in Settings.
 
 ## Settings files
 - Source run: `~/.config/imgfactory/` (col_workshop.json: ribbon layout, splitter sizes).
-- Windows exe: `settings/` folder beside `Col_Workshop.exe` (portable; keep the folder writable).
+- Windows exe: `settings/` folder beside `Col_Workshop.exe`, theme settings included (portable; keep the folder writable). First run copies the bundled defaults there.
 - Themes: `apps/themes/*.json`.
 
 ## Code layout

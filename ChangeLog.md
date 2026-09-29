@@ -1,4 +1,7 @@
-#this belongs in root /ChangeLog.md - Version: 39
+#this belongs in root /ChangeLog.md - Version: 40
+
+## Sep 29 2026 - Exe settings default
+- Theme settings (appfactory.settings.json) also saved in settings/ beside the exe; bundled file copied as default on first run.
 
 ## Sep 29 2026 - Portable exe settings
 - Exe saves ribbons, splitters and tool settings in settings/ beside Col_Workshop.exe (get_user_config_dir).
