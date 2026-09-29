@@ -1,4 +1,4 @@
-#this belongs in apps/components/Col_Editor/col_mesh_editor.py - Version: 1
+#this belongs in apps/components/Col_Editor/col_mesh_editor.py - Version: 5
 # X-Seti - March 2026 - IMG Factory 1.6 - COL Mesh Editor Dialog
 
 """
@@ -13,6 +13,7 @@ Features:
 """
 
 import copy
+from apps.methods.grip_splitter import GripSplitter
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QSplitter,
     QTableWidget, QTableWidgetItem, QHeaderView,
@@ -41,28 +42,16 @@ def _build_material_color_cache(game: COLGame = COLGame.SA) -> dict: #vers 1
 # Default caches (SA) — rebuilt when game version changes
 _MAT_COLORS_SA = _build_material_color_cache(COLGame.SA)
 _MAT_COLORS_VC = _build_material_color_cache(COLGame.VC)
-_DEFAULT_MAT_COLOR = self._get_ui_color('viewport_text')
+_DEFAULT_MAT_COLOR = QColor(120, 120, 120)
 
 
 ##class COLMeshEditorViewport -
 class COLMeshEditorViewport(QWidget):
 
-    def _get_ui_color(self, key): #vers 1
-        """Get a theme-aware QColor from app_settings. No hardcoded colors."""
-        from PyQt6.QtGui import QColor
-        try:
-            app_settings = getattr(self, 'app_settings', None) or \
-                getattr(getattr(self, 'main_window', None), 'app_settings', None)
-            if app_settings and hasattr(app_settings, 'get_ui_color'):
-                return app_settings.get_ui_color(key)
-        except Exception:
-            pass
-        pal = self.palette()
-        if key == 'viewport_bg':
-            return pal.color(pal.ColorRole.Base)
-        if key == 'viewport_text':
-            return pal.color(pal.ColorRole.PlaceholderText)
-        return pal.color(pal.ColorRole.WindowText)
+    def _get_ui_color(self, key): #vers 2
+        """Theme QColor via shared helper."""
+        from apps.methods.ui_color import get_ui_color
+        return get_ui_color(self, key)
     """Mini 2D viewport for the mesh editor — shows faces with selection highlight."""
 
     # Signal to editor that selection changed from viewport click
@@ -375,7 +364,7 @@ class COLMeshEditorViewport(QWidget):
 class COLMeshEditor(QDialog): #vers 1
     """Dialog for editing COL mesh faces and vertices with undo support."""
 
-    def __init__(self, workshop, model_index, parent=None): #vers 2
+    def __init__(self, workshop, model_index, parent=None): #vers 3
         super().__init__(parent)
         self.workshop    = workshop
         self.model_index = model_index
@@ -407,7 +396,7 @@ class COLMeshEditor(QDialog): #vers 1
         root.setSpacing(4)
 
         # - Main splitter: tabs left, viewport right
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter = GripSplitter(Qt.Orientation.Horizontal)
 
         # - Tab widget
         self.tabs = QTabWidget()
@@ -453,7 +442,7 @@ class COLMeshEditor(QDialog): #vers 1
 
         # - Bottom buttons
         bot = QHBoxLayout()
-        self._undo_btn = self._btn(bot, "↩ Undo  [Ctrl+Z]", self._undo)
+        self._undo_btn = self._btn(bot, "Undo  [Ctrl+Z]", self._undo)
         self._undo_btn.setEnabled(False)
         self._btn(bot, "Select All  [Ctrl+A]", self._select_all)
         self._btn(bot, "Deselect  [Ctrl+D]",   self._deselect_all)
@@ -463,10 +452,17 @@ class COLMeshEditor(QDialog): #vers 1
         root.addLayout(bot)
 
 
-    def _build_mesh_tab(self): #vers 1
+    def _btn(self, layout, text, slot): #vers 1
+        """Add push button wired to slot; returns it."""
+        b = QPushButton(text)
+        b.clicked.connect(slot)
+        layout.addWidget(b)
+        return b
+
+    def _build_mesh_tab(self): #vers 2
         """Faces + vertices sub-panel."""
         w = QWidget(); lay = QVBoxLayout(w); lay.setSpacing(4)
-        inner = QSplitter(Qt.Orientation.Horizontal)
+        inner = GripSplitter(Qt.Orientation.Horizontal)
 
         # Face table
         face_grp = QGroupBox("Faces")
@@ -519,7 +515,7 @@ class COLMeshEditor(QDialog): #vers 1
         self._af_mat = QComboBox()
         self._af_mat.setMinimumWidth(200)
         al.addWidget(self._af_mat)
-        self._btn(al, "➕ Add", self._commit_add_face)
+        self._btn(al, "Add", self._commit_add_face)
         lay.addWidget(add_grp)
         return w
 
@@ -555,7 +551,7 @@ class COLMeshEditor(QDialog): #vers 1
         al.addWidget(QLabel("Mat:"))
         self._b_mat = QSpinBox(); self._b_mat.setRange(0,70); self._b_mat.setMaximumWidth(48)
         al.addWidget(self._b_mat)
-        self._btn(al, "➕ Add", self._commit_add_box)
+        self._btn(al, "Add", self._commit_add_box)
         lay.addWidget(add_grp)
         return w
 
@@ -591,7 +587,7 @@ class COLMeshEditor(QDialog): #vers 1
         al.addWidget(QLabel("Mat:"))
         self._s_mat = QSpinBox(); self._s_mat.setRange(0,70); self._s_mat.setMaximumWidth(48)
         al.addWidget(self._s_mat)
-        self._btn(al, "➕ Add", self._commit_add_sphere)
+        self._btn(al, "Add", self._commit_add_sphere)
         lay.addWidget(add_grp)
         return w
 
@@ -965,13 +961,13 @@ class COLMeshEditor(QDialog): #vers 1
 
 
     def _add_box(self): #vers 1
-        self._status.setText("Fill in coordinates below and click ➕ Add")
+        self._status.setText("Fill in coordinates below and click Add")
 
 
     def _commit_add_box(self): #vers 1
         self._push_undo("Add box")
         from apps.methods.col_workshop_classes import COLBox
-        from apps.methods.col_core_classes import Vector3
+        from apps.methods.col_workshop_classes import Vector3
         mn = Vector3(self._bx1.value(), self._by1.value(), self._bz1.value())
         mx = Vector3(self._bx2.value(), self._by2.value(), self._bz2.value())
         mat = self._b_mat.value()
@@ -1041,13 +1037,13 @@ class COLMeshEditor(QDialog): #vers 1
 
 
     def _add_sphere(self): #vers 1
-        self._status.setText("Fill in coordinates below and click ➕ Add")
+        self._status.setText("Fill in coordinates below and click Add")
 
 
     def _commit_add_sphere(self): #vers 1
         self._push_undo("Add sphere")
         from apps.methods.col_workshop_classes import COLSphere
-        from apps.methods.col_core_classes import Vector3
+        from apps.methods.col_workshop_classes import Vector3
         centre = Vector3(self._sx.value(), self._sy.value(), self._sz.value())
         sph = COLSphere(radius=self._sr.value(), center=centre,
                         material=self._s_mat.value(), flag=0, brightness=0, light=0)
@@ -1097,7 +1093,7 @@ class COLMeshEditor(QDialog): #vers 1
         bounds = getattr(self._model,'bounds',None)
         if not bounds: return
         self._push_undo("Edit bounds")
-        from apps.methods.col_core_classes import Vector3
+        from apps.methods.col_workshop_classes import Vector3
         bounds.radius = self._bd_r.value()
         cx,cy,cz   = [s.value() for s in self._bd_c]
         mnx,mny,mnz = [s.value() for s in self._bd_mn]
@@ -1140,7 +1136,7 @@ class COLMeshEditor(QDialog): #vers 1
         r=math.sqrt(max((x-cx)**2+(y-cy)**2+(z-cz)**2 for x,y,z in pts))
         bounds = getattr(self._model,'bounds',None)
         if bounds:
-            from apps.methods.col_core_classes import Vector3
+            from apps.methods.col_workshop_classes import Vector3
             bounds.radius=r
             bounds.center=Vector3(cx,cy,cz)
             bounds.min=Vector3(min_x,min_y,min_z)

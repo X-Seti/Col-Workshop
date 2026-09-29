@@ -1,4 +1,12 @@
-#this belongs in root /ChangeLog.md - Version: 33
+#this belongs in root /ChangeLog.md - Version: 34
+
+## Sep 29 2026 - Sync from Img-Factory-1.6, split COL Workshop
+- col_workshop.py split into mixins: col_setup_ui_func, col_core_logic_func, col_win_func, col_viewport.
+- Convert dialog: per-surface GTA3/VC <-> SA mapping, SA restore, windscreen flag.
+- Splitters: ribbon-style grips, sizes saved; left pane 220px default; compact icon buttons.
+- Fixed Cycle Render Mode and Create Shadow Mesh buttons (TypeError).
+- Removed unused old copies (depends/ moved to apps/methods), committed .pyc and .log files.
+- README and docs/COL_Workshop.md added.
 
 ## July 2026 — Native QToolBar ribbon rebuild
 

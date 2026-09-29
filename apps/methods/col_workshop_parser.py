@@ -1,4 +1,4 @@
-#this belongs in methods/col_workshop_parser.py - Version: 9
+#this belongs in apps/methods/col_workshop_parser.py - Version: 11
 # X-Seti - May08 2026 - Col Workshop - COL Binary Parser
 """
 COL Binary Parser - Handles parsing binary COL data
@@ -8,9 +8,7 @@ Based on GTA Wiki specification
 
 import struct
 from typing import Tuple, List, Optional
-from apps.debug.debug_functions import img_debugger
-from apps.components.Col_Editor.depends.col_workshop_classes import (COLHeader, COLBounds, COLSphere, COLBox, COLVertex, COLFace, COLModel, COLVersion)
-from apps.components.Col_Editor.depends.col_core_classes import Vector3, COLMaterial, BoundingBox
+from apps.methods.col_workshop_classes import (COLHeader, COLBounds, COLSphere, COLBox, COLVertex, COLFace, COLModel, COLVersion)
 
 ##Classes list -
 # COLParser
@@ -65,52 +63,6 @@ class COLParser: #vers 1
         return header, offset
     
 
-    def parse_header_alt(self, data: bytes, offset: int = 0) -> Tuple[str, int, str, int, COLVersion, int]: #vers 1
-        """Parse COL model header (32 bytes)
-
-        Returns: (signature, file_size, model_name, model_id, version, new_offset)
-        """
-        try:
-            if len(data) < offset + 32:
-                raise ValueError("Data too short for COL header")
-
-            # Signature (4 bytes)
-            signature = data[offset:offset+4].decode('ascii', errors='ignore')
-            offset += 4
-
-            # File size (4 bytes)
-            file_size = struct.unpack('<I', data[offset:offset+4])[0]
-            offset += 4
-
-            # Model name (22 bytes, null-terminated)
-            name_bytes = data[offset:offset+22]
-            model_name = name_bytes.split(b'\x00')[0].decode('ascii', errors='ignore')
-            offset += 22
-
-            # Model ID (2 bytes)
-            model_id = struct.unpack('<H', data[offset:offset+2])[0]
-            offset += 2
-
-            # Determine version
-            version = COLVersion.COL_1
-            if signature.startswith('COL'):
-                version_char = signature[3] if len(signature) > 3 else '1'
-                if version_char == '\x02':
-                    version = COLVersion.COL_2
-                elif version_char == '\x03':
-                    version = COLVersion.COL_3
-                elif version_char == '\x04':
-                    version = COLVersion.COL_4
-
-            if self.debug:
-                img_debugger.debug(f"Header: {signature} v{version.value}, '{model_name}', ID:{model_id}")
-
-            return signature, file_size, model_name, model_id, version, offset
-
-        except Exception as e:
-            raise ValueError(f"Header parse error: {str(e)}")
-
-
     def parse_bounds(self, data: bytes, offset: int, version: COLVersion) -> Tuple[COLBounds, int]: #vers 1
         """
         Parse COL bounds - 40 bytes
@@ -157,119 +109,30 @@ class COLParser: #vers 1
         return bounds, offset
     
 
-    def parse_bounds_alt(self, data: bytes, offset: int, version: COLVersion) -> Tuple[COLBounds, int]: #vers 1
-        """Parse bounding box (40 bytes for COL1, 28 bytes for COL2/3)
-
-        Returns: (bounding_box, new_offset)
-        """
-        try:
-            bbox = COLBounds()
-
-            if version == COLVersion.COL_1:
-                # COL1: radius + center + min + max (40 bytes)
-                if len(data) < offset + 40:
-                    raise ValueError("Data too short for COL1 bounds")
-
-                bbox.radius = struct.unpack('<f', data[offset:offset+4])[0]
-                offset += 4
-
-                cx, cy, cz = struct.unpack('<fff', data[offset:offset+12])
-                bbox.center = Vector3(cx, cy, cz)
-                offset += 12
-
-                min_x, min_y, min_z = struct.unpack('<fff', data[offset:offset+12])
-                bbox.min = Vector3(min_x, min_y, min_z)
-                offset += 12
-
-                max_x, max_y, max_z = struct.unpack('<fff', data[offset:offset+12])
-                bbox.max = Vector3(max_x, max_y, max_z)
-                offset += 12
-            else:
-                # COL2/3: min + max + center + radius (28 bytes)
-                if len(data) < offset + 28:
-                    raise ValueError("Data too short for COL2/3 bounds")
-
-                min_x, min_y, min_z = struct.unpack('<fff', data[offset:offset+12])
-                bbox.min = Vector3(min_x, min_y, min_z)
-                offset += 12
-
-                max_x, max_y, max_z = struct.unpack('<fff', data[offset:offset+12])
-                bbox.max = Vector3(max_x, max_y, max_z)
-                offset += 12
-
-                cx, cy, cz = struct.unpack('<fff', data[offset:offset+12])
-                bbox.center = Vector3(cx, cy, cz)
-                offset += 12
-
-                bbox.radius = struct.unpack('<f', data[offset:offset+4])[0]
-                offset += 4
-
-            if self.debug:
-                img_debugger.debug(f"Bounds: r={bbox.radius:.2f}, center={bbox.center}")
-
-            return bbox, offset
-
-        except Exception as e:
-            raise ValueError(f"Bounds parse error: {str(e)}")
-
-
-    def parse_spheres(self, data: bytes, offset: int, count: int) -> Tuple[List[COLSphere], int]: #vers 4
-        """Parse collision spheres.
-        COL1 layout: radius(4) + center(12) + surface(1) + piece(1) + pad(2) = 20 bytes.
-        Verified against vehicles.col binary May 2026.
+    def parse_spheres(self, data: bytes, offset: int, count: int,
+                      version: COLVersion = COLVersion.COL_1) -> Tuple[List[COLSphere], int]: #vers 5
+        """Parse collision spheres, 20 bytes each.
+        COL1: radius(4) + center(12) + surface(4); COL2+: center(12) + radius(4) + surface(4).
         """
         spheres = []
         for _ in range(count):
             if len(data) < offset + 20:
                 raise ValueError("Data too short for sphere")
-            radius = struct.unpack('<f', data[offset:offset+4])[0]
+            if version == COLVersion.COL_1:
+                radius = struct.unpack_from('<f', data, offset)[0]
+                center = struct.unpack_from('<fff', data, offset + 4)
+            else:
+                center = struct.unpack_from('<fff', data, offset)
+                radius = struct.unpack_from('<f', data, offset + 12)[0]
+            offset += 16
+            material, flag, bright, light = data[offset:offset + 4]   # surface
             offset += 4
-            cx, cy, cz = struct.unpack('<fff', data[offset:offset+12])
-            center = (cx, cy, cz)
-            offset += 12
-            material = data[offset]      # surface type
-            flag     = data[offset + 1]  # piece
-            offset += 4  # surface(1) + piece(1) + pad(2)
             sphere = COLSphere(radius=radius, center=center,
                                material=material, flag=flag,
-                               brightness=0, light=0)
+                               brightness=bright, light=light)
             spheres.append(sphere)
         return spheres, offset
     
-
-    def parse_spheres_alt(self, data: bytes, offset: int, count: int, version: COLVersion) -> Tuple[list, int]: #vers 2
-        """Parse collision spheres.
-        COL1: radius(4) + center(12) + surface(1) + piece(1) + pad(2) = 20 bytes.
-        Verified against vehicles.col binary May 2026.
-        """
-        try:
-            spheres = []
-            sphere_size = 20
-
-            if len(data) < offset + (count * sphere_size):
-                raise ValueError(f"Data too short for {count} spheres")
-
-            for i in range(count):
-                radius = struct.unpack('<f', data[offset:offset+4])[0]
-                offset += 4
-                cx, cy, cz = struct.unpack('<fff', data[offset:offset+12])
-                center = Vector3(cx, cy, cz)
-                offset += 12
-                surface = data[offset]
-                piece   = data[offset+1]
-                offset += 4  # surface(1) + piece(1) + pad(2)
-                material = COLMaterial(surface, piece)
-                sphere = COLSphere(center, radius, material)
-                spheres.append(sphere)
-
-            if self.debug:
-                img_debugger.debug(f"Parsed {len(spheres)} spheres")
-
-            return spheres, offset
-
-        except Exception as e:
-            raise ValueError(f"Spheres parse error: {str(e)}")
-
 
     def parse_boxes(self, data: bytes, offset: int, count: int) -> Tuple[List[COLBox], int]: #vers 1
         """Parse collision boxes - 28 bytes each"""
@@ -307,54 +170,6 @@ class COLParser: #vers 1
         return boxes, offset
     
 
-    def parse_boxes_alt(self, data: bytes, offset: int, count: int, version: COLVersion) -> Tuple[list, int]: #vers 1
-        """Parse collision boxes
-
-        COL1: 32 bytes each (min + max + material + flags)
-        COL2/3: 28 bytes each (min + max + material)
-
-        Returns: (boxes_list, new_offset)
-        """
-        try:
-            boxes = []
-            # All versions: box = min(12) + max(12) + surface(4) = 28 bytes
-            # DragonFF format string "VVS" = vec3+vec3+surface = 12+12+4 = 28
-            box_size = 28
-
-            if len(data) < offset + (count * box_size):
-                raise ValueError(f"Data too short for {count} boxes")
-
-            for i in range(count):
-                # Min point (12 bytes)
-                min_x, min_y, min_z = struct.unpack('<fff', data[offset:offset+12])
-                min_point = Vector3(min_x, min_y, min_z)
-                offset += 12
-
-                # Max point (12 bytes)
-                max_x, max_y, max_z = struct.unpack('<fff', data[offset:offset+12])
-                max_point = Vector3(max_x, max_y, max_z)
-                offset += 12
-
-                # Surface properties (4 bytes: material, flag, brightness, light)
-                material_id = data[offset]
-                flag        = data[offset + 1]
-                brightness  = data[offset + 2]
-                light_val   = data[offset + 3]
-                offset += 4
-
-                material = COLMaterial(material_id, flag)
-                box = COLBox(min_point, max_point, material)
-                boxes.append(box)
-
-            if self.debug:
-                img_debugger.debug(f"Parsed {len(boxes)} boxes")
-
-            return boxes, offset
-
-        except Exception as e:
-            raise ValueError(f"Boxes parse error: {str(e)}")
-
-
     def parse_vertices(self, data: bytes, offset: int, count: int, version: COLVersion) -> Tuple[List[COLVertex], int]: #vers 1
         """
         Parse mesh vertices
@@ -391,53 +206,6 @@ class COLParser: #vers 1
         
         return vertices, offset
     
-
-    def parse_vertices_alt(self, data: bytes, offset: int, count: int, version: COLVersion) -> Tuple[list, int]: #vers 1
-        """Parse mesh vertices
-
-        COL1: 12 bytes each (3 floats)
-        COL2/3: 6 bytes each (3 int16, CRITICAL: divide by 128.0 for fixed-point conversion)
-
-        Returns: (vertices_list, new_offset)
-        """
-        try:
-            vertices = []
-
-            if version == COLVersion.COL_1:
-                # COL1: float vertices (12 bytes each)
-                vertex_size = 12
-                if len(data) < offset + (count * vertex_size):
-                    raise ValueError(f"Data too short for {count} COL1 vertices")
-
-                for i in range(count):
-                    x, y, z = struct.unpack('<fff', data[offset:offset+12])
-                    position = Vector3(x, y, z)
-                    offset += 12
-                    vertices.append(COLVertex(position))
-            else:
-                # COL2/3: int16 vertices (6 bytes each) - CRITICAL FIX: divide by 128.0
-                vertex_size = 6
-                if len(data) < offset + (count * vertex_size):
-                    raise ValueError(f"Data too short for {count} COL2/3 vertices")
-
-                for i in range(count):
-                    x_int, y_int, z_int = struct.unpack('<hhh', data[offset:offset+6])
-                    # CRITICAL: Convert int16 fixed-point to float
-                    x = x_int / 128.0
-                    y = y_int / 128.0
-                    z = z_int / 128.0
-                    position = Vector3(x, y, z)
-                    offset += 6
-                    vertices.append(COLVertex(position))
-
-            if self.debug:
-                img_debugger.debug(f"Parsed {len(vertices)} vertices")
-
-            return vertices, offset
-
-        except Exception as e:
-            raise ValueError(f"Vertices parse error: {str(e)}")
-
 
     def parse_faces(self, data: bytes, offset: int, count: int, version: COLVersion) -> Tuple[List[COLFace], int]: #vers 1
         """
@@ -494,54 +262,7 @@ class COLParser: #vers 1
         return faces, offset
     
 
-    def parse_faces_alt(self, data: bytes, offset: int, count: int, version: COLVersion) -> Tuple[list, int]: #vers 1
-        """Parse mesh faces
-
-        COL1: 16 bytes each (indices + material + light + flags)
-        COL2/3: 12 bytes each (indices + material + light + padding)
-
-        Returns: (faces_list, new_offset)
-        """
-        try:
-            faces = []
-            # DragonFF: COL1 = "IIIS" = uint32+uint32+uint32+surface = 12+4 = 16 bytes
-            #           COL2/3 = "HHHBB" = uint16+uint16+uint16+u8+u8  = 6+2  = 8 bytes
-            face_size = 16 if version == COLVersion.COL_1 else 8
-
-            if len(data) < offset + (count * face_size):
-                raise ValueError(f"Data too short for {count} faces")
-
-            for i in range(count):
-                if version == COLVersion.COL_1:
-                    # COL1: 3x uint32 indices + material(u8) + light(u8) + pad(u16) = 16 bytes
-                    a, b, c = struct.unpack('<III', data[offset:offset+12])
-                    offset += 12
-                    material_id = data[offset]
-                    light       = data[offset + 1]
-                    offset += 4  # mat(1) + light(1) + pad(2)
-                    material = COLMaterial(material_id, 0)
-                else:
-                    # COL2/3: 3x uint16 indices + material(u8) + light(u8) = 8 bytes
-                    a, b, c = struct.unpack('<HHH', data[offset:offset+6])
-                    offset += 6
-                    material_id = data[offset]
-                    light       = data[offset + 1]
-                    offset += 2
-                    material = COLMaterial(material_id, 0)
-
-                face = COLFace((a, b, c), material, light)
-                faces.append(face)
-
-            if self.debug:
-                img_debugger.debug(f"Parsed {len(faces)} faces")
-
-            return faces, offset
-
-        except Exception as e:
-            raise ValueError(f"Faces parse error: {str(e)}")
-
-
-    def parse_model(self, data: bytes, offset: int = 0) -> Tuple[Optional[COLModel], int]: #vers 3
+    def parse_model(self, data: bytes, offset: int = 0) -> Tuple[Optional[COLModel], int]: #vers 4
         """Parse complete COL model (COL1/2/3/4).
 
         COL1 layout (VERIFIED from special.col RE, March 2026):
@@ -634,7 +355,7 @@ class COLParser: #vers 1
                 #    Spheres                                                
                 if num_spheres > 0 and spheres_off > 0:
                     spheres, _ = self.parse_spheres(
-                        data, data_at(spheres_off), num_spheres)
+                        data, data_at(spheres_off), num_spheres, version)
                 else:
                     spheres = []
 
@@ -713,104 +434,6 @@ class COLParser: #vers 1
             return None, start_offset
 
 
-    def parse_counts(self, data: bytes, offset: int, version: COLVersion) -> Tuple[int, int, int, int, int]: #vers 2
-        """Parse collision element counts
-
-        Returns: (num_spheres, num_boxes, num_vertices, num_faces, new_offset)
-        """
-        try:
-            if version == COLVersion.COL_1:
-                # COL1: spheres, unknown, boxes, vertices, faces (20 bytes)
-                if len(data) < offset + 20:
-                    raise ValueError("Data too short for COL1 counts")
-
-                num_spheres = struct.unpack('<I', data[offset:offset+4])[0]
-                offset += 4
-                num_unknown = struct.unpack('<I', data[offset:offset+4])[0]
-                offset += 4
-                num_boxes = struct.unpack('<I', data[offset:offset+4])[0]
-                offset += 4
-                num_vertices = struct.unpack('<I', data[offset:offset+4])[0]
-                offset += 4
-                num_faces = struct.unpack('<I', data[offset:offset+4])[0]
-                offset += 4
-            else:
-                # COL2/3: spheres, boxes, faces, vertices (16 bytes)
-                if len(data) < offset + 16:
-                    raise ValueError("Data too short for COL2/3 counts")
-
-                num_spheres = struct.unpack('<I', data[offset:offset+4])[0]
-                offset += 4
-                num_boxes = struct.unpack('<I', data[offset:offset+4])[0]
-                offset += 4
-                num_faces = struct.unpack('<I', data[offset:offset+4])[0]
-                offset += 4
-                num_vertices = struct.unpack('<I', data[offset:offset+4])[0]
-                offset += 4
-
-            if self.debug:
-                img_debugger.debug(f"Counts: S:{num_spheres} B:{num_boxes} V:{num_vertices} F:{num_faces}")
-
-            return num_spheres, num_boxes, num_vertices, num_faces, offset
-
-        except Exception as e:
-            raise ValueError(f"Counts parse error: {str(e)}")
-
-
-    def parse_col1_model(self, data: bytes, offset: int = 0) -> Tuple[COLModel, int]: #vers 1
-        """Parse complete COL1 model"""
-        start_offset = offset
-        
-        # Parse header
-        header, offset = self.parse_header(data, offset)
-        
-        if header.version != COLVersion.COL_1:
-            raise ValueError(f"Expected COL1, got {header.version}")
-        
-        # Parse bounds
-        bounds, offset = self.parse_bounds(data, offset, header.version)
-        
-        # COL1 layout (DragonFF __read_legacy_col):
-        #   num_spheres(4) → spheres[] → skip4(unknown) → num_boxes(4) → boxes[]
-        #   → num_verts(4) → verts[] → num_faces(4) → faces[]
-        # NOTE: skip4 is AFTER sphere data, BEFORE num_boxes — not a count block.
-
-        if self.debug:
-            print(f"COL1 parse at offset 0x{offset:X}")
-
-        # Spheres
-        num_spheres = struct.unpack('<I', data[offset:offset+4])[0]; offset += 4
-        spheres, offset = self.parse_spheres(data, offset, num_spheres)
-
-        # Skip unknown (4 bytes, always 0) — AFTER spheres, BEFORE boxes
-        offset += 4
-
-        # Boxes
-        num_boxes = struct.unpack('<I', data[offset:offset+4])[0]; offset += 4
-        boxes, offset = self.parse_boxes(data, offset, num_boxes)
-
-        # Vertices
-        num_vertices = struct.unpack('<I', data[offset:offset+4])[0]; offset += 4
-        vertices, offset = self.parse_vertices(data, offset, num_vertices, header.version)
-
-        # Faces
-        num_faces = struct.unpack('<I', data[offset:offset+4])[0]; offset += 4
-        faces, offset = self.parse_faces(data, offset, num_faces, header.version)
-
-        if self.debug:
-            print(f"COL1 Counts: S={num_spheres} B={num_boxes} V={num_vertices} F={num_faces}")
-        
-        model = COLModel(
-            header=header,
-            bounds=bounds,
-            spheres=spheres,
-            boxes=boxes,
-            vertices=vertices,
-            faces=faces
-        )
-        
-        return model, offset
-    
     def _fourcc_to_version(self, fourcc: bytes) -> COLVersion: #vers 1
         """Convert FourCC to version enum"""
         if fourcc == b'COLL':
@@ -859,24 +482,25 @@ class COLWriter: #vers 1
         return struct.pack('<fff', float(v.x), float(v.y), float(v.z))
 
     @classmethod
-    def _write_bounds(cls, bounds) -> bytes:
-        """Serialise COLBounds to 40 bytes: min+max+center+radius."""
+    def _write_bounds(cls, bounds, ver=None) -> bytes: #vers 2
+        """Serialise COLBounds to 40 bytes in the version's field order."""
         import struct
         mn = getattr(bounds, 'min',    None) or getattr(bounds, 'min_point', None)
         mx = getattr(bounds, 'max',    None) or getattr(bounds, 'max_point', None)
         ct = getattr(bounds, 'center', None)
-        rd = float(getattr(bounds, 'radius', 0.0))
-        return cls._v3(mn) + cls._v3(mx) + cls._v3(ct) + struct.pack('<f', rd)
+        rd = struct.pack('<f', float(getattr(bounds, 'radius', 0.0)))
+        if ver == COLVersion.COL_1:
+            return rd + cls._v3(ct) + cls._v3(mn) + cls._v3(mx)
+        return cls._v3(mn) + cls._v3(mx) + cls._v3(ct) + rd
 
     @classmethod
-    def write_model(cls, model) -> bytes:
+    def write_model(cls, model) -> bytes: #vers 2
         """Serialise one COLModel to bytes (header + payload)."""
         import struct
-        from apps.methods.col_workshop_classes import COLVersion
 
-        ver   = model.version
-        name  = getattr(model, 'name', '') or ''
-        mid   = getattr(model, 'model_id', 0)
+        ver   = model.header.version
+        name  = model.header.name or ''
+        mid   = model.header.model_id
 
         #    choose fourcc                                               
         fourcc_map = {
@@ -897,7 +521,7 @@ class COLWriter: #vers 1
         payload += struct.pack('<H', mid)
 
         # Bounds (40 bytes)
-        payload += cls._write_bounds(model.bounds)
+        payload += cls._write_bounds(model.bounds, ver)
 
         if ver == COLVersion.COL_1:
             payload += cls._write_col1_body(model)
@@ -910,137 +534,90 @@ class COLWriter: #vers 1
         return header + bytes(payload)
 
     @classmethod
-    def _write_col1_body(cls, model) -> bytes:
-        """COL1 body after bounds: spheres + boxes + verts + faces."""
+    def _surface(cls, item) -> bytes: #vers 1
+        """4-byte surface: material, flag, brightness, light."""
         import struct
-        buf = bytearray()
+        return struct.pack('<BBBB', cls._mat_id(item),
+                           int(getattr(item, 'flag', 0) or 0) & 0xFF,
+                           int(getattr(item, 'brightness', 0) or 0) & 0xFF,
+                           int(getattr(item, 'light', 0) or 0) & 0xFF)
 
-        spheres = model.spheres or []
-        boxes   = model.boxes   or []
+    @classmethod
+    def _write_col1_body(cls, model) -> bytes: #vers 3
+        """COL1 body after bounds; matches COLParser.parse_model COL1 order."""
+        import struct
+        spheres = model.spheres  or []
+        boxes   = model.boxes    or []
         verts   = model.vertices or []
-        faces   = model.faces   or []
-
-        # Sphere count (2) + box count (2) + unk (4)
-        buf += struct.pack('<HHI', len(spheres), len(boxes), 0)
-
-        # Spheres: center(12) + radius(4) + mat(1) + flag(1) + pad(2) = 20? 
-        # COL1 sphere = 20 bytes per DragonFF
+        faces   = model.faces    or []
+        buf = bytearray(struct.pack('<I', len(spheres)))
         for s in spheres:
-            c = s.center
-            mat_id = getattr(getattr(s, 'material', None), 'material_id', 0)
-            flag   = getattr(getattr(s, 'material', None), 'flag', 0)
-            buf += struct.pack('<ffffBBH', c.x, c.y, c.z,
-                               float(s.radius), mat_id, flag, 0)
-
-        # Boxes: min(12) + max(12) + mat(1) + flag(1) + pad(2) = 28 bytes
-        for box in boxes:
-            mn = box.min_point; mx = box.max_point
-            mat_id = getattr(getattr(box, 'material', None), 'material_id', 0)
-            flag   = getattr(getattr(box, 'material', None), 'flag', 0)
-            buf += struct.pack('<ffffffBBH',
-                mn.x, mn.y, mn.z, mx.x, mx.y, mx.z, mat_id, flag, 0)
-
-        # Vertex count (2) + face count (2)
-        buf += struct.pack('<HH', len(verts), len(faces))
-
-        # Vertices: 3×float = 12 bytes
+            buf += struct.pack('<f', float(s.radius)) + cls._v3(s.center) + cls._surface(s)
+        buf += struct.pack('<I', 0)                     # unknown / lines
+        buf += struct.pack('<I', len(boxes))
+        for b in boxes:
+            buf += cls._v3(b.min) + cls._v3(b.max) + cls._surface(b)
+        buf += struct.pack('<I', len(verts))
         for v in verts:
             buf += struct.pack('<fff', float(v.x), float(v.y), float(v.z))
-
-        # Faces COL1: a(4)+b(4)+c(4)+mat(1)+light(1)+pad(2) = 16 bytes
+        buf += struct.pack('<I', len(faces))
         for f in faces:
-            mat = cls._mat_id(f)
-            light = getattr(f, 'light', 0)
-            buf += struct.pack('<IIIBBxx', int(f.a), int(f.b), int(f.c), mat, light)
-
+            buf += struct.pack('<IIIBBxx', int(f.a), int(f.b), int(f.c),
+                               cls._mat_id(f), int(getattr(f, 'light', 0) or 0) & 0xFF)
         return bytes(buf)
 
     @classmethod
-    def _write_col23_body(cls, model, ver) -> bytes:
-        """COL2/3 body after bounds: offset table + data sections."""
+    def _write_col23_body(cls, model, ver) -> bytes: #vers 3
+        """COL2/3/4 body after bounds: offset header then data blocks.
+        Offsets are from the fourcc, pointing 4 bytes before each block."""
         import struct
-        from apps.methods.col_workshop_classes import COLVersion
-
         spheres = model.spheres  or []
         boxes   = model.boxes    or []
         verts   = model.vertices or []
         faces   = model.faces    or []
 
-        # Build data sections first to know offsets
-        sphere_bytes = bytearray()
+        def _i16(val):
+            return max(-32768, min(32767, int(round(float(val) * 128.0))))
+
+        hdr_len = 36 + (12 if ver.value >= 3 else 0) + (4 if ver.value >= 4 else 0)
+        pos = 8 + 24 + 40 + hdr_len                     # fourcc+size, name+id, bounds
+        blocks = bytearray()
+
+        def _add(data):
+            nonlocal pos, blocks
+            off = pos - 4
+            blocks += data
+            pos += len(data)
+            return off
+
+        sph = bytearray()
         for s in spheres:
-            c = s.center
-            mat_id = getattr(getattr(s, 'material', None), 'material_id', 0)
-            sphere_bytes += struct.pack('<ffff', c.x, c.y, c.z, float(s.radius))
-            sphere_bytes += struct.pack('<BB', mat_id, 0)
-            sphere_bytes += b'\x00\x00'   # pad to 20 bytes
-
-        box_bytes = bytearray()
-        for box in boxes:
-            mn = box.min_point; mx = box.max_point
-            mat_id = getattr(getattr(box, 'material', None), 'material_id', 0)
-            box_bytes += struct.pack('<ffffff', mn.x, mn.y, mn.z, mx.x, mx.y, mx.z)
-            box_bytes += struct.pack('<BB', mat_id, 0)
-            box_bytes += b'\x00\x00'
-
-        vert_bytes = bytearray()
+            sph += cls._v3(s.center) + struct.pack('<f', float(s.radius)) + cls._surface(s)
+        box = bytearray()
+        for b in boxes:
+            box += cls._v3(b.min) + cls._v3(b.max) + cls._surface(b)
+        vtx = bytearray()
         for v in verts:
-            vert_bytes += struct.pack('<fff', float(v.x), float(v.y), float(v.z))
-
-        face_bytes = bytearray()
+            vtx += struct.pack('<hhh', _i16(v.x), _i16(v.y), _i16(v.z))
+        while len(vtx) % 4:
+            vtx += b'\x00'
+        fac = bytearray()
         for f in faces:
-            mat = cls._mat_id(f)
-            light = getattr(f, 'light', 0)
-            # COL2/3: uint16×3 + mat(u8) + light(u8) = 8 bytes
-            face_bytes += struct.pack('<HHHBBxx', int(f.a), int(f.b), int(f.c), mat, light) \
-                          if ver == COLVersion.COL_2 else \
-                          struct.pack('<HHHBB', int(f.a), int(f.b), int(f.c), mat, light)
+            fac += struct.pack('<HHHBB', int(f.a), int(f.b), int(f.c),
+                               cls._mat_id(f), int(getattr(f, 'light', 0) or 0) & 0xFF)
 
-        # Offset table (28 bytes) — offsets are relative to start of payload
-        # Layout after bounds(40) + name/id(24) = 64 bytes header
-        # Offset table starts at byte 40 of payload (after name+id+bounds)
-        # Actually: offsets in COL2/3 are from start of file chunk
-        # Use 0 for unused sections
-        face_group_bytes = b''  # face groups — not editing, write empty
-
-        # Offset table: sphere_cnt(2) + box_cnt(2) + unk(2) + vert_cnt(2) + face_cnt(2)
-        #               + sphere_off(4) + box_off(4) + unk_off(4) + vert_off(4) + face_off(4) + fg_off(4) + fg_cnt(2) + pad
-        # Simplified: write the full 40-byte header then sections in order
-        # We'll store offsets relative to start of model chunk (fourcc included)
-        # header = 8 bytes, name+id = 24 bytes, bounds = 40 bytes, offset_table = 28 bytes
-        hdr_size = 8 + 24 + 40   # fourcc+size + name+id + bounds
-        tbl_size = 28
-        base = hdr_size + tbl_size
-
-        off_sphere = base                           if spheres else 0
-        off_box    = off_sphere + len(sphere_bytes) if boxes   else 0
-        off_vert   = off_box    + len(box_bytes)    if verts   else 0
-        off_face   = off_vert   + len(vert_bytes)   if faces   else 0
-        off_fg     = off_face   + len(face_bytes)
-
-        tbl = struct.pack('<HHHHHHxxxxxxxxxxxxxxxx',
-                          len(spheres), len(boxes), 0,
-                          len(verts),   len(faces), 0)
-        # offsets (6×4 bytes)
-        tbl += struct.pack('<IIIIII',
-                           off_sphere, off_box, 0, off_vert, off_face, off_fg)
-        # Pad to 28 bytes if needed — the above is already 12+24=36, trim
-        tbl = struct.pack('<HHHHHxxxxxx', len(spheres), len(boxes), 0, len(verts), len(faces))
-        # Simpler: just concatenate everything without complex offset table
-        # and use 0-offsets for the table (offsets aren't critical for face material edits)
-        # Modern loaders use count fields primarily.
-        tbl = (struct.pack('<HHHHHH', len(spheres), len(boxes), 0,
-                           len(verts), len(faces), 0) +
-               struct.pack('<IIIIII', 0, 0, 0, 0, 0, 0))
-
-        buf = bytearray()
-        buf += tbl
-        buf += sphere_bytes
-        buf += box_bytes
-        buf += vert_bytes
-        buf += face_bytes
-        buf += face_group_bytes
-        return bytes(buf)
+        off_sph = _add(bytes(sph))
+        off_box = _add(bytes(box))
+        off_vtx = _add(bytes(vtx))
+        off_fac = _add(bytes(fac))
+        flags = 2 if (spheres or boxes or faces) else 0
+        hdr = struct.pack('<HHHBxIIIIIII', len(spheres), len(boxes), len(faces), 0,
+                          flags, off_sph, off_box, 0, off_vtx, off_fac, 0)
+        if ver.value >= 3:
+            hdr += struct.pack('<III', 0, 0, 0)            # no shadow mesh
+        if ver.value >= 4:
+            hdr += struct.pack('<I', 0)
+        return hdr + bytes(blocks)
 
     @classmethod
     def write_file(cls, models: list) -> bytes:

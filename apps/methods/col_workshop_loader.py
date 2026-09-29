@@ -1,4 +1,4 @@
-#this belongs in methods/col_workshop_loader.py - Version: 2
+#this belongs in apps/methods/col_workshop_loader.py - Version: 4
 # X-Seti - December21 2025 / March2026 - Col Workshop - COL File Loader
 """
 COL File Loader — high-level interface for loading COL files.
@@ -19,6 +19,8 @@ load / load_from_data diverging in behaviour.
 #   get_model
 #   get_model_by_name
 #   get_stats
+#   save_to_file
+#   to_bytes
 #   get_info
 #   is_multi_model
 #   validate
@@ -46,6 +48,7 @@ class COLFile: #vers 2
         self.load_error = ""
         self.file_path  = file_path
         self.raw_data: Optional[bytes] = None
+        self.splice_info = None
 
     #    Public load API                                                    
 
@@ -60,7 +63,7 @@ class COLFile: #vers 2
         self.file_path = path
         return self._load_bytes(data)
 
-    def load_from_file(self, file_path: str = None) -> bool: #vers 3
+    def load_from_file(self, file_path: str = None) -> bool: #vers 4
         """Load COL file from disk."""
         if not file_path or not isinstance(file_path, str):
             self.load_error = f"Invalid file path: {file_path!r}"
@@ -96,6 +99,7 @@ class COLFile: #vers 2
                 try:
                     result = self._load_bytes(mm)
                 finally:
+                    self.raw_data = None      # mmap closed; splice records already copied
                     mm.close()
             return result
         else:
@@ -118,7 +122,15 @@ class COLFile: #vers 2
         try:
             self.raw_data = data
             self.models   = self._parse_all_models(data)
+            self.splice_info = None
             if self.models:
+                # remember each model's original record so a save can keep everything
+                # the editor does not model (see col_splice.py)
+                try:
+                    from apps.methods.col_splice import tag_models
+                    self.splice_info = tag_models(self.models, data)
+                except Exception:
+                    self.splice_info = None
                 self.is_loaded = True
                 if self.debug:
                     img_debugger.success(f"Loaded {len(self.models)} model(s)")
@@ -133,13 +145,14 @@ class COLFile: #vers 2
             img_debugger.error(traceback.format_exc())
             return False
 
-    def _parse_all_models(self, data: bytes) -> List[COLModel]: #vers 3
+    def _parse_all_models(self, data: bytes) -> List[COLModel]: #vers 4
         """
         Parse all COL models from a buffer.
         COL files are linear archives: FOURCC + size + payload, repeat.
         """
         models = []
         offset = 0
+        prev_start = -1
 
         total_size = len(data)
         last_progress_pct = -1
@@ -163,17 +176,21 @@ class COLFile: #vers 2
             if fourcc not in _VALID_FOURCCS:
                 if self.debug:
                     print(f"_parse_all_models: unexpected at 0x{offset:X}: {fourcc.hex()}")
-                # Scan forward for a valid FOURCC
+                # Resync: look a few bytes back (bad size fields) then forward
                 found = False
-                for skip in range(1, min(64, total_size - offset - 8)):
-                    if data[offset + skip:offset + skip + 4] in _VALID_FOURCCS:
-                        offset += skip
+                for skip in list(range(-1, -9, -1)) + list(range(1, 64)):
+                    pos = offset + skip
+                    if pos <= prev_start or pos + 8 > total_size:
+                        continue
+                    if data[pos:pos + 4] in _VALID_FOURCCS:
+                        offset = pos
                         found = True
                         break
                 if not found:
                     break
                 fourcc = data[offset:offset + 4]
 
+            prev_start  = offset
             block_size  = struct.unpack_from('<I', data, offset + 4)[0]
             next_offset = offset + 8 + block_size   # fourcc(4)+size(4)+payload
 
@@ -241,6 +258,29 @@ class COLFile: #vers 2
             lines.append(f"  Faces:    {len(model.faces)}")
             lines.append("")
         return "\n".join(lines)
+
+    def to_bytes(self) -> bytes: #vers 1
+        """Whole COL file; untouched models keep original bytes."""
+        from apps.methods.col_workshop_parser import COLWriter
+        from apps.methods.col_splice import build_col_bytes
+        return build_col_bytes(self.models, COLWriter, self.splice_info)
+
+    def save_to_file(self, file_path: str = None) -> bool: #vers 1
+        """Write COL to file_path (default: loaded path)."""
+        path = file_path or self.file_path
+        try:
+            raw = self.to_bytes()
+            with open(path, 'wb') as f:
+                f.write(raw)
+            from apps.methods.col_splice import tag_models
+            self.raw_data = raw
+            self.splice_info = tag_models(self.models, raw)
+            self.file_path = path
+            return True
+        except Exception as e:
+            self.load_error = f"Save error: {e}"
+            img_debugger.error(self.load_error)
+            return False
 
     def validate(self) -> Tuple[bool, List[str]]: #vers 2
         errors = []
