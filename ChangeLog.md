@@ -1,4 +1,7 @@
-#this belongs in root /ChangeLog.md - Version: 40
+#this belongs in root /ChangeLog.md - Version: 41
+
+## Sep 29 2026 - Windows 11 frame
+- Exe: white window border removed (DWM border colour none), rounded corners kept.
 
 ## Sep 29 2026 - Exe settings default
 - Theme settings (appfactory.settings.json) also saved in settings/ beside the exe; bundled file copied as default on first run.
