@@ -1,4 +1,7 @@
-#this belongs in root /ChangeLog.md - Version: 38
+#this belongs in root /ChangeLog.md - Version: 39
+
+## Sep 29 2026 - Portable exe settings
+- Exe saves ribbons, splitters and tool settings in settings/ beside Col_Workshop.exe (get_user_config_dir).
 
 ## Sep 29 2026 - Windows exe icon
 - col_workshop.spec renders the SVG app icon to col_workshop.ico for the exe.

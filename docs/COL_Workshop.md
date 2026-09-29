@@ -82,7 +82,8 @@ per-surface flags. Add, Del, Dup manage entries.
 Hotkeys can be changed in Settings.
 
 ## Settings files
-- `~/.config/imgfactory/col_workshop.json`: ribbon layout, splitter sizes.
+- Source run: `~/.config/imgfactory/` (col_workshop.json: ribbon layout, splitter sizes).
+- Windows exe: `settings/` folder beside `Col_Workshop.exe` (portable; keep the folder writable).
 - Themes: `apps/themes/*.json`.
 
 ## Code layout
