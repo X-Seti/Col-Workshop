@@ -83,10 +83,12 @@ Hotkeys can be changed in Settings.
 ## Code layout
 | File | Contents |
 |------|----------|
-| `apps/components/Col_Editor/col_workshop.py` | COLWorkshop window, docking, dialogs, list |
-| `.../depends/col_setup_ui_func.py` | COLSetupUIMixin: panels, ribbons, menus, hotkeys, theme |
-| `.../depends/col_core_logic_func.py` | COLCoreLogicMixin: load/save, import/export, edits, undo |
-| `.../depends/col_win_func.py` | COLWindowMixin: frameless window, resize, splitters |
+| `apps/components/Col_Editor/col_workshop.py` | COLWorkshop: init, settings, docking, help, theme, tabs |
+| `.../depends/col_setup_ui_func.py` | COLSetupUIMixin: panels, ribbons, menus, hotkeys, theme, status |
+| `.../depends/col_core_logic_func.py` | COLCoreLogicMixin: load/save, import/export, surface, shadow, drag and drop |
+| `.../depends/col_list_func.py` | COLListMixin: model list, selection, previews, thumbnails, info |
+| `.../depends/col_paint_func.py` | COLPaintMixin: face material painting |
+| `.../depends/col_win_func.py` | COLWindowMixin: frameless window, resize, splitters, move mode |
 | `.../depends/col_viewport.py` | COL3DViewport (QPainter preview) |
 | `.../col_mesh_editor.py` | Mesh editor dialog |
 | `apps/methods/col_workshop_*.py` | COL classes, parser, loader, writer |

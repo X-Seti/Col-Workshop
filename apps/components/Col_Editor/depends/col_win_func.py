@@ -1,4 +1,4 @@
-#this belongs in apps/components/Col_Editor/depends/col_win_func.py - Version: 5
+#this belongs in apps/components/Col_Editor/depends/col_win_func.py - Version: 7
 # X-Seti - Sept 2026 - IMG Factory 1.6 - COL Workshop window functions
 
 from PyQt6.QtCore import Qt, QTimer
@@ -6,28 +6,30 @@ from PyQt6.QtWidgets import QPushButton
 
 ##class COLWindowMixin: -
 # _apply_button_mode_to_button
-# _apply_left_compact
 # _apply_col_btn_display
+# _apply_left_compact
+# _apply_window_flags
+# closeEvent
+# _enable_move_mode
 # _get_resize_corner
 # _handle_corner_resize
 # _initialize_features
 # _is_on_draggable_area
-# _on_splitter_moved
-# _restore_splitter_sizes
-# _save_splitter_sizes
-# _splitter_key
-# _set_icon_display_mode
-# _toggle_maximize
-# _update_all_buttons
-# _update_cursor
-# _update_transform_text_panel_visibility
-# closeEvent
 # mouseDoubleClickEvent
 # mouseMoveEvent
 # mousePressEvent
 # mouseReleaseEvent
+# _on_splitter_moved
 # paintEvent
 # resizeEvent
+# _restore_splitter_sizes
+# _save_splitter_sizes
+# _set_icon_display_mode
+# _splitter_key
+# _toggle_maximize
+# _update_all_buttons
+# _update_cursor
+# _update_transform_text_panel_visibility
 
 # - Window functionality
 
@@ -172,6 +174,12 @@ class COLWindowMixin: #vers 1
 
         painter.end()
 
+
+    def _enable_move_mode(self): #vers 2
+        """Enable move window mode using system move"""
+        handle = self.windowHandle()
+        if handle and hasattr(handle, 'startSystemMove'):
+            handle.startSystemMove()
 
     def _get_resize_corner(self, pos): #vers 4
         """Determine which corner is under mouse position"""
@@ -475,6 +483,34 @@ class COLWindowMixin: #vers 1
         except Exception:
             pass
         event.accept()
+
+    def _apply_window_flags(self): #vers 1
+        """Apply window flags based on settings"""
+        # Save current geometry
+        current_geometry = self.geometry()
+        was_visible = self.isVisible()
+
+        if self.use_system_titlebar:
+            # Use system window with title bar
+            self.setWindowFlags(
+                Qt.WindowType.Window |
+                Qt.WindowType.WindowMinimizeButtonHint |
+                Qt.WindowType.WindowMaximizeButtonHint |
+                Qt.WindowType.WindowCloseButtonHint
+            )
+        else:
+            # Use custom frameless window
+            self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+
+        # Restore geometry and visibility
+        self.setGeometry(current_geometry)
+
+        if was_visible:
+            self.show()
+
+        if self.main_window and hasattr(self.main_window, 'log_message'):
+            mode = "System title bar" if self.use_system_titlebar else "Custom frameless"
+            self.main_window.log_message(f"Window mode: {mode}")
 
 
 __all__ = ['COLWindowMixin']

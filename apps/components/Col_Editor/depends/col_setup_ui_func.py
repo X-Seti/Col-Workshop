@@ -1,4 +1,4 @@
-#this belongs in apps/components/Col_Editor/depends/col_setup_ui_func.py - Version: 1
+#this belongs in apps/components/Col_Editor/depends/col_setup_ui_func.py - Version: 2
 # X-Seti - Sept 29 2026 - IMG Factory 1.6 - COL Workshop UI setup
 
 """
@@ -23,6 +23,7 @@ COL Workshop UI - panes, button connects, toolbar, ribbons, menus, tabs, key sho
 # _create_status_bar
 # _create_surface_tab
 # _create_toolbar
+# _enable_name_edit
 # _get_icon_color
 # get_menu_title
 # _get_ui_color
@@ -32,6 +33,8 @@ COL Workshop UI - panes, button connects, toolbar, ribbons, menus, tabs, key sho
 # _reset_hotkeys_to_defaults
 # _restore_toolbar_state
 # _save_toolbar_state
+# _set_col_buttons_enabled
+# _set_status
 # _setup_hotkeys
 # setup_ui
 # _show_collision_context_menu
@@ -2351,3 +2354,40 @@ class COLSetupUIMixin: #vers 1
 
         if close:
             dialog.accept()
+
+    def _set_status(self, msg: str): #vers 1
+        """Write msg to the status label (whichever one exists)."""
+        if hasattr(self, 'status_label'):
+            self.status_label.setText(msg)
+        elif hasattr(self, 'status_bar') and hasattr(self.status_bar, 'showMessage'):
+            self.status_bar.showMessage(msg, 3000)
+        else:
+            print(f"[COL] {msg}")
+
+    def _enable_name_edit(self, event, is_alpha): #vers 1
+        """Enable name editing on click"""
+        self.info_name.setReadOnly(False)
+        self.info_name.selectAll()
+        self.info_name.setFocus()
+
+    def _set_col_buttons_enabled(self, enabled: bool): #vers 1
+        """Enable/disable all transform buttons in BOTH icon and text panels.
+        The text panel overwrites self.X refs, so when the icon panel is visible
+        (narrow mode) those refs point to hidden buttons. Walk the icon panel too.
+        """
+        col_btn_attrs = [
+            'flip_vert_btn', 'flip_horz_btn', 'rotate_cw_btn', 'rotate_ccw_btn',
+            'analyze_btn', 'copy_btn', 'delete_surface_btn', 'duplicate_surface_btn',
+            'paint_btn', 'surface_type_btn', 'surface_edit_btn', 'build_from_txd_btn',
+            'show_shadow_btn', 'create_shadow_btn', 'remove_shadow_btn',
+            'compress_btn', 'uncompress_btn', 'switch_btn', 'convert_btn',
+        ]
+        for attr in col_btn_attrs:
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                btn.setEnabled(enabled)
+        icon_panel = getattr(self, '_transform_icon_panel_ref', None)
+        if icon_panel:
+            from PyQt6.QtWidgets import QPushButton
+            for btn in icon_panel.findChildren(QPushButton):
+                btn.setEnabled(enabled)

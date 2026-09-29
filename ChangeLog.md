@@ -1,4 +1,10 @@
-#this belongs in root /ChangeLog.md - Version: 34
+#this belongs in root /ChangeLog.md - Version: 35
+
+## Sep 29 2026 - COL Workshop split finished
+- New depends/col_list_func.py (list, previews, thumbnails) and col_paint_func.py (paint mode).
+- Surface, shadow, import/export, load/save, drag and drop moved to col_core_logic_func.
+- col_workshop.py now init, settings, docking, help, theme, tabs only.
+- AI_Rules.md: rules 20-26 workshop layout.
 
 ## Sep 29 2026 - Sync from Img-Factory-1.6, split COL Workshop
 - col_workshop.py split into mixins: col_setup_ui_func, col_core_logic_func, col_win_func, col_viewport.

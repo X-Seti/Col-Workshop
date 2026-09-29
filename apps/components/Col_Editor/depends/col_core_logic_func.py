@@ -1,4 +1,4 @@
-#this belongs in apps/components/Col_Editor/depends/col_core_logic_func.py - Version: 1
+#this belongs in apps/components/Col_Editor/depends/col_core_logic_func.py - Version: 2
 # X-Seti - Sept 29 2026 - IMG Factory 1.6 - COL Workshop core logic
 
 """
@@ -10,39 +10,69 @@ COL Workshop core logic - file load/save, import/export, model edits, undo, surf
 # _analyze_collision
 # _apply_settings
 # _build_col_from_txd
+# _change_format
 # _compress_col
+# _compress_surface
 # _convert_surface
 # _copy_model_to_clipboard
+# _copy_surface
 # _create_new_surface
 # _create_shadow_mesh
 # _delete_selected_model
+# _delete_surface
+# dragEnterEvent
+# dragMoveEvent
+# dropEvent
 # _dropped_files
 # _duplicate_selected_model
+# _duplicate_surface
+# export_all
+# export_all_surfaces
 # _export_col_data
 # _export_col_model
+# export_selected
+# export_selected_surface
 # _export_via_ide
+# _force_save_col
 # _get_selected_model
 # _import_col_data
 # _import_replace_col_model
+# _import_selected
+# _import_surface
 # _import_via_ide
 # _invert_selection
 # _is_model_pinned
 # load_from_img_archive
 # _load_img_col_list
 # open_col_file
+# _open_col_file
 # _open_col_from_img_entry
 # _open_file
 # open_img_archive
+# _open_mipmap_manager
+# _open_surface_edit_dialog
+# _open_surface_type_dialog
 # _paste_model_from_clipboard
+# _paste_surface
 # _pick_col_from_current_img
 # _push_undo
+# _remove_shadow
 # _remove_shadow_mesh
 # _remove_via_ide
 # _rename_col_model
+# _rename_shadow_shortcut
+# _save_as_col_file
+# save_col_file
+# _save_col_file
 # _save_file
 # _save_file_as
 # _save_settings
+# _saveall_file
 # _select_all_models
+# shadow_dialog
+# _show_shadow_mesh
+# _show_surface_info
+# showEvent
 # _sort_models
 # _sort_models_desc
 # _surf_add
@@ -56,6 +86,7 @@ COL Workshop core logic - file load/save, import/export, model edits, undo, surf
 # _surf_save
 # _toggle_pin_selected
 # _uncompress_col
+# _uncompress_surface
 # _undo_last_action
 
 import os
@@ -1531,3 +1562,172 @@ class COLCoreLogicMixin: #vers 1
                     f"{os.path.basename(file_path)}")
         except Exception as e:
             QMessageBox.critical(self, "Import Error", str(e))
+
+    def _open_surface_type_dialog(self): #vers 1
+        """Show surface material type picker for selected model."""
+        rows = self.collision_list.selectionModel().selectedRows()
+        if not rows or not self.current_col_file: return
+        row = rows[0].row()
+        item = self.collision_list.item(row, 1)
+        if not item: return
+        idx = item.data(Qt.ItemDataRole.UserRole)
+        if idx is None: return
+        model = self.current_col_file.models[idx]
+        types = {0:"Default",1:"Tarmac",2:"Gravel",3:"Grass",4:"Sand",5:"Water",
+                 6:"Metal",7:"Wood",8:"Concrete",63:"Obstacle"}
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QDialogButtonBox
+        dlg = QDialog(self); dlg.setWindowTitle(f"Surface Type — {model.name}")
+        lay = QVBoxLayout(dlg)
+        lst = QListWidget()
+        for k,v in types.items(): lst.addItem(f"{k:3d}  {v}")
+        lay.addWidget(lst)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+        dlg.exec()
+
+    def _open_surface_edit_dialog(self): #vers 2
+        """Open the COL Mesh Editor for the currently selected model."""
+        try:
+            from apps.components.Col_Editor.col_mesh_editor import open_col_mesh_editor
+            open_col_mesh_editor(self, parent=self)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Mesh Editor Error", str(e))
+
+    def _show_shadow_mesh(self): #vers 2
+        """Show shadow mesh info for selected model."""
+        from PyQt6.QtWidgets import QMessageBox
+        model = self._get_selected_model()
+        if not model:
+            QMessageBox.warning(self, "No Selection", "Select a collision model first.")
+            return
+        sv = len(getattr(model, 'shadow_verts', []))
+        sf = len(getattr(model, 'shadow_faces', []))
+        if sv == 0 and sf == 0:
+            QMessageBox.information(self, "Shadow Mesh",
+                f"'{model.name}' has no shadow mesh data.\n\n"
+                "COL3+ models can have a separate low-poly shadow collision mesh.")
+        else:
+            QMessageBox.information(self, "Shadow Mesh",
+                f"Model: {model.name}\n"
+                f"Shadow vertices: {sv}\n"
+                f"Shadow faces:    {sf}\n\n"
+                "Shadow mesh is included in COL3 export.")
+
+    def _compress_surface(self, *_, **__): return self._compress_col()  #vers 1
+
+    def _copy_surface(self, *_, **__): return self._copy_model_to_clipboard()  #vers 1
+
+    def _delete_surface(self, *_, **__): return self._delete_selected_model()  #vers 1
+
+    def _duplicate_surface(self, *_, **__): return self._duplicate_selected_model()  #vers 1
+
+    def _force_save_col(self, *_, **__): return self._save_file()  #vers 1
+
+    def _import_selected(self, *_, **__): return self._import_col_data()  #vers 1
+
+    def _import_surface(self, *_, **__): return self._import_col_data()  #vers 1
+
+    def _open_col_file(self, *_, **__): return self._open_file()  #vers 1
+
+    def _open_mipmap_manager(self, *_, **__): return self._show_shadow_mesh()  #vers 1
+
+    def _paste_surface(self, *_, **__): return self._paste_model_from_clipboard()  #vers 1
+
+    def _remove_shadow(self, *_, **__): return self._remove_shadow_mesh()  #vers 1
+
+    def _save_as_col_file(self, *_, **__): return self._save_file()  #vers 1
+
+    def _save_col_file(self, *_, **__): return self._save_file()  #vers 1
+
+    def _saveall_file(self, *_, **__): return self._save_file()  #vers 1
+
+    def _uncompress_surface(self, *_, **__): return self._uncompress_col()  #vers 1
+
+    def export_all(self, *_, **__): return self._export_col_data()  #vers 1
+
+    def export_all_surfaces(self, *_, **__): return self._export_col_data()  #vers 1
+
+    def export_selected(self, *_, **__): return self._export_col_data()  #vers 1
+
+    def export_selected_surface(self, *_, **__): return self._export_col_data()  #vers 1
+
+    def save_col_file(self, *a, **kw): return self._save_file(*a, **kw)  #vers 1
+
+    def shadow_dialog(self, *_, **__): return self._create_shadow_mesh()  #vers 2
+
+    def _change_format(self, *a, **kw): pass  #vers 1
+
+    def _rename_shadow_shortcut(self, *a, **kw): pass  #vers 1
+
+    def _show_surface_info(self, *a, **kw): pass  #vers 1
+
+    def dragEnterEvent(self, event): #vers 1
+        """Accept .col and .img files."""
+        if self._dropped_files(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event): #vers 1
+        """Keep accepting while over the workshop."""
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event): #vers 3
+        """Drop .col/.img: empty workshop opens it; loaded one asks add/new tab."""
+        import sys
+        open_col_workshop = sys.modules[type(self).__module__].open_col_workshop  # avoids circular import
+        paths = self._dropped_files(event)
+        if not paths:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        loaded = bool(getattr(self.current_col_file, 'models', None))
+        tw = getattr(self.main_window, 'main_tab_widget', None)
+        if loaded:
+            from PyQt6.QtWidgets import QMessageBox
+            cols = [p for p in paths if p.lower().endswith('.col')]
+            names = ", ".join(os.path.basename(p) for p in paths[:3]) + (" ..." if len(paths) > 3 else "")
+            box = QMessageBox(self)
+            box.setWindowTitle("Dropped COL")
+            box.setText(f"{names}\n\nAdd to the open file, or open in a new tab?")
+            add_btn = box.addButton("Add to current", QMessageBox.ButtonRole.AcceptRole) if cols else None
+            new_btn = box.addButton("Open in new tab", QMessageBox.ButtonRole.ActionRole) if tw is not None else None
+            box.addButton(QMessageBox.StandardButton.Cancel)
+            box.exec()
+            clicked = box.clickedButton()
+            if add_btn is not None and clicked is add_btn:
+                self._add_models_from_files(cols)
+                for path in paths:
+                    if path.lower().endswith('.img') and tw is not None:
+                        open_col_workshop(self.main_window, path)
+            elif new_btn is not None and clicked is new_btn:
+                for path in paths:
+                    open_col_workshop(self.main_window, path)
+            return
+        first, rest = paths[0], paths[1:]
+        if first.lower().endswith('.img'):
+            self.load_from_img_archive(first)
+        else:
+            self.open_col_file(first)
+        if tw is not None and tw.indexOf(self.parentWidget()) >= 0:
+            tw.setTabText(tw.indexOf(self.parentWidget()), os.path.splitext(os.path.basename(first))[0])
+        if rest and tw is not None:
+            for path in rest:
+                open_col_workshop(self.main_window, path)
+
+    def showEvent(self, event): #vers 1
+        """When COL workshop becomes visible, try to populate from loaded IMG."""
+        super().showEvent(event)
+        if (not self.standalone_mode and
+                hasattr(self, 'col_list_widget') and
+                self.col_list_widget is not None and
+                self.col_list_widget.count() == 0):
+            # Try to get current IMG from main window
+            if self.main_window and hasattr(self.main_window, 'current_img'):
+                img = self.main_window.current_img
+                if img and img != getattr(self, 'current_img', None):
+                    self.current_img = img
+                    self._load_img_col_list()
