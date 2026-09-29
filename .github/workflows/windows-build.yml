@@ -1,4 +1,4 @@
-# this belongs in root /.github/workflows/windows-build.yml - Version: 1
+# this belongs in root /.github/workflows/windows-build.yml - Version: 2
 # X-Seti - Sept 29 2026 - Col Workshop - Windows exe build (PyInstaller)
 name: Windows build
 
@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -38,3 +41,14 @@ jobs:
         with:
           name: Col_Workshop_Windows
           path: dist/Col_Workshop
+
+      - name: Zip build
+        run: Compress-Archive -Path dist/Col_Workshop -DestinationPath Col_Workshop_Windows.zip
+
+      - name: Publish release windows-build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete windows-build --cleanup-tag -y 2>$null
+          $global:LASTEXITCODE = 0
+          gh release create windows-build Col_Workshop_Windows.zip --target $env:GITHUB_SHA --prerelease --title "Col Workshop Windows build" --notes "Latest main build. Unzip and run Col_Workshop/Col_Workshop.exe."

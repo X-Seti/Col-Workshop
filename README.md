@@ -33,8 +33,9 @@ python3 launch_col_workshop.py
 ## Windows build
 GitHub Actions (`.github/workflows/windows-build.yml`) builds `Col_Workshop.exe`
 with PyInstaller (`col_workshop.spec`) on every push to main, or by hand from the
-Actions tab. Download the `Col_Workshop_Windows` artifact: a folder with the exe,
-Qt DLLs, plugins, themes and settings. Run `Col_Workshop.exe`.
+Actions tab. Download `Col_Workshop_Windows.zip` from the `windows-build` release
+(or the Actions artifact): a folder with the exe, Qt DLLs, plugins, themes and
+settings. Run `Col_Workshop.exe`.
 
 ## Documentation
 See [docs/COL_Workshop.md](docs/COL_Workshop.md).
