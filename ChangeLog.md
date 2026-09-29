@@ -1,4 +1,7 @@
-#this belongs in root /ChangeLog.md - Version: 37
+#this belongs in root /ChangeLog.md - Version: 38
+
+## Sep 29 2026 - Windows exe icon
+- col_workshop.spec renders the SVG app icon to col_workshop.ico for the exe.
 
 ## Sep 29 2026 - Windows exe build
 - col_workshop.spec (PyInstaller, onedir) and GitHub Actions windows-build.yml; artifact Col_Workshop_Windows.
