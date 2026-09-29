@@ -1,4 +1,4 @@
-#this belongs in apps/components/Col_Editor/depends/col_core_logic_func.py - Version: 2
+#this belongs in apps/components/Col_Editor/depends/col_core_logic_func.py - Version: 4
 # X-Seti - Sept 29 2026 - IMG Factory 1.6 - COL Workshop core logic
 
 """
@@ -8,6 +8,7 @@ COL Workshop core logic - file load/save, import/export, model edits, undo, surf
 ##class COLCoreLogicMixin: -
 # _add_models_from_files
 # _analyze_collision
+# _apply_name_edit
 # _apply_settings
 # _build_col_from_txd
 # _change_format
@@ -44,12 +45,11 @@ COL Workshop core logic - file load/save, import/export, model edits, undo, surf
 # _is_model_pinned
 # load_from_img_archive
 # _load_img_col_list
-# open_col_file
 # _open_col_file
+# open_col_file
 # _open_col_from_img_entry
 # _open_file
 # open_img_archive
-# _open_mipmap_manager
 # _open_surface_edit_dialog
 # _open_surface_type_dialog
 # _paste_model_from_clipboard
@@ -60,7 +60,6 @@ COL Workshop core logic - file load/save, import/export, model edits, undo, surf
 # _remove_shadow_mesh
 # _remove_via_ide
 # _rename_col_model
-# _rename_shadow_shortcut
 # _save_as_col_file
 # save_col_file
 # _save_col_file
@@ -71,7 +70,6 @@ COL Workshop core logic - file load/save, import/export, model edits, undo, surf
 # _select_all_models
 # shadow_dialog
 # _show_shadow_mesh
-# _show_surface_info
 # showEvent
 # _sort_models
 # _sort_models_desc
@@ -135,35 +133,28 @@ class COLCoreLogicMixin: #vers 1
         self._populate_compact_col_list()
         self._set_status(f"Deleted {len(indices)} model(s).")
 
-    def _duplicate_selected_model(self): #vers 1
-        rows = self.collision_list.selectionModel().selectedRows()
-        if not rows or not self.current_col_file: return
-        row = rows[0].row()
-        item = self.collision_list.item(row, 1)
-        if not item: return
-        idx = item.data(Qt.ItemDataRole.UserRole)
-        if idx is None: return
+    def _duplicate_selected_model(self): #vers 2
+        model = self._get_selected_model()   # visible list, delegate-safe
+        if model is None: return
+        idx = self.current_col_file.models.index(model)
         import copy
         m = copy.deepcopy(self.current_col_file.models[idx])
         m.name = m.name + "_copy"
         self.current_col_file.models.insert(idx+1, m)
         self._populate_collision_list()
-        self.collision_list.selectRow(row+1)
+        self._populate_compact_col_list()
+        self._select_model_by_row(idx+1)
 
-    def _copy_model_to_clipboard(self): #vers 1
-        rows = self.collision_list.selectionModel().selectedRows()
-        if not rows or not self.current_col_file: return
-        row = rows[0].row()
-        item = self.collision_list.item(row, 1)
-        if not item: return
-        idx = item.data(Qt.ItemDataRole.UserRole)
-        if idx is None: return
+    def _copy_model_to_clipboard(self): #vers 2
+        model = self._get_selected_model()   # visible list, delegate-safe
+        if model is None: return
+        idx = self.current_col_file.models.index(model)
         import copy
         self._clipboard_model = copy.deepcopy(self.current_col_file.models[idx])
         if hasattr(self, 'paste_btn') and self.paste_btn:
             self.paste_btn.setEnabled(True)
 
-    def _paste_model_from_clipboard(self): #vers 1
+    def _paste_model_from_clipboard(self): #vers 2
         if not hasattr(self, '_clipboard_model') or not self._clipboard_model: return
         if not self.current_col_file: return
         import copy
@@ -171,7 +162,8 @@ class COLCoreLogicMixin: #vers 1
         m.name = m.name + "_paste"
         self.current_col_file.models.append(m)
         self._populate_collision_list()
-        self.collision_list.selectRow(self.collision_list.rowCount()-1)
+        self._populate_compact_col_list()
+        self._select_model_by_row(len(self.current_col_file.models) - 1)
 
     def _get_selected_model(self): #vers 4
         """Return the currently selected COLModel or None.
@@ -1055,7 +1047,7 @@ class COLCoreLogicMixin: #vers 1
         else:
             QMessageBox.warning(self, "Extract Failed", msg)
 
-    def _save_file(self): #vers 2
+    def _save_file(self): #vers 3
         """Save current COL file — serialises all models via COLWriter."""
         if not self.current_col_file:
             QMessageBox.warning(self, "Save", "No COL file loaded to save")
@@ -1070,6 +1062,14 @@ class COLCoreLogicMixin: #vers 1
             QMessageBox.warning(self, "Save", "No models to save.")
             return
 
+        damaged = getattr(self.current_col_file, 'damaged_records', 0)
+        if damaged and QMessageBox.question(
+                self, "Save COL",
+                f"{damaged} damaged record(s) could not be read when this file was opened "
+                "and will not be written.\n\nSave anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
         info = getattr(self.current_col_file, 'splice_info', None)
         if info is None and any(getattr(m, '_orig_record', None) is not None for m in models) is False \
                 and getattr(self.current_col_file, 'raw_data', None):
@@ -1189,7 +1189,7 @@ class COLCoreLogicMixin: #vers 1
         if failed:
             QMessageBox.warning(self, "Add COL", "Could not read:\n" + "\n".join(failed))
 
-    def open_col_file(self, file_path): #vers 3
+    def open_col_file(self, file_path): #vers 4
         """Open standalone COL file - supports COL1, COL2, COL3"""
         try:
             from apps.methods.col_workshop_loader import COLFile
@@ -1271,7 +1271,10 @@ class COLCoreLogicMixin: #vers 1
 
 
             if self.main_window and hasattr(self.main_window, 'log_message'):
-                self.main_window.log_message(f"✅ Loaded COL: {os.path.basename(file_path)} ({model_count} models)")
+                self.main_window.log_message(f"Loaded COL: {os.path.basename(file_path)} ({model_count} models)")
+            damaged = getattr(self.current_col_file, 'damaged_records', 0)
+            if damaged:
+                self._set_status(f"{damaged} damaged record(s) skipped while loading")
 
             print(f"Opened COL file: {file_path} with {model_count} models")
             return True
@@ -1428,7 +1431,7 @@ class COLCoreLogicMixin: #vers 1
             QMessageBox.critical(self, "Error", f"Failed to load from IMG:\n{str(e)}")
             return False
 
-    def _analyze_collision(self): #vers 1
+    def _analyze_collision(self): #vers 2
         """Analyze current COL file"""
         try:
             if not self.current_col_file or not self.current_file_path:
@@ -1450,13 +1453,13 @@ class COLCoreLogicMixin: #vers 1
             show_col_analysis_dialog(self, analysis_data, os.path.basename(self.current_file_path))
 
             if self.main_window and hasattr(self.main_window, 'log_message'):
-                self.main_window.log_message(f"✅ Analyzed COL: {os.path.basename(self.current_file_path)}")
+                self.main_window.log_message(f"Analyzed COL: {os.path.basename(self.current_file_path)}")
 
         except Exception as e:
             print(f"Error analyzing file: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to analyze file:\n{str(e)}")
 
-    def _rename_col_model(self, model, row): #vers 1
+    def _rename_col_model(self, model, row): #vers 2
         """Rename a collision model entry in the list."""
         try:
             from PyQt6.QtWidgets import QInputDialog
@@ -1476,11 +1479,11 @@ class COLCoreLogicMixin: #vers 1
                 self.save_btn.setEnabled(True)
             if self.main_window and hasattr(self.main_window, 'log_message'):
                 self.main_window.log_message(
-                    f"Renamed model {row}: '{old_name}' → '{new_name}'")
+                    f"Renamed model {row}: '{old_name}' to '{new_name}'")
         except Exception as e:
             QMessageBox.critical(self, "Rename Error", str(e))
 
-    def _export_col_model(self, model, row): #vers 1
+    def _export_col_model(self, model, row): #vers 2
         """Export a single collision model as a standalone COL file."""
         try:
             model_name = getattr(model, 'name', f'model_{row}')
@@ -1501,7 +1504,7 @@ class COLCoreLogicMixin: #vers 1
 
             if self.main_window and hasattr(self.main_window, 'log_message'):
                 self.main_window.log_message(
-                    f"Exported model '{model_name}' → {os.path.basename(file_path)}")
+                    f"Exported model '{model_name}' to {os.path.basename(file_path)}")
             QMessageBox.information(self, "Export OK",
                 f"Model '{model_name}' exported to:\n{file_path}")
         except Exception as e:
@@ -1563,15 +1566,11 @@ class COLCoreLogicMixin: #vers 1
         except Exception as e:
             QMessageBox.critical(self, "Import Error", str(e))
 
-    def _open_surface_type_dialog(self): #vers 1
+    def _open_surface_type_dialog(self): #vers 2
         """Show surface material type picker for selected model."""
-        rows = self.collision_list.selectionModel().selectedRows()
-        if not rows or not self.current_col_file: return
-        row = rows[0].row()
-        item = self.collision_list.item(row, 1)
-        if not item: return
-        idx = item.data(Qt.ItemDataRole.UserRole)
-        if idx is None: return
+        model = self._get_selected_model()   # visible list, delegate-safe
+        if model is None: return
+        idx = self.current_col_file.models.index(model)
         model = self.current_col_file.models[idx]
         types = {0:"Default",1:"Tarmac",2:"Gravel",3:"Grass",4:"Sand",5:"Water",
                  6:"Metal",7:"Wood",8:"Concrete",63:"Obstacle"}
@@ -1626,19 +1625,24 @@ class COLCoreLogicMixin: #vers 1
 
     def _force_save_col(self, *_, **__): return self._save_file()  #vers 1
 
-    def _import_selected(self, *_, **__): return self._import_col_data()  #vers 1
+    def _import_selected(self, *_, **__): #vers 2
+        """Replace the selected model from a COL file."""
+        model = self._get_selected_model()
+        if model is None:
+            QMessageBox.information(self, "Import", "Select a collision model first.")
+            return
+        self._import_replace_col_model(self.current_col_file.models.index(model))
 
     def _import_surface(self, *_, **__): return self._import_col_data()  #vers 1
 
     def _open_col_file(self, *_, **__): return self._open_file()  #vers 1
 
-    def _open_mipmap_manager(self, *_, **__): return self._show_shadow_mesh()  #vers 1
 
     def _paste_surface(self, *_, **__): return self._paste_model_from_clipboard()  #vers 1
 
     def _remove_shadow(self, *_, **__): return self._remove_shadow_mesh()  #vers 1
 
-    def _save_as_col_file(self, *_, **__): return self._save_file()  #vers 1
+    def _save_as_col_file(self, *_, **__): return self._save_file_as()  #vers 2
 
     def _save_col_file(self, *_, **__): return self._save_file()  #vers 1
 
@@ -1650,19 +1654,41 @@ class COLCoreLogicMixin: #vers 1
 
     def export_all_surfaces(self, *_, **__): return self._export_col_data()  #vers 1
 
-    def export_selected(self, *_, **__): return self._export_col_data()  #vers 1
+    def export_selected(self, *_, **__): #vers 2
+        """Export the selected model as its own COL file."""
+        model = self._get_selected_model()
+        if model is None:
+            QMessageBox.information(self, "Export", "Select a collision model first.")
+            return
+        self._export_col_model(model, self.current_col_file.models.index(model))
 
-    def export_selected_surface(self, *_, **__): return self._export_col_data()  #vers 1
+    def export_selected_surface(self, *_, **__): return self.export_selected()  #vers 2
 
     def save_col_file(self, *a, **kw): return self._save_file(*a, **kw)  #vers 1
 
     def shadow_dialog(self, *_, **__): return self._create_shadow_mesh()  #vers 2
 
-    def _change_format(self, *a, **kw): pass  #vers 1
+    def _change_format(self, text): #vers 2
+        """Format combo sets the default export format."""
+        self.default_export_format = text
 
-    def _rename_shadow_shortcut(self, *a, **kw): pass  #vers 1
+    def _apply_name_edit(self): #vers 1
+        """Commit name field edit to the selected model."""
+        self.info_name.setReadOnly(True)
+        model = self._get_selected_model()
+        new_name = self.info_name.text().strip()[:22]
+        if model is None or not new_name or new_name == model.name:
+            return
+        idx = self.current_col_file.models.index(model)
+        self._push_undo(idx)
+        old_name = model.name
+        model.name = new_name
+        self._populate_collision_list()
+        self._select_model_by_row(idx)
+        if hasattr(self, 'save_btn'):
+            self.save_btn.setEnabled(True)
+        self._set_status(f"Renamed {old_name} to {new_name} - not saved yet")
 
-    def _show_surface_info(self, *a, **kw): pass  #vers 1
 
     def dragEnterEvent(self, event): #vers 1
         """Accept .col and .img files."""

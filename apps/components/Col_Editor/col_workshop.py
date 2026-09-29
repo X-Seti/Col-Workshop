@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#this belongs in apps/components/Col_Editor/col_workshop.py - Version: 120
+#this belongs in apps/components/Col_Editor/col_workshop.py - Version: 121
 # X-Seti - August10 2025 - Converted col editor using gui base template.
 
 """
@@ -23,9 +23,9 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 # Import PyQt6
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QFont
 # QAction location varies by PyQt6 version — try bothQStyledItemDelegate
 
 # Import project modules AFTER path setup
@@ -39,7 +39,7 @@ from apps.components.Col_Editor.depends.col_win_func import COLWindowMixin
 from apps.components.Col_Editor.depends.col_paint_func import COLPaintMixin
 from apps.components.Col_Editor.depends.col_list_func import COLListMixin
 from apps.components.Col_Editor.depends.col_core_logic_func import COLCoreLogicMixin
-from apps.components.Col_Editor.depends.col_setup_ui_func import COLSetupUIMixin, App_name
+from apps.components.Col_Editor.depends.col_setup_ui_func import COLSetupUIMixin, App_name, App_build
 
 
 DEBUG_STANDALONE = False
@@ -54,6 +54,7 @@ DEBUG_STANDALONE = False
 # _launch_theme_settings
 # _open_render_settings_dialog
 # _show_amiga_locale_error
+# _show_col_info
 # show_help
 # show_settings_dialog
 # _show_settings_dialog
@@ -283,9 +284,11 @@ class COLWorkshop(COLWindowMixin, COLSetupUIMixin, COLCoreLogicMixin, COLListMix
     # These are called from Qt signals that pass e.g. bool(checked) as arg.
     # Target methods take only self, so we must not forward the signal args.
 
-    def _close_col_tab(self, *a, **kw): pass  #vers 1
-    def show_help(self, *a, **kw): pass  #vers 1
-    def show_settings_dialog(self, *a, **kw): pass  #vers 1
+    def _close_col_tab(self, index): #vers 2
+        """Close a COL file tab."""
+        self.col_tabs.removeTab(index)
+    def show_help(self, *_, **__): return self._show_col_info()  #vers 2
+    def show_settings_dialog(self, *_, **__): return self._show_settings_dialog()  #vers 2
 
 
 # - Panel Creation
@@ -1451,6 +1454,76 @@ class COLWorkshop(COLWindowMixin, COLSetupUIMixin, COLCoreLogicMixin, COLListMix
 
         dialog.exec()
 
+
+    def _show_col_info(self): #vers 5
+        """About COL Workshop: author, version, features, shortcuts."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("About COL Workshop")
+        dialog.setMinimumWidth(600)
+        dialog.setMinimumHeight(500)
+
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(15)
+
+        # Header
+        header = QLabel(f"COL Workshop - {App_name}")
+        header.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(header)
+
+        # Author info
+        author_label = QLabel("Author: X-Seti")
+        author_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(author_label)
+
+        # Version info
+        version_label = QLabel(f"Build {App_build} - September 2026")
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(version_label)
+
+        layout.addWidget(QLabel(""))  # Spacer
+
+        # Capabilities section
+        capabilities = QTextEdit()
+        capabilities.setReadOnly(True)
+        capabilities.setMaximumHeight(350)
+
+        info_text = """<b>COL Workshop Capabilities:</b><br><br>
+<b>File Operations:</b><br>
+- Open COL1/COL2/COL3/COL4, loose or inside IMG archives<br>
+- Save, save as; unedited models save byte-identical<br>
+- Drag and drop .col files: add to current or open in new tab<br><br>
+<b>Collision Viewing and Editing:</b><br>
+- 3D preview: wireframe, semi, solid; move and rotate gizmo<br>
+- Edit spheres, boxes, vertices and faces (mesh editor)<br>
+- Shadow mesh view, create, remove<br><br>
+<b>Collision Management:</b><br>
+- Rename, duplicate, delete, copy, paste, sort, pin<br>
+- Import/export single models, IDE import/export, build from TXD<br><br>
+<b>Surface Painting:</b><br>
+- Paint face materials, fill, pick; surface.dat editor<br><br>
+<b>Format Conversion:</b><br>
+- COL1 / COL2 / COL3 with GTA3/VC to SA surface mapping<br><br>
+<b>Keyboard Shortcuts:</b><br>
+- Ctrl+O / Ctrl+S / Ctrl+Shift+S: Open / Save / Save as<br>
+- Ctrl+Z: Undo<br>
+- Ctrl+C / Ctrl+V / Delete: Copy / paste / delete model<br>
+- Ctrl+D / F2: Duplicate / rename<br>
+- Ctrl+I / Ctrl+E / Ctrl+Shift+E: Import / export selected / export all<br>
+- Ctrl+A / Ctrl+Shift+I / Ctrl+F: Select all / invert / find<br>
+- F5: Refresh, Alt+Enter: model details, F1: this help<br>
+- Viewport: G move, R rotate, F fit, V render style"""
+
+        capabilities.setHtml(info_text)
+        layout.addWidget(capabilities)
+
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        close_btn.setDefault(True)
+        layout.addWidget(close_btn)
+
+        dialog.exec()
 
     def _toggle_upscale_native(self): #vers 1
         """Toggle upscale native resolution"""

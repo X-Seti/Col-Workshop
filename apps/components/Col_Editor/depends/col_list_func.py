@@ -1,4 +1,4 @@
-#this belongs in apps/components/Col_Editor/depends/col_list_func.py - Version: 2
+#this belongs in apps/components/Col_Editor/depends/col_list_func.py - Version: 3
 # X-Seti - Sept 29 2026 - IMG Factory 1.6 - COL Workshop model list
 
 """
@@ -21,12 +21,11 @@ COL Workshop model list - list population, selection, previews, thumbnails, info
 # _project_model_2d
 # refresh
 # _regenerate_all_thumbnails
-# _reload_surface_table
 # reload_surface_table
+# _reload_surface_table
 # _render_collision_preview
 # _select_model_by_row
 # _set_thumbnail_view
-# _show_col_info
 # _show_col_search
 # _show_detailed_info
 # _show_model_details
@@ -37,9 +36,7 @@ COL Workshop model list - list population, selection, previews, thumbnails, info
 # _toggle_col_view
 
 from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QDialog, QLabel, QMessageBox, QPushButton, QTableWidgetItem, QTextEdit, QVBoxLayout
-from apps.components.Col_Editor.depends.col_setup_ui_func import App_name
+from PyQt6.QtWidgets import QMessageBox, QTableWidgetItem
 from apps.components.Col_Editor.depends.col_viewport import COL3DViewport
 
 class COLListMixin: #vers 1
@@ -471,7 +468,7 @@ class COLListMixin: #vers 1
         except Exception as e:
             print("_on_collision_selected error: " + str(e))
 
-    def _select_model_by_row(self, row): #vers 4
+    def _select_model_by_row(self, row): #vers 5
         """Load model by row index into preview — works for both list views."""
         try:
             if not self.current_col_file:
@@ -486,6 +483,14 @@ class COLListMixin: #vers 1
             nb = len(getattr(model,'boxes',[]));  ns = len(getattr(model,'spheres',[]))
             nv = len(getattr(model,'vertices',[])); nf = len(getattr(model,'faces',[]))
             print(f"SELECT [{row}] {model_name}: V={nv} F={nf} B={nb} S={ns}")
+
+            # Keep both lists on this row (signals blocked, no re-entry)
+            for lw in (getattr(self, 'col_compact_list', None), getattr(self, 'collision_list', None)):
+                if lw is not None and row < lw.rowCount() and lw.currentRow() != row:
+                    lw.blockSignals(True)
+                    lw.selectRow(row)
+                    lw.setCurrentCell(row, 0)
+                    lw.blockSignals(False)
 
             # Name field
             if hasattr(self, 'info_name'):
@@ -703,92 +708,6 @@ class COLListMixin: #vers 1
             import traceback; traceback.print_exc()
             print(f"Error populating collision table: {str(e)}")
 
-    def _show_col_info(self): #vers 4
-        """Show TXD Workshop information dialog - About and capabilities"""
-        dialog = QDialog(self)
-        dialog.setWindowTitle("About COL Workshop")
-        dialog.setMinimumWidth(600)
-        dialog.setMinimumHeight(500)
-
-        layout = QVBoxLayout(dialog)
-        layout.setSpacing(15)
-
-        # Header
-        header = QLabel(f"COL Workshop - {App_name}")
-        header.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(header)
-
-        # Author info
-        author_label = QLabel("Author: X-Seti")
-        author_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(author_label)
-
-        # Version info
-        version_label = QLabel("Version: 1.5 - October 2025")
-        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(version_label)
-
-        layout.addWidget(QLabel(""))  # Spacer
-
-        # Capabilities section
-        capabilities = QTextEdit()
-        capabilities.setReadOnly(True)
-        capabilities.setMaximumHeight(350)
-
-        info_text = """<b>COL Workshop Capabilities:</b><br><br>
-
-<b>✓ File Operations:</b><br>
-
-
-<b>✓ Collision Viewing & Editing:</b><br>
-
-
-<b>✓ Collision Management:</b><br>
-
-
-<b>✓ Collision Surface Painting:</b><br>
-
-
-<b>✓ Format Support:</b><br>
-
-
-<b>✓ Advanced Features:</b><br>"""
-
-        # Add format support dynamically
-        formats_available = []
-
-        # Standard formats (always via PIL)
-
-        info_text += "<br>".join(formats_available)
-        info_text += "<br><br>"
-
-        # Settings info
-        info_text += """<b>✓ Customization:</b><br>
-- Adjustable texture name length (8-64 chars)<br>
-- Button display modes (Icons/Text/Both)<br>
-- Font customization<br>
-- Preview zoom and pan offsets<br><br>
-
-<b>Keyboard Shortcuts:</b><br>
-- Ctrl+O: Open COL<br>
-- Ctrl+S: Save COL<br>
-- Ctrl+I: Import Collision col, cst, 3ds<br>
-- Ctrl+E: Export Selected col, cst, 3ds<br>
-- Ctrl+Z: Undo<br>
-- Delete: Remove Collision<br>
-- Ctrl+D: Duplicate Collision<br>"""
-
-        capabilities.setHtml(info_text)
-        layout.addWidget(capabilities)
-
-        # Close button
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dialog.accept)
-        close_btn.setDefault(True)
-        layout.addWidget(close_btn)
-
-        dialog.exec()
 
     def _cycle_render_mode(self): #vers 2
         """Cycle viewport style wireframe/semi/solid, same as V key."""
@@ -803,6 +722,10 @@ class COLListMixin: #vers 1
 
     def switch_surface_view(self, *_, **__): return self._cycle_render_mode()  #vers 2
 
-    def _focus_search(self, *a, **kw): pass  #vers 1
+    def _focus_search(self, *_, **__): return self._show_col_search()  #vers 2
 
-    def _show_detailed_info(self, *a, **kw): pass  #vers 1
+    def _show_detailed_info(self, *_, **__): #vers 2
+        """Details dialog for the selected model."""
+        model = self._get_selected_model()
+        if model is not None:
+            self._show_model_details(model, self.current_col_file.models.index(model))

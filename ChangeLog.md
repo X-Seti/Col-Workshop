@@ -1,4 +1,11 @@
-#this belongs in root /ChangeLog.md - Version: 35
+#this belongs in root /ChangeLog.md - Version: 36
+
+## Sep 29 2026 - COL Workshop fixes, Build 431.92
+- Mesh/surface editor, duplicate, copy used hidden list; now use selected model.
+- Hotkeys wired (copy, paste, delete, duplicate, import, export); invert Ctrl+Shift+I; F1 help.
+- Save As, export selected, import, find, details wrappers fixed; name field rename saves.
+- Damaged records counted on load, save asks first.
+- Ticks, crosses, arrows replaced by SVG icons; GL toggle icon fixed; mesh editor compact buttons.
 
 ## Sep 29 2026 - COL Workshop split finished
 - New depends/col_list_func.py (list, previews, thumbnails) and col_paint_func.py (paint mode).

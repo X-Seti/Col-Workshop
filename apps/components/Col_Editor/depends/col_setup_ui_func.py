@@ -1,4 +1,4 @@
-#this belongs in apps/components/Col_Editor/depends/col_setup_ui_func.py - Version: 2
+#this belongs in apps/components/Col_Editor/depends/col_setup_ui_func.py - Version: 5
 # X-Seti - Sept 29 2026 - IMG Factory 1.6 - COL Workshop UI setup
 
 """
@@ -285,7 +285,7 @@ class RibbonManagerDialog(QDialog): #vers 1
             self._cancel_state = self._mw.saveState()
 
 
-    def _build_ui(self): #vers 3
+    def _build_ui(self): #vers 4
         from PyQt6.QtWidgets import (QSplitter, QListWidget, QListWidgetItem,
             QDialogButtonBox, QAbstractItemView, QSlider)
         outer = QVBoxLayout(self)
@@ -361,7 +361,10 @@ class RibbonManagerDialog(QDialog): #vers 1
         move_row.addWidget(QLabel("Move selected to:"))
         self._move_combo = QComboBox()
         move_row.addWidget(self._move_combo, stretch=1)
-        self._move_btn = QPushButton("Move →")
+        from apps.methods.imgfactory_svg_icons import SVGIconFactory
+        self._move_btn = QPushButton("Move")
+        self._move_btn.setIcon(SVGIconFactory.arrow_right_icon())
+        self._move_btn.setToolTip("Move selected actions to the chosen ribbon")
         self._move_btn.clicked.connect(self._move_action)
         move_row.addWidget(self._move_btn)
         rl.addLayout(move_row)
@@ -1257,7 +1260,7 @@ class COLSetupUIMixin: #vers 1
         layout.addWidget(self.col_list_widget)
         return panel
 
-    def _create_middle_panel(self): #vers 7
+    def _create_middle_panel(self): #vers 8
         """Create middle panel with COL models table — mini toolbar + view toggle."""
         panel = QFrame()
         panel.setFrameStyle(QFrame.Shape.StyledPanel)
@@ -1280,7 +1283,7 @@ class COLSetupUIMixin: #vers 1
         self.col_view_toggle_btn.setFixedWidth(32)
         self.col_view_toggle_btn.setFixedHeight(22)
         self.col_view_toggle_btn.setToolTip(
-            "Toggle view: compact list ↔ full details table")
+            "Toggle view: compact list / full details table")
         self.col_view_toggle_btn.clicked.connect(self._toggle_col_view)
         hdr_row.addWidget(self.col_view_toggle_btn)
         layout.addLayout(hdr_row)
@@ -1455,7 +1458,7 @@ class COLSetupUIMixin: #vers 1
 
         return panel
 
-    def _build_toolbars(self, mw: 'QMainWindow', icon_color: str): #vers 3
+    def _build_toolbars(self, mw: 'QMainWindow', icon_color: str): #vers 4
         """Build all QToolBar instances using QAction (Model Workshop pattern,
         Build 388+). Replaces the old DockableToolbar-based
         _create_transform_icon_panel/_create_preview_controls panels."""
@@ -1592,6 +1595,7 @@ class COLSetupUIMixin: #vers 1
         self.info_name.setMinimumWidth(140)
         self.info_name.setStyleSheet("padding: 2px; border: 1px solid palette(mid);")
         self.info_name.mousePressEvent = lambda e: self._enable_name_edit(e, False)
+        self.info_name.editingFinished.connect(self._apply_name_edit)
         tb_name.addWidget(self.info_name)
 
         #    Ribbon 5: Format                                               
@@ -1622,7 +1626,7 @@ class COLSetupUIMixin: #vers 1
         self.info_format.setMinimumWidth(90)
         tb_shadow.addWidget(self.info_format)
         _act(tb_shadow, "View Shadow Mesh",   self.icon_factory.view_icon,
-             self._open_mipmap_manager, enabled=False, attr='show_shadow_btn')
+             self._show_shadow_mesh,    enabled=False, attr='show_shadow_btn')
         _act(tb_shadow, "Create Shadow Mesh", self.icon_factory.add_icon,
              self.shadow_dialog,        enabled=False, attr='create_shadow_btn')
         _act(tb_shadow, "Remove Shadow Mesh", self.icon_factory.delete_icon,
@@ -1787,7 +1791,7 @@ class COLSetupUIMixin: #vers 1
                     tb.setVisible(True)
                     tb.toggleViewAction().setChecked(True)
 
-    def _create_paint_bar(self): #vers 3
+    def _create_paint_bar(self): #vers 4
         """Floating paint bar — QWidget child of preview_widget, sits at top of viewport.
         Called once from _create_right_panel after preview_widget is created."""
         vp = self.preview_widget
@@ -1826,7 +1830,7 @@ class COLSetupUIMixin: #vers 1
 
         lay.addSpacing(4)
 
-        def _tbtn(attr, icon_fn, tip, tool):  #vers 1
+        def _tbtn(attr, icon_fn, tip, tool):  #vers 2
             b = QPushButton()
             try:
                 b.setIcon(getattr(self.icon_factory, icon_fn)(color=ic))
@@ -1847,10 +1851,7 @@ class COLSetupUIMixin: #vers 1
             self.tool_paint_btn.setChecked(True)
 
         self.paint_undo_btn = QPushButton()
-        try:
-            self.paint_undo_btn.setIcon(self.icon_factory.undo_paint_icon(color=ic))
-        except Exception:
-            self.paint_undo_btn.setText("↩")
+        self.paint_undo_btn.setIcon(self.icon_factory.undo_paint_icon(color=ic))
         self.paint_undo_btn.setIconSize(QSize(16, 16))
         self.paint_undo_btn.setFixedSize(28, 28)
         self.paint_undo_btn.setToolTip("Undo last paint op")
@@ -1860,7 +1861,8 @@ class COLSetupUIMixin: #vers 1
 
         lay.addStretch()
 
-        self.paint_exit_btn = QPushButton("✕")
+        self.paint_exit_btn = QPushButton()
+        self.paint_exit_btn.setIcon(self.icon_factory.close_icon(20, self._get_icon_color()))
         self.paint_exit_btn.setFixedSize(28, 28)
         self.paint_exit_btn.setToolTip("Exit paint mode")
         self.paint_exit_btn.setStyleSheet(
@@ -2007,11 +2009,11 @@ class COLSetupUIMixin: #vers 1
         except Exception as e:
             print(f"Theme application error: {e}")
 
-    def _show_sort_menu(self): #vers 1
+    def _show_sort_menu(self): #vers 2
         """Show sort options popup."""
         from PyQt6.QtWidgets import QMenu
         m = QMenu(self)
-        m.addAction("Sort by Name (A→Z)",     lambda: self._sort_models('name'))
+        m.addAction("Sort by Name (A-Z)",     lambda: self._sort_models('name'))
         m.addAction("Sort by Version",         lambda: self._sort_models('version'))
         m.addAction("Sort by Faces (most)",    lambda: self._sort_models_desc('faces'))
         m.addAction("Sort by Boxes (most)",    lambda: self._sort_models_desc('boxes'))
@@ -2019,7 +2021,7 @@ class COLSetupUIMixin: #vers 1
         m.addAction("Sort by Vertices (most)", lambda: self._sort_models_desc('vertices'))
         m.exec(self.cursor().pos())
 
-    def _show_collision_context_menu(self, position): #vers 4
+    def _show_collision_context_menu(self, position): #vers 6
         """Right-click context menu for both collision model lists."""
         # Work out which list sent the signal and find the row
         sender = self.sender()
@@ -2054,7 +2056,9 @@ class COLSetupUIMixin: #vers 1
             # Tick current selection
             is_current = (abs(self._thumb_yaw - yaw) < 0.5 and
                           abs(self._thumb_pitch - pitch) < 0.5)
-            act = view_menu.addAction(("✓ " if is_current else "    ") + label)
+            act = view_menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(is_current)
             act.triggered.connect(
                 lambda _=False, y=yaw, p=pitch, l=label:
                     self._set_thumbnail_view(y, p, l))
@@ -2089,14 +2093,14 @@ class COLSetupUIMixin: #vers 1
             #    Pin (protect from editing)                              
             is_pinned = self._is_model_pinned(row)
             pin_action = menu.addAction(
-                "📌 Unpin (allow editing)" if is_pinned else "📌 Pin (protect from editing)")
+                "Unpin (allow editing)" if is_pinned else "Pin (protect from editing)")
             pin_action.triggered.connect(self._toggle_pin_selected)
 
         menu.addSeparator()
 
         #    Select / Sort                                               
         menu.addAction("Select All  [Ctrl+A]",  self._select_all_models)
-        menu.addAction("Invert Selection  [Ctrl+I]", self._invert_selection)
+        menu.addAction("Invert Selection  [Ctrl+Shift+I]", self._invert_selection)
         menu.addAction("Sort…",                 self._show_sort_menu)
 
         menu.addSeparator()
@@ -2109,178 +2113,41 @@ class COLSetupUIMixin: #vers 1
 
         menu.exec(source_list.mapToGlobal(position))
 
-    def _setup_hotkeys(self): #vers 3
-        """Setup Plasma6-style keyboard shortcuts for this application - checks for existing methods"""
+    def _setup_hotkeys(self): #vers 4
+        """Keyboard shortcuts, each wired to its COL action."""
         from PyQt6.QtGui import QShortcut, QKeySequence
-        from PyQt6.QtCore import Qt
+        SK = QKeySequence.StandardKey
 
-        # === FILE OPERATIONS ===
+        def _key(attr, seq, slot):  #vers 1
+            sc = QShortcut(QKeySequence(seq), self)
+            sc.activated.connect(slot)
+            setattr(self, attr, sc)
 
-        # Open col (Ctrl+O)
-        self.hotkey_open = QShortcut(QKeySequence.StandardKey.Open, self)
-        if hasattr(self, 'open_col_file'):
-            self.hotkey_open.activated.connect(self.open_col_file)
-        elif hasattr(self, '_open_col_file'):
-            self.hotkey_open.activated.connect(self._open_col_file)
-
-        # Save col (Ctrl+S)
-        self.hotkey_save = QShortcut(QKeySequence.StandardKey.Save, self)
-        if hasattr(self, '_save_col_file'):
-            self.hotkey_save.activated.connect(self._save_col_file)
-        elif hasattr(self, 'save_col_file'):
-            self.hotkey_save.activated.connect(self.save_col_file)
-
-        # Force Save col (Alt+Shift+S)
-        self.hotkey_force_save = QShortcut(QKeySequence("Alt+Shift+S"), self)
-        if not hasattr(self, '_force_save_col'):
-            # Create force save method inline if it doesn't exist
-            def force_save():  #vers 1
-                if not self.collision_list:
-                    from PyQt6.QtWidgets import QMessageBox
-                    QMessageBox.warning(self, "No Collision", "No Collision to save")
-                    return
-                if self.main_window and hasattr(self.main_window, 'log_message'):
-                    self.main_window.log_message("Force save triggered (Alt+Shift+S)")
-                # Call save regardless of modified state
-                if hasattr(self, '_save_col_file'):
-                    self._save_col_file()
-
-            self.hotkey_force_save.activated.connect(force_save)
-        else:
-            self.hotkey_force_save.activated.connect(self._force_save_col)
-
-        # Save As (Ctrl+Shift+S)
-        self.hotkey_save_as = QShortcut(QKeySequence.StandardKey.SaveAs, self)
-        if hasattr(self, '_save_as_col_file'):
-            self.hotkey_save_as.activated.connect(self._save_as_col_file)
-        elif hasattr(self, '_save_col_file'):
-            self.hotkey_save_as.activated.connect(self._save_col_file)
-
-        # Close (Ctrl+W)
-        self.hotkey_close = QShortcut(QKeySequence.StandardKey.Close, self)
-        self.hotkey_close.activated.connect(self.close)
-
-        # === EDIT OPERATIONS ===
-
-        # Undo (Ctrl+Z)
-        self.hotkey_undo = QShortcut(QKeySequence.StandardKey.Undo, self)
-        if hasattr(self, '_undo_last_action'):
-            self.hotkey_undo.activated.connect(self._undo_last_action)
-        # else: not implemented yet, no connection
-
-        # Copy (Ctrl+C)
-        self.hotkey_copy = QShortcut(QKeySequence.StandardKey.Copy, self)
-        if hasattr(self, '_copy_collision'):
-            self.hotkey_copy.activated.connect(self._copy_surface)
-
-
-        # Paste (Ctrl+V)
-        self.hotkey_paste = QShortcut(QKeySequence.StandardKey.Paste, self)
-        if hasattr(self, '_paste_collision'):
-            self.hotkey_paste.activated.connect(self._paste_surface)
-
-
-        # Delete (Delete)
-        self.hotkey_delete = QShortcut(QKeySequence.StandardKey.Delete, self)
-        if hasattr(self, '_delete_collision'):
-            self.hotkey_delete.activated.connect(self._delete_surface)
-
-
-        # Duplicate (Ctrl+D)
-        self.hotkey_duplicate = QShortcut(QKeySequence("Ctrl+D"), self)
-        if hasattr(self, '_duplicate_collision'):
-            self.hotkey_duplicate.activated.connect(self._duplicate_surface)
-
-
-        # Rename (F2)
-        self.hotkey_rename = QShortcut(QKeySequence("F2"), self)
-        if not hasattr(self, '_rename_collsion_shortcut'):
-            # Create rename shortcut method inline
-            def rename_shortcut():  #vers 1
-                # Focus the name input field if it exists
-                if hasattr(self, 'info_name'):
-                    self.info_name.setReadOnly(False)
-                    self.info_name.selectAll()
-                    self.info_name.setFocus()
-            self.hotkey_rename.activated.connect(rename_shortcut)
-        else:
-            self.hotkey_rename.activated.connect(self._rename_shadow_shortcut)
-
-        # === Collision OPERATIONS ===
-
-        # Import Collision (Ctrl+I)
-        self.hotkey_import = QShortcut(QKeySequence("Ctrl+I"), self)
-        if hasattr(self, '_import_collision'):
-            self.hotkey_import.activated.connect(self._import_surface)
-
-        # Export Collision (Ctrl+E)
-        self.hotkey_export = QShortcut(QKeySequence("Ctrl+E"), self)
-        if hasattr(self, 'export_selected_collision'):
-            self.hotkey_export.activated.connect(self.export_selected_surface)
-
-        # Export All (Ctrl+Shift+E)
-        self.hotkey_export_all = QShortcut(QKeySequence("Ctrl+Shift+E"), self)
-        if hasattr(self, 'export_all_collision'):
-            self.hotkey_export_all.activated.connect(self.export_all_surfaces)
-
-
-        # === VIEW OPERATIONS ===
-
-        # Refresh (F5)d_btn
-        self.hotkey_refresh = QShortcut(QKeySequence.StandardKey.Refresh, self)
-        if hasattr(self, '_reload_surface_table'):
-            self.hotkey_refresh.activated.connect(self._reload_surface_table)
-        elif hasattr(self, 'reload_surface_table'):
-            self.hotkey_refresh.activated.connect(self.reload_surface_table)
-        elif hasattr(self, 'refresh'):
-            self.hotkey_refresh.activated.connect(self.refresh)
-
-        # Properties (Alt+Enter)
-        self.hotkey_properties = QShortcut(QKeySequence("Alt+Return"), self)
-        if hasattr(self, '_show_detailed_info'):
-            self.hotkey_properties.activated.connect(self._show_detailed_info)
-        elif hasattr(self, '_show_surface_info'):
-            self.hotkey_properties.activated.connect(self._show_surface_info)
-
-        # Settings (Ctrl+,)
-        self.hotkey_settings = QShortcut(QKeySequence.StandardKey.Preferences, self)
-        if hasattr(self, '_show_settings_dialog'):
-            self.hotkey_settings.activated.connect(self._show_settings_dialog)
-        elif hasattr(self, 'show_settings_dialog'):
-            self.hotkey_settings.activated.connect(self.show_settings_dialog)
-        elif hasattr(self, '_show_settings_hotkeys'):
-            self.hotkey_settings.activated.connect(self._show_settings_hotkeys)
-
-        # === NAVIGATION ===
-
-        # Select All (Ctrl+A)
-        self.hotkey_select_all = QShortcut(QKeySequence.StandardKey.SelectAll, self)
-        self.hotkey_select_all.activated.connect(self._select_all_models)
-
-        # Invert Selection (Ctrl+I)
-        from PyQt6.QtGui import QKeySequence as _KS
-        self.hotkey_invert = QShortcut(_KS("Ctrl+I"), self)
-        self.hotkey_invert.activated.connect(self._invert_selection)
-
-        # Find (Ctrl+F)
-        self.hotkey_find = QShortcut(QKeySequence.StandardKey.Find, self)
-        if not hasattr(self, '_focus_search'):
-            # Create focus search method inline
-            def focus_search():  #vers 1
-                if hasattr(self, 'search_input'):
-                    self.search_input.setFocus()
-                    self.search_input.selectAll()
-            self.hotkey_find.activated.connect(focus_search)
-        else:
-            self.hotkey_find.activated.connect(self._focus_search)
-
-        # === HELP ===
-
-        # Help (F1)
-        self.hotkey_help = QShortcut(QKeySequence.StandardKey.HelpContents, self)
-
-        if hasattr(self, 'show_help'):
-            self.hotkey_help.activated.connect(self.show_help)
+        # File
+        _key('hotkey_open',       SK.Open,         self._open_file)
+        _key('hotkey_save',       SK.Save,         self._save_col_file)
+        _key('hotkey_force_save', "Alt+Shift+S",   self._force_save_col)
+        _key('hotkey_save_as',    SK.SaveAs,       self._save_as_col_file)
+        _key('hotkey_close',      SK.Close,        self.close)
+        # Edit
+        _key('hotkey_undo',       SK.Undo,         self._undo_last_action)
+        _key('hotkey_copy',       SK.Copy,         self._copy_surface)
+        _key('hotkey_paste',      SK.Paste,        self._paste_surface)
+        _key('hotkey_delete',     SK.Delete,       self._delete_surface)
+        _key('hotkey_duplicate',  "Ctrl+D",        self._duplicate_surface)
+        _key('hotkey_rename',     "F2",            lambda: self._enable_name_edit(None, False))
+        # Collision operations
+        _key('hotkey_import',     "Ctrl+I",        self._import_surface)
+        _key('hotkey_export',     "Ctrl+E",        self.export_selected_surface)
+        _key('hotkey_export_all', "Ctrl+Shift+E",  self.export_all_surfaces)
+        # View
+        _key('hotkey_refresh',    SK.Refresh,      self._reload_surface_table)
+        _key('hotkey_properties', "Alt+Return",    self._show_detailed_info)
+        _key('hotkey_settings',   SK.Preferences,  self._show_settings_dialog)
+        _key('hotkey_select_all', SK.SelectAll,    self._select_all_models)
+        _key('hotkey_invert',     "Ctrl+Shift+I",  self._invert_selection)
+        _key('hotkey_find',       SK.Find,         self._focus_search)
+        _key('hotkey_help',       SK.HelpContents, self.show_help)
 
         if self.main_window and hasattr(self.main_window, 'log_message'):
             self.main_window.log_message("Hotkeys initialized (Plasma6 standard)")

@@ -1,4 +1,4 @@
-#this belongs in apps/components/Col_Editor/depends/col_viewport.py - Version: 1
+#this belongs in apps/components/Col_Editor/depends/col_viewport.py - Version: 3
 # X-Seti - Sept 29 2026 - IMG Factory 1.6 - COL Workshop 3D viewport
 
 """
@@ -331,7 +331,7 @@ class COL3DViewport(QWidget): #vers 2
 
 
     #    mouse                                                             
-    def mousePressEvent(self, event):  #vers 1
+    def mousePressEvent(self, event):  #vers 2
         mx, my = event.position().x(), event.position().y()
         W, H = self.width(), self.height()
         if event.button() == Qt.MouseButton.LeftButton:
@@ -347,9 +347,9 @@ class COL3DViewport(QWidget): #vers 2
                     _ARW = 22
                     ws = self._find_workshop()
                     if ws:
-                        if mx <= rx + _ARW:           # ◀ prev
+                        if mx <= rx + _ARW:           # prev arrow
                             ws._paint_cycle_mat(-1)
-                        elif mx >= rx + _MAT_W - _ARW: # ▶ next
+                        elif mx >= rx + _MAT_W - _ARW: # next arrow
                             ws._paint_cycle_mat(+1)
                         else:                           # mat name chip — open list popup
                             ws._open_paint_mat_popup()
@@ -392,7 +392,7 @@ class COL3DViewport(QWidget): #vers 2
                                         combo.setCurrentIndex(i)
                                         break
                             ws._paint_active_mat = picked
-                            # Sync _paint_mat_idx so ◀▶ arrows start from picked mat
+                            # Sync _paint_mat_idx so prev/next arrows start from picked mat
                             lst = getattr(ws, '_paint_mat_list', [])
                             mat_ids = [m[0] for m in lst]
                             if picked in mat_ids:
@@ -425,7 +425,7 @@ class COL3DViewport(QWidget): #vers 2
                                         f2.material = self._paint_material
                                     count += 1
                             if ws:
-                                ws._set_status(f"Filled {count} faces (mat {src_id} → {self._paint_material})")
+                                ws._set_status(f"Filled {count} faces (mat {src_id} to {self._paint_material})")
 
                     else:  # paint
                         if hasattr(face, 'material'):
@@ -677,7 +677,7 @@ class COL3DViewport(QWidget): #vers 2
         self.update()
 
 
-    def contextMenuEvent(self, event):  #vers 1
+    def contextMenuEvent(self, event):  #vers 2
         from PyQt6.QtWidgets import QMenu
         m = QMenu(self)
         m.addAction("Top",       lambda: self._set_angles(0,   0))
@@ -694,8 +694,9 @@ class COL3DViewport(QWidget): #vers 2
         for style,label in [('wireframe','Wireframe [V]'),
                              ('semi',     'Semi-transparent [V]'),
                              ('solid',    'Solid [V]')]:
-            tick = '✓ ' if self._render_style == style else '    '
-            m.addAction(tick+label, lambda s=style: self.set_render_style(s))
+            act = m.addAction(label, lambda s=style: self.set_render_style(s))
+            act.setCheckable(True)
+            act.setChecked(self._render_style == style)
         m.exec(event.globalPos())
 
 
@@ -704,11 +705,11 @@ class COL3DViewport(QWidget): #vers 2
 
 
     #    paint                                                              
-    def paintEvent(self, event):  #vers 3
+    def paintEvent(self, event):  #vers 4
         """Fully self-contained paint — grid, mesh, boxes, spheres, bounds, gizmo, HUD."""
         from PyQt6.QtGui import (QPainter, QColor, QFont, QPen, QBrush,
                                   QPolygonF, QLinearGradient)
-        from PyQt6.QtCore import QPointF, QRectF
+        from PyQt6.QtCore import QPointF, QRectF, QRect
         import math
 
         p = QPainter(self)
@@ -965,7 +966,6 @@ class COL3DViewport(QWidget): #vers 2
             _ROW2_Y   = _ROW1_Y + _CHIP_H + 2   # y of tool buttons row
             #                                                             
 
-            from PyQt6.QtCore import QRect
             mat_id = self._paint_material
 
             # Use cached list if available, else fall back to direct lookup
@@ -979,10 +979,10 @@ class COL3DViewport(QWidget): #vers 2
                 hex_col  = get_material_colour(mat_id, COLGame.SA)
             mc = QColor(f"#{hex_col}")
 
-            # Row 1: [◀] [■ mat swatch | id — name | ▶]
+            # Row 1: [prev] [swatch | id - name] [next]
             _ARW = 22   # arrow button width
             rx = W - _MAT_W - _MARGIN
-            # ◀ prev button
+            # prev material button
             # Theme-aware paint bar arrows
             _pal    = self.palette()
             _btn_bg = _pal.color(_pal.ColorRole.Button)
@@ -992,8 +992,10 @@ class COL3DViewport(QWidget): #vers 2
             _txt_c  = _pal.color(_pal.ColorRole.WindowText)
             p.setBrush(QBrush(_btn_bg)); p.setPen(QPen(_acc, 1))
             p.drawRoundedRect(rx, _ROW1_Y, _ARW, _CHIP_H, 3, 3)
-            p.setPen(_btn_tx); p.setFont(QFont('Arial',10,QFont.Weight.Bold))
-            p.drawText(rx+5, _ROW1_Y+17, "◀")
+            from apps.methods.imgfactory_svg_icons import SVGIconFactory as icon_fac
+            _asz = min(_ARW, _CHIP_H) - 6
+            icon_fac.arrow_left_icon(color=_btn_tx.name()).paint(
+                p, QRect(rx + (_ARW - _asz)//2, _ROW1_Y + (_CHIP_H - _asz)//2, _asz, _asz))
             # material name chip
             p.setBrush(QBrush(_chip_c)); p.setPen(QPen(_acc, 1))
             p.drawRoundedRect(rx+_ARW+2, _ROW1_Y, _MAT_W-_ARW*2-4, _CHIP_H, 4, 4)
@@ -1001,17 +1003,16 @@ class COL3DViewport(QWidget): #vers 2
             p.drawRoundedRect(rx+_ARW+6, _ROW1_Y+4, _CHIP_H-8, _CHIP_H-8, 2, 2)
             p.setPen(_txt_c); p.setFont(QFont('Arial',8,QFont.Weight.Bold))
             p.drawText(rx+_ARW+_CHIP_H+4, _ROW1_Y+17, f"{mat_id} — {mat_name[:20]}")
-            # ▶ next button
+            # next material button
             p.setBrush(QBrush(_btn_bg)); p.setPen(QPen(_acc, 1))
             p.drawRoundedRect(rx+_MAT_W-_ARW, _ROW1_Y, _ARW, _CHIP_H, 3, 3)
-            p.setPen(_btn_tx); p.setFont(QFont('Arial',10,QFont.Weight.Bold))
-            p.drawText(rx+_MAT_W-_ARW+4, _ROW1_Y+17, "▶")
+            icon_fac.arrow_right_icon(color=_btn_tx.name()).paint(
+                p, QRect(rx+_MAT_W-_ARW + (_ARW - _asz)//2, _ROW1_Y + (_CHIP_H - _asz)//2, _asz, _asz))
 
             # Row 2: tool buttons using SVG icons via QIcon.paint()
             tool = getattr(self, '_tool_mode', 'paint')
             tx = W - _MAT_W - _MARGIN
             ws = self._find_workshop()
-            icon_fac = getattr(ws, 'icon_factory', None) if ws else None
 
             tool_defs = [
                 ('paint',   'paint_icon',   '#ff8c00'),   # orange when active
@@ -1026,15 +1027,11 @@ class COL3DViewport(QWidget): #vers 2
                 p.setBrush(QBrush(bg)); p.setPen(QPen(bdr, 1))
                 p.drawRoundedRect(tx, _ROW2_Y, _BTN_W, _CHIP_H, 3, 3)
                 # Draw SVG icon centred in button
-                if icon_fac:
-                    icon_col = '#000000' if active else active_col
-                    try:
-                        icon = getattr(icon_fac, icon_fn)(color=icon_col)
-                        icon_x = tx + (_BTN_W - _ICON_SZ) // 2
-                        icon_y = _ROW2_Y + (_CHIP_H - _ICON_SZ) // 2
-                        icon.paint(p, QRect(icon_x, icon_y, _ICON_SZ, _ICON_SZ))
-                    except Exception:
-                        pass
+                icon_col = '#000000' if active else active_col
+                icon = getattr(icon_fac, icon_fn)(color=icon_col)
+                icon_x = tx + (_BTN_W - _ICON_SZ) // 2
+                icon_y = _ROW2_Y + (_CHIP_H - _ICON_SZ) // 2
+                icon.paint(p, QRect(icon_x, icon_y, _ICON_SZ, _ICON_SZ))
                 tx += _BTN_W + _BTN_GAP
 
             # Tool name label below row 2 (acts as tooltip)
@@ -1050,55 +1047,43 @@ class COL3DViewport(QWidget): #vers 2
             p.setBrush(QBrush(_pal5.color(_pal5.ColorRole.Button)))
             p.setPen(QPen(_pal5.color(_pal5.ColorRole.Mid), 1))
             p.drawRoundedRect(tx, _ROW2_Y, _BTN_W, _CHIP_H, 3, 3)
-            if icon_fac:
-                try:
-                    icon = icon_fac.undo_paint_icon(color=_pal5.color(_pal5.ColorRole.ButtonText).name())
-                    icon_x = tx + (_BTN_W - _ICON_SZ)//2
-                    icon_y = _ROW2_Y + (_CHIP_H - _ICON_SZ)//2
-                    icon.paint(p, QRect(icon_x, icon_y, _ICON_SZ, _ICON_SZ))
-                except Exception:
-                    p.setPen(QColor(180,200,255)); p.setFont(QFont('Arial',9))
-                    p.drawText(tx+6, _ROW2_Y+15, "↩")
+            icon = icon_fac.undo_paint_icon(color=_pal5.color(_pal5.ColorRole.ButtonText).name())
+            icon_x = tx + (_BTN_W - _ICON_SZ)//2
+            icon_y = _ROW2_Y + (_CHIP_H - _ICON_SZ)//2
+            icon.paint(p, QRect(icon_x, icon_y, _ICON_SZ, _ICON_SZ))
             tx += _BTN_W + _BTN_GAP
 
             # Save button (between undo and exit)
             p.setBrush(QBrush(self.palette().color(self.palette().ColorRole.Button)))
             p.setPen(QPen(QColor(80,200,100), 1))
             p.drawRoundedRect(tx, _ROW2_Y, _BTN_W, _CHIP_H, 3, 3)
-            if icon_fac:
-                try:
-                    icon = icon_fac.save_icon(color='#66bb6a')
-                    icon_x = tx + (_BTN_W - _ICON_SZ)//2
-                    icon_y = _ROW2_Y + (_CHIP_H - _ICON_SZ)//2
-                    icon.paint(p, QRect(icon_x, icon_y, _ICON_SZ, _ICON_SZ))
-                except Exception:
-                    p.setPen(QColor(100,220,120)); p.setFont(QFont('Arial',8,QFont.Weight.Bold))
-                    p.drawText(tx+5, _ROW2_Y+15, "S")
+            icon = icon_fac.save_icon(color='#66bb6a')
+            icon_x = tx + (_BTN_W - _ICON_SZ)//2
+            icon_y = _ROW2_Y + (_CHIP_H - _ICON_SZ)//2
+            icon.paint(p, QRect(icon_x, icon_y, _ICON_SZ, _ICON_SZ))
             tx += _BTN_W + _BTN_GAP
 
-            # Exit button (✕)
+            # Exit button (close icon)
             _pal6 = self.palette()
             p.setBrush(QBrush(_pal6.color(_pal6.ColorRole.Button)))
             p.setPen(QPen(QColor(200,80,60), 1))
             p.drawRoundedRect(tx, _ROW2_Y, _BTN_W, _CHIP_H, 3, 3)
-            if icon_fac:
-                try:
-                    icon = icon_fac.close_icon(color='#ef5350')
-                    icon_x = tx + (_BTN_W - _ICON_SZ)//2
-                    icon_y = _ROW2_Y + (_CHIP_H - _ICON_SZ)//2
-                    icon.paint(p, QRect(icon_x, icon_y, _ICON_SZ, _ICON_SZ))
-                except Exception:
-                    p.setPen(QColor(255,100,80)); p.setFont(QFont('Arial',9,QFont.Weight.Bold))
-                    p.drawText(tx+7, _ROW2_Y+15, "x")
+            icon = icon_fac.close_icon(color='#ef5350')
+            icon_x = tx + (_BTN_W - _ICON_SZ)//2
+            icon_y = _ROW2_Y + (_CHIP_H - _ICON_SZ)//2
+            icon.paint(p, QRect(icon_x, icon_y, _ICON_SZ, _ICON_SZ))
         else:
             bx,by,bw,bh=W-70,4,66,22
             _pal7 = self.palette()
             p.setBrush(QBrush(_pal7.color(_pal7.ColorRole.Button)))
             p.setPen(QPen(_pal7.color(_pal7.ColorRole.Mid), 1))
             p.drawRoundedRect(bx,by,bw,bh,4,4)
+            from apps.methods.imgfactory_svg_icons import SVGIconFactory as icon_fac
+            _gi = (icon_fac.arrow_up_icon if self._gizmo_mode=='translate' else icon_fac.rotate_cw_icon)(color='#c8c8dc')
+            _gi.paint(p, QRect(bx+3, by+3, 16, 16))
             p.setFont(QFont('Arial',8)); p.setPen(QColor(200,200,220))
-            lbl='↕ Move [G]' if self._gizmo_mode=='translate' else '↻ Rotate [R]'
-            p.drawText(bx+4,by+15,lbl)
+            lbl='Move [G]' if self._gizmo_mode=='translate' else 'Rotate [R]'
+            p.drawText(bx+21,by+15,lbl)
             mode_lbl={'wireframe':'Wire','semi':'Semi','solid':'Solid'}.get(rs,'?')
             mode_col={'wireframe':QColor(100,180,100),'semi':QColor(180,180,100),'solid':QColor(100,140,220)}.get(rs,self._get_ui_color('border'))
             p.setBrush(QBrush(QColor(40,44,62))); p.setPen(QPen(mode_col,1))
@@ -1121,7 +1106,7 @@ class COL3DViewport(QWidget): #vers 2
         p.drawText(W-68,H-4,f"grid {step:.3g}")
 
 
-    def _show_face_context_menu(self, global_pos, face_index, face): #vers 1
+    def _show_face_context_menu(self, global_pos, face_index, face): #vers 3
         """Right-click context menu for a picked face — material operations."""
         from PyQt6.QtWidgets import QMenu  # QAction imported at module level
         from PyQt6.QtGui import QColor, QPixmap, QIcon
@@ -1169,18 +1154,20 @@ class COL3DViewport(QWidget): #vers 2
 
         # Apply to selection
         n_sel = len(self._selected_faces)
-        sel_label = (f"✓  Apply to {n_sel} selected face(s)"
-                     if n_sel > 1 else "✓  Apply to selection")
-        act_apply_sel = menu.addAction(sel_label)
+        from apps.methods.imgfactory_svg_icons import SVGIconFactory
+        ic = ws._get_icon_color() if ws else None
+        sel_label = (f"Apply to {n_sel} selected face(s)"
+                     if n_sel > 1 else "Apply to selection")
+        act_apply_sel = menu.addAction(SVGIconFactory.check_icon(20, ic), sel_label)
         act_apply_sel.setEnabled(n_sel > 1)
 
         # Clear material on this face (→ material 0)
-        act_clear_face = menu.addAction("✕  Clear material on this face")
+        act_clear_face = menu.addAction(SVGIconFactory.close_icon(20, ic), "Clear material on this face")
         # Clear material on ALL faces in model
         model = self._model
         n_faces = len(getattr(model, 'faces', []))
         act_clear_all = menu.addAction(
-            f"✕✕  Clear material on all {n_faces} faces")
+            SVGIconFactory.trash_icon(20, ic), f"Clear material on all {n_faces} faces")
 
         menu.addSeparator()
         # Open full paint editor
@@ -1202,21 +1189,21 @@ class COL3DViewport(QWidget): #vers 2
                 models = getattr(getattr(ws, 'current_col_file', None), 'models', [])
                 mi = models.index(model) if model in models else -1
                 if mi >= 0 and hasattr(ws, '_push_undo'):
-                    ws._push_undo(mi, f"Paste material {_clip} → face {face_index}")
+                    ws._push_undo(mi, f"Paste material {_clip} to face {face_index}")
             if hasattr(mat, 'material_id'):
                 mat.material_id = _clip
             else:
                 face.material = _clip
             self.update()
             if ws and hasattr(ws, '_set_status'):
-                ws._set_status(f"Pasted material {_clip} → face {face_index}")
+                ws._set_status(f"Pasted material {_clip} to face {face_index}")
 
         elif chosen == act_apply_sel:
             if ws and model:
                 models = getattr(getattr(ws, 'current_col_file', None), 'models', [])
                 mi = models.index(model) if model in models else -1
                 if mi >= 0 and hasattr(ws, '_push_undo'):
-                    ws._push_undo(mi, f"Apply material {mat_id} → {n_sel} faces")
+                    ws._push_undo(mi, f"Apply material {mat_id} to {n_sel} faces")
             for fi in self._selected_faces:
                 if fi < len(model.faces):
                     f2 = model.faces[fi]
@@ -1234,7 +1221,7 @@ class COL3DViewport(QWidget): #vers 2
                 models = getattr(getattr(ws, 'current_col_file', None), 'models', [])
                 mi = models.index(model) if model in models else -1
                 if mi >= 0 and hasattr(ws, '_push_undo'):
-                    ws._push_undo(mi, f"Clear material → face {face_index}")
+                    ws._push_undo(mi, f"Clear material on face {face_index}")
             if hasattr(mat, 'material_id'):
                 mat.material_id = 0
             else:

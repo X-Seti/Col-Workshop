@@ -47,6 +47,10 @@ Right panel: convert button, then choose COL1, COL2 or COL3.
 - COL2/3 -> COL1 drops face groups, shadow mesh and lines.
 - Changes save on Save.
 
+## Damaged files
+Records that cannot be read are skipped on load (status bar shows the count).
+Save asks first, as skipped records are not written.
+
 ## Surface Data tab
 Opens and edits surface.dat: adhesion, friction, wheel effect, audio,
 per-surface flags. Add, Del, Dup manage entries.
@@ -68,11 +72,12 @@ per-surface flags. Add, Del, Dup manage entries.
 | Alt+Shift+S | Force save |
 | Ctrl+Z | Undo |
 | Ctrl+C / Ctrl+V / Del | Copy / paste / delete model |
-| Ctrl+D / F2 | Duplicate / rename |
-| Ctrl+I / Ctrl+E / Ctrl+Shift+E | Import / export / export all |
-| Ctrl+A / Ctrl+F | Select all / find |
+| Ctrl+D / F2 | Duplicate / rename (type in name field, Enter) |
+| Ctrl+I / Ctrl+E / Ctrl+Shift+E | Import / export selected / export all |
+| Ctrl+A / Ctrl+Shift+I / Ctrl+F | Select all / invert / find |
 | F5 | Refresh |
 | Alt+Enter | Model details |
+| F1 | Help and about |
 
 Hotkeys can be changed in Settings.
 

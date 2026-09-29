@@ -1,4 +1,4 @@
-#this belongs in apps/components/Col_Editor/depends/col_paint_func.py - Version: 1
+#this belongs in apps/components/Col_Editor/depends/col_paint_func.py - Version: 3
 # X-Seti - Sept 29 2026 - IMG Factory 1.6 - COL Workshop paint mode
 
 """
@@ -92,7 +92,7 @@ class COLPaintMixin: #vers 1
             "Paint mode — click faces to paint | change material  "
             "|  Shift+drag to select  |  Esc to exit")
 
-    def _open_paint_mat_popup(self): #vers 2
+    def _open_paint_mat_popup(self): #vers 3
         """Searchable material popup anchored below the mat chip.
         Closes on item click, X button, or focus loss."""
         from PyQt6.QtWidgets import (QListWidget, QListWidgetItem, QFrame,
@@ -139,7 +139,9 @@ class COLPaintMixin: #vers 1
         search.setPlaceholderText("Filter materials…")
         search.setFixedHeight(26)
         hdr.addWidget(search)
-        close_btn = QPushButton("✕")
+        from apps.methods.imgfactory_svg_icons import SVGIconFactory
+        close_btn = QPushButton()
+        close_btn.setIcon(SVGIconFactory.close_icon(16, self._get_icon_color()))
         close_btn.setFixedSize(22, 22)
         close_btn.setToolTip("Close")
         hdr.addWidget(close_btn)
@@ -211,7 +213,7 @@ class COLPaintMixin: #vers 1
         self._mat_popup = popup
         search.setFocus()
 
-    def _apply_to_selected_faces_paint(self): #vers 1
+    def _apply_to_selected_faces_paint(self): #vers 2
         """Apply current paint material to all selected faces (F key in paint mode)."""
         vp = getattr(self, 'preview_widget', None)
         if not vp: return
@@ -225,7 +227,7 @@ class COLPaintMixin: #vers 1
         mi = models.index(model) if model in models else -1
         mat_id = getattr(self, '_paint_active_mat', 0)
         if mi >= 0:
-            self._push_undo(mi, f"Paint {mat_id} → {len(sel)} selected faces")
+            self._push_undo(mi, f"Paint {mat_id} to {len(sel)} selected faces")
         for fi in sel:
             if fi < len(model.faces):
                 f = model.faces[fi]
@@ -251,11 +253,11 @@ class COLPaintMixin: #vers 1
             vp.update()
         self._set_status(f"Paint material: {mat_id} — {name}")
 
-    def _on_painted_face(self, face_index, face): #vers 2
+    def _on_painted_face(self, face_index, face): #vers 3
         """Called by viewport when a face is painted. Status update only —
         undo state was pushed before entering paint mode."""
         mat_id = self._paint_active_mat if hasattr(self, '_paint_active_mat') else 0
-        self._set_status(f"Painted face {face_index} → material {mat_id}  [Esc to exit]")
+        self._set_status(f"Painted face {face_index} with material {mat_id}  [Esc to exit]")
 
     def _set_paint_tool(self, mode: str): #vers 1
         """Switch active paint tool: 'paint' | 'dropper' | 'fill'."""
