@@ -1,4 +1,7 @@
-#this belongs in root /ChangeLog.md - Version: 41
+#this belongs in root /ChangeLog.md - Version: 42
+
+## Sep 30 2026 - Face picking
+- Click anywhere inside a face to select it (topmost wins); was centroid only.
 
 ## Sep 29 2026 - Windows 11 frame
 - Exe: white window border removed (DWM border colour none), rounded corners kept.
