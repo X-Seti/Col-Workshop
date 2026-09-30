@@ -1,4 +1,7 @@
-#this belongs in root /ChangeLog.md - Version: 46
+#this belongs in root /ChangeLog.md - Version: 47
+
+## Sep 30 2026 - Shared Ribbon Manager and splitter sizes
+- Ribbon Manager moved to methods/ribbon_dialog.py; splitter save/restore to methods/grip_splitter.py (shared with TXD Workshop).
 
 ## Sep 30 2026 - Custom ribbon icons
 - Ribbon Manager Set Icon / Reset Icon from icons/ folder; saved, kept on theme change, in presets. Build copies icons/ beside the exe.
