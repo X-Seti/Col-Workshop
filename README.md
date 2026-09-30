@@ -35,7 +35,8 @@ GitHub Actions (`.github/workflows/windows-build.yml`) builds `Col_Workshop.exe`
 with PyInstaller (`col_workshop.spec`) on every push to main, or by hand from the
 Actions tab. Download `Col_Workshop_Windows.zip` from the `windows-build` release
 (or the Actions artifact): a folder with the exe, Qt DLLs, plugins, themes and
-settings. Run `Col_Workshop.exe`.
+settings. Run `Col_Workshop.exe`. Each build is also committed to the repo root
+(`Col_Workshop.exe`, `_internal/`), with `settings/` as the shipped defaults.
 
 ## Documentation
 See [docs/COL_Workshop.md](docs/COL_Workshop.md).

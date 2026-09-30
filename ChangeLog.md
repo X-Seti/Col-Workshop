@@ -1,4 +1,7 @@
-#this belongs in root /ChangeLog.md - Version: 42
+#this belongs in root /ChangeLog.md - Version: 43
+
+## Sep 30 2026 - Exe kept in repo
+- Windows build commits Col_Workshop.exe and _internal/ to repo root after each build [skip ci]; zip includes settings/ defaults.
 
 ## Sep 30 2026 - Face picking
 - Click anywhere inside a face to select it (topmost wins); was centroid only.
