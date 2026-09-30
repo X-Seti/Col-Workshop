@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-#this belongs in root /col_workshop.spec - Version: 2
+#this belongs in root /col_workshop.spec - Version: 3
 # X-Seti - Sept 29 2026 - Col Workshop - PyInstaller build spec (Windows)
 
 """
@@ -50,7 +50,8 @@ a = Analysis(
     binaries=[],
     datas=_app_data() + [(os.path.join(ROOT, 'appfactory.settings.json'), '.')],
     hiddenimports=['PyQt6.QtSvg', 'PyQt6.QtOpenGL', 'PyQt6.QtOpenGLWidgets',
-                   'OpenGL.platform.win32', 'OpenGL.arrays.numpymodule'],
+                   'OpenGL.platform.win32', 'OpenGL.arrays.numpymodule',
+                   'pygame', 'pygame._sdl2.controller'],
     excludes=['tkinter'],
     noarchive=False,
 )

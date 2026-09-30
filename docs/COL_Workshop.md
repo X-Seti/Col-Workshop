@@ -51,6 +51,43 @@ Right panel: convert button, then choose COL1, COL2 or COL3.
 Records that cannot be read are skipped on load (status bar shows the count).
 Save asks first, as skipped records are not written.
 
+## Edit tools (Edit ribbon, or right-click a face)
+Select faces in the viewport (click, Ctrl+click adds, drag to paint-select).
+With nothing selected, gizmo and scale work on the whole model.
+| Tool | Action |
+|------|--------|
+| Gizmo G / R / S | Move, rotate, scale the selection; drag an arrow, ring or square |
+| Detach | Split selected faces from neighbours so they move without stretching others |
+| Selection to New Model | Copy or move faces into a new model in this file |
+| Save Selection as COL | Copy or move faces into a new .col file |
+| Delete Selected Faces | Remove faces (unused vertices removed) |
+| Vertex Select Mode + Weld | Pick 2+ vertices, join them into one |
+| Fill Hole | Select the faces around a hole; the gap is filled |
+| Box / Sphere to Mesh | Replace a box or sphere with triangles |
+| Faces to Box / Sphere | Replace selected faces with an enclosing box or sphere |
+| Scale... / Centre to Origin | Numeric scale; move model centre to 0,0,0 |
+| Merge COL Files | Add every model from other COL files |
+All edits undo with Ctrl+Z; bounds are rebuilt after each edit.
+
+## Shadow mesh (COL3)
+Shadow Mesh ribbon: View toggles a magenta overlay, Create copies the mesh
+(offers COL3 upgrade), Remove deletes it. Saved with the model.
+
+## Game controller (PS5 DualSense)
+Edit ribbon: Game Controller toggle (needs pygame; remembered).
+| Control | Action |
+|---------|--------|
+| Right stick / L2 R2 | Orbit / zoom |
+| Left stick | Pan, or move the grabbed selection |
+| Cross | Select face under the crosshair; again to grab; again to drop |
+| Square | Add/remove face under crosshair |
+| Circle | Cancel grab / clear selection |
+| Triangle | Move / Rotate / Scale |
+| L1 / R1 | Axis: free, X, Y, Z |
+| D-pad | Up/down next model (Z while grabbing); left/right 15 deg while rotating |
+| Options / Create / Touchpad | Render style / undo / fit view |
+| L3 / R3 | Fine speed / vertex mode |
+
 ## Surface Data tab
 Opens and edits surface.dat: adhesion, friction, wheel effect, audio,
 per-surface flags. Add, Del, Dup manage entries.
@@ -94,6 +131,7 @@ Hotkeys can be changed in Settings.
 | `.../depends/col_core_logic_func.py` | COLCoreLogicMixin: load/save, import/export, surface, shadow, drag and drop |
 | `.../depends/col_list_func.py` | COLListMixin: model list, selection, previews, thumbnails, info |
 | `.../depends/col_paint_func.py` | COLPaintMixin: face material painting |
+| `.../depends/col_edit_func.py` | COLEditMixin: edit tools, controller toggle |
 | `.../depends/col_win_func.py` | COLWindowMixin: frameless window, resize, splitters, move mode |
 | `.../depends/col_viewport.py` | COL3DViewport (QPainter preview) |
 | `.../col_mesh_editor.py` | Mesh editor dialog |
@@ -101,3 +139,5 @@ Hotkeys can be changed in Settings.
 | `apps/methods/col_splice.py` | Byte-identical save of unedited models |
 | `apps/methods/col_materials.py` | Surface tables, GTA3/VC <-> SA conversion |
 | `apps/methods/grip_splitter.py` | Splitter with ribbon-style grip |
+| `apps/methods/col_mesh_ops.py` | Geometry edits (detach, weld, fill, convert, scale) |
+| `apps/methods/gamepad_input.py` | Game controller reader (pygame) |

@@ -14,15 +14,19 @@ Standalone build of the COL Workshop from [IMG Factory 1.6](https://github.com/X
 - surface.dat editor (Surface Data tab).
 - Import/export single models, IDE-driven import/export, build COL from TXD.
 - Drag and drop .col files; add to the open file or open in a new tab.
+- Edit tools: move/rotate/scale selected faces, detach, weld, fill hole, delete,
+  selection to new model or COL file, box/sphere <-> mesh, centre, merge files.
+- COL3 shadow meshes: view, create, remove.
+- PS5 / game controller support (pygame).
 - Themes, ribbon toolbars, custom hotkeys, compact icon-only buttons.
 
 ## Requirements
 - Python 3.10+
 - PyQt6
-- numpy (3D viewport), PyOpenGL (optional GL viewport)
+- numpy (3D viewport), PyOpenGL (optional GL viewport), pygame (optional game controller)
 
 ```
-pip install PyQt6 numpy PyOpenGL
+pip install PyQt6 numpy PyOpenGL pygame
 ```
 
 ## Run

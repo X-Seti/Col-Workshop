@@ -1,4 +1,8 @@
-#this belongs in root /ChangeLog.md - Version: 43
+#this belongs in root /ChangeLog.md - Version: 44
+
+## Sep 30 2026 - Edit tools, shadow mesh, controller
+- Selection gizmo (move/rotate/scale), detach, extract to model/COL, delete, weld, fill hole, box/sphere/mesh conversion, scale, centre, merge files.
+- COL3 shadow mesh view/create/remove; ghost-filled spheres/boxes; PS5 controller (pygame).
 
 ## Sep 30 2026 - Exe kept in repo
 - Windows build commits Col_Workshop.exe and _internal/ to repo root after each build [skip ci]; zip includes settings/ defaults.

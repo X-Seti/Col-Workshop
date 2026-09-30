@@ -1,4 +1,4 @@
-#this belongs in apps/components/Col_Editor/depends/col_viewport.py - Version: 4
+#this belongs in apps/components/Col_Editor/depends/col_viewport.py - Version: 7
 # X-Seti - Sept 29 2026 - IMG Factory 1.6 - COL Workshop 3D viewport
 
 """
@@ -8,23 +8,29 @@ COL 3D Viewport - QPainter preview of collision models.
 ##class COL3DViewport: -
 # contextMenuEvent
 # _cycle_render_style
+# _end_gizmo_drag
 # _find_workshop
 # fit_to_window
 # flip_horizontal
 # flip_vertical
+# gamepad_step
 # _get_scale_origin
 # _get_ui_color
 # _gizmo_arm
 # _gizmo_centre
+# _gizmo_pivot
 # _hit_gizmo
 # __init__
 # keyPressEvent
 # mouseMoveEvent
 # mousePressEvent
 # mouseReleaseEvent
+# _pad_begin_grab
+# _pad_end_grab
 # paintEvent
 # pan
 # _pick_face
+# _pick_vertex
 # _proj
 # reset_view
 # resizeEvent
@@ -34,14 +40,18 @@ COL 3D Viewport - QPainter preview of collision models.
 # set_backface
 # set_background_color
 # set_current_model
+# set_gamepad
 # _set_gizmo
 # set_paint_mode
 # set_render_style
+# set_select_mode
 # set_show_boxes
 # set_show_mesh
+# set_show_shadow
 # set_show_spheres
 # _set_theme_bg
 # _show_face_context_menu
+# _start_gizmo_drag
 # _to_screen
 # toggle_gizmo_mode
 # wheelEvent
@@ -60,7 +70,7 @@ class COL3DViewport(QWidget): #vers 2
     G key / button = translate gizmo, R key / button = rotate gizmo.
     """
 
-    def __init__(self, parent=None):  #vers 1
+    def __init__(self, parent=None):  #vers 3
         super().__init__(parent)
         self.setMinimumSize(200, 200)
         self._model        = None
@@ -74,13 +84,14 @@ class COL3DViewport(QWidget): #vers 2
         self._show_spheres = True
         self._show_boxes   = True
         self._show_mesh    = True
+        self._show_shadow  = False  # COL3 shadow mesh overlay
         self._backface     = False
         self._render_style = 'semi'
         # Sphere/box display colours (R,G,B) and fill alpha (0-255)
         self._sphere_color = (80, 200, 220)   # cyan
-        self._sphere_alpha = 25               # fill transparency
+        self._sphere_alpha = 70               # ghost fill transparency
         self._box_color    = (220, 180, 50)   # yellow
-        self._box_alpha    = 30               # fill transparency
+        self._box_alpha    = 60               # ghost fill transparency
         self._bg_color     = (25, 25, 35)  # overridden on first paint
         self._theme_bg_set = False
         # drag state
@@ -88,9 +99,18 @@ class COL3DViewport(QWidget): #vers 2
         self._right_drag   = None
         self._mid_drag     = None
         # gizmo
-        self._gizmo_mode   = 'translate'  # 'translate' | 'rotate'
-        self._gizmo_drag   = None         # 'X'|'Y'|'Z' while dragging
+        self._gizmo_mode   = 'translate'  # 'translate' | 'rotate' | 'scale'
+        self._gizmo_drag   = None         # 'X'|'Y'|'Z'|'U'(uniform scale) while dragging
         self._gizmo_start  = None
+        self._gizmo_pivot3 = None         # pivot fixed for the current drag
+        self._view_lock    = None         # (scale, ox, oy) frozen while dragging
+        self._select_mode  = 'face'       # 'face' | 'vertex'
+        self._selected_verts = set()
+        # game controller (methods/gamepad_input.GamepadPoller)
+        self._gamepad      = None
+        self._pad_grab     = False
+        self._pad_fine     = False
+        self._pad_axis     = 'free'       # 'free' | 'X' | 'Y' | 'Z' (L1/R1)
         # face selection / paint state
         self._selected_faces  = set()    # set of face indices currently selected
         self._paint_mode      = False    # True = click face to paint material
@@ -105,8 +125,10 @@ class COL3DViewport(QWidget): #vers 2
 
 
     #    public API                                                         
-    def set_current_model(self, model, index=0):  #vers 1
+    def set_current_model(self, model, index=0):  #vers 2
         self._model = model
+        self._selected_faces = set()
+        self._selected_verts = set()
         # Reset view so the new model is centred and visible
         self._pan_x = 0.0
         self._pan_y = 0.0
@@ -177,6 +199,7 @@ class COL3DViewport(QWidget): #vers 2
     def set_show_spheres(self, v): self._show_spheres = v; self.update()  #vers 1
     def set_show_boxes(self,   v): self._show_boxes   = v; self.update()  #vers 1
     def set_show_mesh(self,    v): self._show_mesh     = v; self.update()  #vers 1
+    def set_show_shadow(self,  v): self._show_shadow   = v; self.update()  #vers 1
     def set_backface(self,     v): self._backface      = v; self.update()  #vers 1
     def set_render_style(self, s): self._render_style  = s; self.update()  #vers 1
 
@@ -203,8 +226,10 @@ class COL3DViewport(QWidget): #vers 2
         return rx, ry2
 
 
-    def _get_scale_origin(self):  #vers 1
+    def _get_scale_origin(self):  #vers 2
         """Return (scale, ox, oy) mapping 3D projected coords to screen pixels."""
+        if self._view_lock:
+            return self._view_lock
         W, H = self.width(), self.height()
         model = self._model
         if not model:
@@ -247,37 +272,56 @@ class COL3DViewport(QWidget): #vers 2
 
 
     #    gizmo hit test                                                    
-    def _gizmo_centre(self):  #vers 1
-        """Screen coords of gizmo origin (model centroid)."""
-        model = self._model
-        if not model: return None
-        verts = getattr(model, 'vertices', [])
-        if verts:
-            cx = sum(v.x for v in verts)/len(verts)
-            cy = sum(v.y for v in verts)/len(verts)
-            cz = sum(v.z for v in verts)/len(verts)
-        else:
-            cx = cy = cz = 0.0
-        return self._to_screen(cx, cy, cz)
+    def _gizmo_pivot(self):  #vers 1
+        """3D pivot: centre of selected faces, else of the whole model."""
+        from apps.methods.col_mesh_ops import selection_centre
+        if not self._model: return (0.0, 0.0, 0.0)
+        return selection_centre(self._model, self._selected_faces)
+
+
+    def _gizmo_centre(self):  #vers 2
+        """Screen coords of gizmo origin (selection or model centre)."""
+        if not self._model: return None
+        return self._to_screen(*self._gizmo_pivot())
 
 
     def _gizmo_arm(self):  #vers 1
         return max(45, min(self.width(), self.height()) * 0.15)
 
 
-    def _hit_gizmo(self, mx, my):  #vers 1
-        """Return axis 'X'/'Y'/'Z' if click near a gizmo handle, else None."""
+    def _hit_gizmo(self, mx, my):  #vers 2
+        """Axis 'X'/'Y'/'Z' under the click (whole arrow or ring), 'U' for the
+        scale centre, else None."""
         import math
         ctr = self._gizmo_centre()
         if not ctr: return None
         gx, gy = ctr
         arm = self._gizmo_arm()
-        best, best_d = None, 16
-        for (dx,dy,dz), name in [((1,0,0),'X'),((0,1,0),'Y'),((0,0,1),'Z')]:
+        if self._gizmo_mode == 'scale' and math.hypot(mx - gx, my - gy) < 9:
+            return 'U'
+
+        def seg_d(ax, ay, bx, by):  #vers 1
+            vx, vy = bx - ax, by - ay
+            L = vx * vx + vy * vy or 1.0
+            t = max(0.0, min(1.0, ((mx - ax) * vx + (my - ay) * vy) / L))
+            return math.hypot(mx - (ax + t * vx), my - (ay + t * vy))
+
+        best, best_d = None, 9.0
+        if self._gizmo_mode == 'rotate':
+            rings = {'X': ((0,1,0),(0,0,1)), 'Y': ((1,0,0),(0,0,1)), 'Z': ((1,0,0),(0,1,0))}
+            for name, (t1, t2) in rings.items():
+                pts = []
+                for k in range(49):
+                    a = 2 * math.pi * k / 48
+                    px, py = self._proj(*(math.cos(a) * t1[n] + math.sin(a) * t2[n] for n in range(3)))
+                    pts.append((gx + px * arm, gy + py * arm))
+                d = min(seg_d(*pts[k], *pts[k + 1]) for k in range(48))
+                if d < best_d: best_d, best = d, name
+            return best
+        for (dx, dy, dz), name in [((1,0,0),'X'),((0,1,0),'Y'),((0,0,1),'Z')]:
             px, py = self._proj(dx, dy, dz)
-            tx, ty = gx+px*arm, gy+py*arm
-            if math.hypot(mx-tx, my-ty) < best_d:
-                best_d, best = math.hypot(mx-tx, my-ty), name
+            d = seg_d(gx, gy, gx + px * arm, gy + py * arm)
+            if d < best_d: best_d, best = d, name
         return best
 
 
@@ -324,7 +368,7 @@ class COL3DViewport(QWidget): #vers 2
 
 
     #    mouse                                                             
-    def mousePressEvent(self, event):  #vers 2
+    def mousePressEvent(self, event):  #vers 3
         mx, my = event.position().x(), event.position().y()
         W, H = self.width(), self.height()
         if event.button() == Qt.MouseButton.LeftButton:
@@ -433,6 +477,22 @@ class COL3DViewport(QWidget): #vers 2
                     self.update()
                 return
 
+            # Gizmo first: arrows / rings / scale handles take the click
+            axis = self._hit_gizmo(mx, my)
+            if axis:
+                self._start_gizmo_drag(axis, event.position())
+                return
+
+            if self._select_mode == 'vertex':
+                vi = self._pick_vertex(mx, my)
+                if vi is not None:
+                    if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                        self._selected_verts ^= {vi}
+                    else:
+                        self._selected_verts = {vi}
+                    self.update()
+                    return
+
             # Normal mode — face select on click; start drag-select
             fi, face = self._pick_face(mx, my)
             if fi is not None:
@@ -452,15 +512,8 @@ class COL3DViewport(QWidget): #vers 2
                 self.update()
                 return
 
-            # Gizmo axis
-            axis = self._hit_gizmo(mx, my)
-            if axis:
-                self._gizmo_drag  = axis
-                self._gizmo_start = event.position()
-                self.setCursor(Qt.CursorShape.SizeAllCursor)
-            else:
-                self._left_drag = event.position()
-                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            self._left_drag = event.position()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
         elif event.button() == Qt.MouseButton.RightButton:
             # Try to pick a face at click pos; if hit → context menu, else → rotate drag
             mx2, my2 = event.position().x(), event.position().y()
@@ -482,95 +535,35 @@ class COL3DViewport(QWidget): #vers 2
             self.setCursor(Qt.CursorShape.SizeAllCursor)  # rotate
 
 
-    def mouseMoveEvent(self, event):  #vers 1
+    def mouseMoveEvent(self, event):  #vers 2
         import math
 
-        #    Gizmo drag                                                    
+        #    Gizmo drag: selected faces, or whole model when none selected
         if self._gizmo_drag and (event.buttons() & Qt.MouseButton.LeftButton):
+            from apps.methods import col_mesh_ops as ops
             d  = event.position() - self._gizmo_start
             self._gizmo_start = event.position()
             axis = self._gizmo_drag
             scale, _, _ = self._get_scale_origin()
-            ax3 = {'X':(1,0,0),'Y':(0,1,0),'Z':(0,0,1)}[axis]
-            px, py = self._proj(*ax3)
-            screen_len = math.hypot(px, py) or 1.0
-
-            def _vec(obj):  #vers 1
-                """Return the Vector3-like object itself if it has .x/.y/.z"""
-                return obj if (obj and hasattr(obj,'x')) else None
-
-            def _box_pts(box):  #vers 1
-                """Yield the min and max Vector3 points of a box."""
-                mn = getattr(box,'min_point', getattr(box,'min', None))
-                mx = getattr(box,'max_point', getattr(box,'max', None))
-                for pt in [mn, mx]:
-                    if pt and hasattr(pt,'x'): yield pt
-
-            if self._gizmo_mode == 'translate':
-                dot = (d.x()*px + d.y()*py) / screen_len
-                delta = dot / scale
-                if self._model:
-                    # Move vertices
-                    for v in getattr(self._model, 'vertices', []):
-                        if   axis=='X': v.x += delta
-                        elif axis=='Y': v.y += delta
-                        else:           v.z += delta
-                    # Move box min/max points
-                    for box in getattr(self._model, 'boxes', []):
-                        for pt in _box_pts(box):
-                            if   axis=='X': pt.x += delta
-                            elif axis=='Y': pt.y += delta
-                            else:           pt.z += delta
-                    # Move sphere centres
-                    for sph in getattr(self._model, 'spheres', []):
-                        c = _vec(sph.center)
-                        if c:
-                            if   axis=='X': c.x += delta
-                            elif axis=='Y': c.y += delta
-                            else:           c.z += delta
-                    # Move bounds centre
-                    bounds = getattr(self._model, 'bounds', None)
-                    if bounds:
-                        for pt in [getattr(bounds,'center',None),
-                                   getattr(bounds,'min',None),
-                                   getattr(bounds,'max',None)]:
-                            if pt and hasattr(pt,'x'):
-                                if   axis=='X': pt.x += delta
-                                elif axis=='Y': pt.y += delta
-                                else:           pt.z += delta
-            else:  # rotate
-                perp_x, perp_y = -py, px
-                deg = (d.x()*perp_x + d.y()*perp_y) / screen_len * 0.8
-                r = math.radians(deg)
-                cos_r, sin_r = math.cos(r), math.sin(r)
-                if self._model:
-                    def _rot_pt(pt):  #vers 1
-                        if not (pt and hasattr(pt,'x')): return
-                        x2,y2,z2 = pt.x, pt.y, pt.z
-                        if axis=='X':
-                            pt.y = y2*cos_r - z2*sin_r
-                            pt.z = y2*sin_r + z2*cos_r
-                        elif axis=='Y':
-                            pt.x = x2*cos_r + z2*sin_r
-                            pt.z = -x2*sin_r + z2*cos_r
-                        else:
-                            pt.x = x2*cos_r - y2*sin_r
-                            pt.y = x2*sin_r + y2*cos_r
-                    # Rotate vertices
-                    for v in getattr(self._model, 'vertices', []):
-                        _rot_pt(v)
-                    # Rotate box min/max
-                    for box in getattr(self._model, 'boxes', []):
-                        for pt in _box_pts(box):
-                            _rot_pt(pt)
-                    # Rotate sphere centres
-                    for sph in getattr(self._model, 'spheres', []):
-                        _rot_pt(_vec(sph.center))
-                    # Rotate bounds
-                    bounds = getattr(self._model, 'bounds', None)
-                    if bounds:
-                        for attr in ('center','min','max'):
-                            _rot_pt(getattr(bounds, attr, None))
+            sel = self._selected_faces
+            if axis == 'U':
+                f = max(0.05, 1.0 + (d.x() - d.y()) / 200.0)
+                ops.scale(self._model, sel, f, f, f, self._gizmo_pivot3)
+            else:
+                ax3 = {'X':(1,0,0),'Y':(0,1,0),'Z':(0,0,1)}[axis]
+                px, py = self._proj(*ax3)
+                screen_len = math.hypot(px, py) or 1.0
+                along = (d.x()*px + d.y()*py) / screen_len
+                if self._gizmo_mode == 'rotate':
+                    deg = (d.x()*-py + d.y()*px) / screen_len * 0.8
+                    ops.rotate(self._model, sel, axis, deg, self._gizmo_pivot3)
+                elif self._gizmo_mode == 'scale':
+                    f = max(0.05, 1.0 + along / 150.0)
+                    fx, fy, fz = (f if axis == 'X' else 1.0, f if axis == 'Y' else 1.0, f if axis == 'Z' else 1.0)
+                    ops.scale(self._model, sel, fx, fy, fz, self._gizmo_pivot3)
+                else:
+                    delta = along / scale
+                    ops.translate(self._model, sel, *(delta * c for c in ax3))
             self.update()
             return
 
@@ -613,10 +606,11 @@ class COL3DViewport(QWidget): #vers 2
             self._pitch = max(-89.0, min(89.0, self._pitch + d.y() * 0.4))
             self._mid_drag = event.position(); self.update()
 
-    def mouseReleaseEvent(self, event):  #vers 1
+    def mouseReleaseEvent(self, event):  #vers 2
         if event.button() == Qt.MouseButton.LeftButton:
             self._left_drag = None
-            self._gizmo_drag = None
+            if self._gizmo_drag:
+                self._end_gizmo_drag()
             self._drag_selecting = False
         elif event.button() == Qt.MouseButton.RightButton:
             self._right_drag = None
@@ -627,6 +621,173 @@ class COL3DViewport(QWidget): #vers 2
             Qt.CursorShape.CrossCursor if self._paint_mode
             else Qt.CursorShape.ArrowCursor
         )
+
+
+    def _start_gizmo_drag(self, axis, pos):  #vers 1
+        """Begin a gizmo drag: fix pivot and view, push undo."""
+        self._gizmo_drag   = axis
+        self._gizmo_start  = pos
+        self._gizmo_pivot3 = self._gizmo_pivot()
+        self._view_lock    = self._get_scale_origin()
+        ws = self._find_workshop()
+        if ws and ws.current_col_file and self._model in ws.current_col_file.models:
+            ws._push_undo(ws.current_col_file.models.index(self._model), f"Gizmo {self._gizmo_mode}")
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
+
+
+    def _end_gizmo_drag(self):  #vers 1
+        """Finish a gizmo drag: rebuild bounds, tell the workshop."""
+        from apps.methods.col_mesh_ops import recalc_bounds
+        self._gizmo_drag = None
+        self._view_lock  = None
+        if self._model:
+            recalc_bounds(self._model)
+        ws = self._find_workshop()
+        if ws and hasattr(ws, '_mesh_edited'):
+            what = f"{len(self._selected_faces)} face(s)" if self._selected_faces else "model"
+            ws._mesh_edited(self._model, f"{self._gizmo_mode.title()} {what}", reselect=False)
+        self.update()
+
+
+    def _pick_vertex(self, mx, my):  #vers 1
+        """Nearest vertex within 10px of the click, or None."""
+        import math
+        verts = getattr(self._model, 'vertices', []) if self._model else []
+        best, best_d = None, 10.0
+        for i, v in enumerate(verts):
+            sx, sy = self._to_screen(v.x, v.y, v.z)
+            d = math.hypot(mx - sx, my - sy)
+            if d < best_d: best_d, best = d, i
+        return best
+
+
+    def set_select_mode(self, mode):  #vers 1
+        """'face' or 'vertex' selection."""
+        self._select_mode = mode
+        self._selected_verts = set()
+        self.update()
+
+
+    def set_gamepad(self, poller):  #vers 1
+        """Attach a GamepadPoller (None detaches); its state drives view and edits."""
+        if self._gamepad is not None:
+            try:
+                self._gamepad.state.disconnect(self.gamepad_step)
+            except TypeError:
+                pass
+        self._gamepad = poller
+        if poller is not None:
+            poller.state.connect(self.gamepad_step)
+        self.update()
+
+
+    def _pad_begin_grab(self):  #vers 1
+        """Start moving the selection (or whole model) with the left stick."""
+        ws = self._find_workshop()
+        if not self._model or not ws: return
+        ws._push_undo(ws.current_col_file.models.index(self._model), f"Controller {self._gizmo_mode}")
+        self._gizmo_pivot3 = self._gizmo_pivot()
+        self._view_lock = self._get_scale_origin()
+        self._pad_grab = True
+        self._gamepad.rumble(0.2, 0.2, 40)
+
+
+    def _pad_end_grab(self, commit):  #vers 1
+        """Drop (commit) or cancel (undo) the controller grab."""
+        self._pad_grab = False
+        self._view_lock = None
+        ws = self._find_workshop()
+        if commit:
+            from apps.methods.col_mesh_ops import recalc_bounds
+            recalc_bounds(self._model)
+            ws._mesh_edited(self._model, f"Controller {self._gizmo_mode}", reselect=False)
+        else:
+            keep = set(self._selected_faces)
+            ws._undo_last_action()
+            self._selected_faces = keep
+        self.update()
+
+
+    def gamepad_step(self, st):  #vers 1
+        """One controller frame (same layout as Map Workshop).
+        Right stick orbit, L2/R2 zoom, left stick pan or move the grab.
+        Cross select / grab / drop, Square add face, Circle cancel / clear,
+        Triangle Move/Rotate/Scale, L1/R1 axis, D-pad models or Z / 15 deg,
+        Options render style, Create undo, touchpad fit, L3 fine, R3 vertex mode."""
+        import math
+        from apps.methods import col_mesh_ops as ops
+        if not self._model:
+            return
+        ws = self._find_workshop()
+        dt, pr, held = st['dt'], st['pressed'], st['held']
+        if 'l3' in pr:
+            self._pad_fine = not self._pad_fine
+        fine = 0.2 if self._pad_fine else 1.0
+        if st['rx'] or st['ry']:
+            self._yaw = (self._yaw + st['rx'] * 120.0 * dt) % 360
+            self._pitch = max(-89.0, min(89.0, self._pitch + st['ry'] * 90.0 * dt))
+        if (st['lt'] or st['rt']) and not self._view_lock:
+            self._zoom = max(0.02, min(40.0, self._zoom * (1.0 + (st['rt'] - st['lt']) * 1.5 * dt)))
+        if 'y' in pr:
+            modes = ['translate', 'rotate', 'scale']
+            self._set_gizmo(modes[(modes.index(self._gizmo_mode) + 1) % 3])
+        if 'l1' in pr or 'r1' in pr:
+            axes = ['free', 'X', 'Y', 'Z']
+            self._pad_axis = axes[(axes.index(self._pad_axis) + (-1 if 'l1' in pr else 1)) % 4]
+        if 'start' in pr:
+            self._cycle_render_style()
+        if 'b' in pr:
+            if self._pad_grab: self._pad_end_grab(False)
+            else: self._selected_faces = set()
+        centre = self._pick_face(self.width() / 2, self.height() / 2)[0]
+        if 'a' in pr:
+            if self._pad_grab:
+                self._pad_end_grab(True)
+            elif centre is None or centre in self._selected_faces:
+                self._pad_begin_grab()
+            else:
+                self._selected_faces = {centre}
+        if 'x' in pr and not self._pad_grab and centre is not None:
+            self._selected_faces ^= {centre}
+        if not self._pad_grab and ws:
+            if 'back' in pr:
+                keep = set(self._selected_faces)
+                ws._undo_last_action(); self._selected_faces = keep
+            if 'touchpad' in pr:
+                self.fit_to_window()
+            if 'r3' in pr and hasattr(ws, 'vertex_mode_btn'):
+                ws.vertex_mode_btn.toggle()
+            step = (-1 if 'up' in pr else 1 if 'down' in pr else 0)
+            if step:
+                n = len(ws.current_col_file.models)
+                ws._select_model_by_row((ws.current_col_file.models.index(self._model) + step) % n)
+                return
+        if self._pad_grab:
+            sel, piv, ax = self._selected_faces, self._gizmo_pivot3, self._pad_axis
+            if self._gizmo_mode == 'rotate':
+                deg = st['lx'] * 90.0 * dt * fine + (-15.0 if 'left' in pr else 15.0 if 'right' in pr else 0.0)
+                if deg:
+                    ops.rotate(self._model, sel, 'Z' if ax == 'free' else ax, deg, piv)
+            elif self._gizmo_mode == 'scale':
+                f = 1.0 - st['ly'] * 0.8 * dt * fine
+                if f != 1.0:
+                    fx, fy, fz = [(f if ax in ('free', a) else 1.0) for a in 'XYZ']
+                    ops.scale(self._model, sel, fx, fy, fz, piv)
+            else:
+                spd = max(0.5, float(self._model.bounds.radius)) * 0.6 * dt * fine
+                yr = math.radians(self._yaw)
+                dx = (st['lx'] * math.cos(yr) + st['ly'] * math.sin(yr)) * spd
+                dy = (-st['lx'] * math.sin(yr) + st['ly'] * math.cos(yr)) * spd
+                dz = (spd if 'up' in held else -spd if 'down' in held else 0.0)
+                if ax == 'X': dy = dz = 0.0
+                elif ax == 'Y': dx = dz = 0.0
+                elif ax == 'Z': dx = dy = 0.0; dz += -st['ly'] * spd
+                if dx or dy or dz:
+                    ops.translate(self._model, sel, dx, dy, dz)
+        elif st['lx'] or st['ly']:
+            self._pan_x -= st['lx'] * 400.0 * dt * fine
+            self._pan_y -= st['ly'] * 400.0 * dt * fine
+        self.update()
 
 
     def resizeEvent(self, event):  #vers 1
@@ -643,7 +804,7 @@ class COL3DViewport(QWidget): #vers 2
         self.update()
 
 
-    def keyPressEvent(self, event):  #vers 1
+    def keyPressEvent(self, event):  #vers 2
         if event.key() == Qt.Key.Key_Escape:
             if self._paint_mode:
                 self.set_paint_mode(False)
@@ -659,6 +820,7 @@ class COL3DViewport(QWidget): #vers 2
             ws = self._find_workshop()
             if ws: ws._apply_to_selected_faces_paint()
         elif event.key() == Qt.Key.Key_R: self._set_gizmo('rotate')
+        elif event.key() == Qt.Key.Key_S: self._set_gizmo('scale')
         elif event.key() == Qt.Key.Key_F: self.fit_to_window()
         elif event.key() == Qt.Key.Key_V: self._cycle_render_style()
         else: super().keyPressEvent(event)
@@ -698,9 +860,9 @@ class COL3DViewport(QWidget): #vers 2
 
 
     #    paint                                                              
-    def paintEvent(self, event):  #vers 4
+    def paintEvent(self, event):  #vers 7
         """Fully self-contained paint — grid, mesh, boxes, spheres, bounds, gizmo, HUD."""
-        from PyQt6.QtGui import (QPainter, QColor, QFont, QPen, QBrush,
+        from PyQt6.QtGui import (QPainter, QColor, QFont, QPen, QBrush, QRadialGradient,
                                   QPolygonF, QLinearGradient)
         from PyQt6.QtCore import QPointF, QRectF, QRect
         import math
@@ -819,12 +981,22 @@ class COL3DViewport(QWidget): #vers 2
                     p.setPen(QPen(QColor(100,180,100),1))
                 p.drawPolygon(QPolygonF(pts))
 
+        #    Shadow mesh overlay (COL3) - magenta, dashed
+        s_verts = getattr(model, 'shadow_vertices', None) or []
+        s_faces = getattr(model, 'shadow_faces', None) or []
+        if self._show_shadow and s_verts and s_faces:
+            p.setPen(QPen(QColor(230, 80, 230, 220), 1, Qt.PenStyle.DashLine))
+            p.setBrush(QBrush(QColor(230, 80, 230, 40)))
+            n_sv = len(s_verts)
+            for sf in s_faces:
+                if not (0 <= sf.a < n_sv and 0 <= sf.b < n_sv and 0 <= sf.c < n_sv): continue
+                p.drawPolygon(QPolygonF([QPointF(*to_screen(*g3(s_verts[k]))) for k in (sf.a, sf.b, sf.c)]))
+
         #    Boxes — draw all 12 edges of AABB                              
         if self._show_boxes:
             _bc = getattr(self, '_box_color', (220, 180, 50))
             _ba = getattr(self, '_box_alpha', 30)
-            p.setPen(QPen(QColor(*_bc), 1.5))
-            p.setBrush(QBrush(QColor(*_bc, _ba)) if rs != 'wireframe' else Qt.BrushStyle.NoBrush)
+            _quads = [(0,1,3,2),(4,5,7,6),(0,1,5,4),(2,3,7,6),(0,2,6,4),(1,3,7,5)]
             for box in boxes:
                 mn_obj = getattr(box,'min_point',getattr(box,'min',None))
                 mx_obj = getattr(box,'max_point',getattr(box,'max',None))
@@ -834,7 +1006,13 @@ class COL3DViewport(QWidget): #vers 2
                 # 8 corners
                 corners=[(xa,ya,za) for xa in(x0,x1) for ya in(y0,y1) for za in(z0,z1)]
                 sc=[to_screen(*c) for c in corners]
-                # 12 edges of the cube
+                # Ghost fill: 6 translucent sides, then 12 edges
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QBrush(QColor(*_bc, max(8, _ba // 3))))
+                for q in _quads:
+                    p.drawPolygon(QPolygonF([QPointF(*sc[k]) for k in q]))
+                p.setPen(QPen(QColor(*_bc), 1.5))
+                p.setBrush(Qt.BrushStyle.NoBrush)
                 edges=[(0,1),(0,2),(0,4),(1,3),(1,5),(2,3),(2,6),(3,7),(4,5),(4,6),(5,7),(6,7)]
                 for a2,b2 in edges:
                     ax,ay=sc[a2]; bx,by=sc[b2]
@@ -844,12 +1022,22 @@ class COL3DViewport(QWidget): #vers 2
         if self._show_spheres:
             _sc = getattr(self, '_sphere_color', (80, 200, 220))
             _sa = getattr(self, '_sphere_alpha', 25)
-            p.setPen(QPen(QColor(*_sc), 1.5))
-            p.setBrush(QBrush(QColor(*_sc, _sa)) if rs != 'wireframe' else Qt.BrushStyle.NoBrush)
             N = 48
+            _scale0 = math.hypot(*(a - b for a, b in zip(to_screen(1, 0, 0), to_screen(0, 0, 0))))
             for sph in spheres:
                 cx,cy3,cz = g3(getattr(sph,'center',sph))
                 r = getattr(sph,'radius',1.0)
+                # Ghost fill: shaded disc (orthographic sphere outline)
+                scx, scy = to_screen(cx, cy3, cz)
+                rr = r * _scale0
+                grad = QRadialGradient(QPointF(scx - rr * 0.35, scy - rr * 0.35), rr * 1.3)
+                grad.setColorAt(0.0, QColor(min(255, _sc[0] + 90), min(255, _sc[1] + 90), min(255, _sc[2] + 90), min(255, _sa + 40)))
+                grad.setColorAt(1.0, QColor(*_sc, max(10, _sa // 2)))
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QBrush(grad))
+                p.drawEllipse(QPointF(scx, scy), rr, rr)
+                p.setPen(QPen(QColor(*_sc), 1.5))
+                p.setBrush(Qt.BrushStyle.NoBrush)
                 # 3 rings in different planes
                 for t1,t2,t3 in [(1,0,0,),(0,1,0),(0,0,1)]:
                     # tangent vectors from axis (t1,t2,t3)
@@ -894,18 +1082,32 @@ class COL3DViewport(QWidget): #vers 2
                 p.setPen(QPen(QColor(180,100,220,120),1,Qt.PenStyle.DotLine))
                 for i in range(len(pts)-1): p.drawLine(pts[i],pts[i+1])
 
-        #    Gizmo at model centroid                                        
-        if all_pts:
-            cx3=sum(pt[0] for pt in all_pts)/len(all_pts)
-            cy3=sum(pt[1] for pt in all_pts)/len(all_pts)
-            cz3=sum(pt[2] for pt in all_pts)/len(all_pts)
-        else:
-            cx3=cy3=cz3=0.0
-        gx,gy=to_screen(cx3,cy3,cz3)
+        #    Vertex mode: all vertices as dots, selected in yellow
+        if self._select_mode == 'vertex' and verts:
+            p.setPen(Qt.PenStyle.NoPen)
+            for vi, v in enumerate(verts):
+                sx, sy = to_screen(*g3(v))
+                on = vi in self._selected_verts
+                p.setBrush(QBrush(QColor(255, 210, 60) if on else QColor(200, 200, 210, 170)))
+                r0 = 4 if on else 2.5
+                p.drawEllipse(QPointF(sx, sy), r0, r0)
+
+        #    Gizmo at selection centre (whole model when nothing selected)
+        gx,gy=to_screen(*self._gizmo_pivot())
         arm=max(45,min(W,H)*0.15)
         axes=[((1,0,0),QColor(220,60,60),'X'),((0,1,0),QColor(60,200,60),'Y'),((0,0,1),QColor(60,120,220),'Z')]
         sorted_axes=sorted(axes,key=lambda a:self._proj(*a[0])[1],reverse=True)
-        if self._gizmo_mode=='translate':
+        if self._gizmo_mode=='scale':
+            for (dx,dy,dz),color,label in sorted_axes:
+                px2,py2=self._proj(dx,dy,dz)
+                tx,ty=gx+px2*arm,gy+py2*arm
+                p.setPen(QPen(color,2)); p.drawLine(int(gx),int(gy),int(tx),int(ty))
+                p.setBrush(QBrush(color)); p.drawRect(int(tx)-5,int(ty)-5,10,10)
+                p.setFont(QFont('Arial',8,QFont.Weight.Bold)); p.setPen(color)
+                p.drawText(int(tx+(9 if tx>=gx else -14)),int(ty+(5 if ty>=gy else -3)),label)
+            p.setPen(QPen(QColor(230,230,230),1)); p.setBrush(QBrush(QColor(230,230,230,120)))
+            p.drawRect(int(gx)-8,int(gy)-8,16,16)
+        elif self._gizmo_mode=='translate':
             for (dx,dy,dz),color,label in sorted_axes:
                 px2,py2=self._proj(dx,dy,dz)
                 tx,ty=gx+px2*arm,gy+py2*arm
@@ -1066,16 +1268,17 @@ class COL3DViewport(QWidget): #vers 2
             icon_y = _ROW2_Y + (_CHIP_H - _ICON_SZ)//2
             icon.paint(p, QRect(icon_x, icon_y, _ICON_SZ, _ICON_SZ))
         else:
-            bx,by,bw,bh=W-70,4,66,22
+            bx,by,bw,bh=W-88,4,84,22
             _pal7 = self.palette()
             p.setBrush(QBrush(_pal7.color(_pal7.ColorRole.Button)))
             p.setPen(QPen(_pal7.color(_pal7.ColorRole.Mid), 1))
             p.drawRoundedRect(bx,by,bw,bh,4,4)
             from apps.methods.imgfactory_svg_icons import SVGIconFactory as icon_fac
-            _gi = (icon_fac.arrow_up_icon if self._gizmo_mode=='translate' else icon_fac.rotate_cw_icon)(color='#c8c8dc')
+            _gi = {'translate': icon_fac.arrow_up_icon, 'rotate': icon_fac.rotate_cw_icon,
+                   'scale': icon_fac.dp_resize_icon}[self._gizmo_mode](color='#c8c8dc')
             _gi.paint(p, QRect(bx+3, by+3, 16, 16))
             p.setFont(QFont('Arial',8)); p.setPen(QColor(200,200,220))
-            lbl='Move [G]' if self._gizmo_mode=='translate' else 'Rotate [R]'
+            lbl={'translate': 'Move [G]', 'rotate': 'Rotate [R]', 'scale': 'Scale [S]'}[self._gizmo_mode]
             p.drawText(bx+21,by+15,lbl)
             mode_lbl={'wireframe':'Wire','semi':'Semi','solid':'Solid'}.get(rs,'?')
             mode_col={'wireframe':QColor(100,180,100),'semi':QColor(180,180,100),'solid':QColor(100,140,220)}.get(rs,self._get_ui_color('border'))
@@ -1084,13 +1287,25 @@ class COL3DViewport(QWidget): #vers 2
             p.setPen(mode_col); p.setFont(QFont('Arial',7))
             p.drawText(W-66,41,f"[V] {mode_lbl}")
 
+        #    Controller reticle: Cross / Square act on the face under it
+        if self._gamepad is not None:
+            cx0, cy0 = W / 2, H / 2
+            p.setPen(QPen(QColor(150, 240, 255), 2))
+            for a0, b0 in (((cx0-12, cy0), (cx0-4, cy0)), ((cx0+4, cy0), (cx0+12, cy0)),
+                           ((cx0, cy0-12), (cx0, cy0-4)), ((cx0, cy0+4), (cx0, cy0+12))):
+                p.drawLine(QPointF(*a0), QPointF(*b0))
+            p.setFont(QFont('Arial', 7))
+            tag = ("GRAB " if self._pad_grab else "") + f"{self._gizmo_mode} {self._pad_axis}" + (" fine" if self._pad_fine else "")
+            p.drawText(int(cx0) + 14, int(cy0) + 18, tag)
+
         #    HUD                                                            
         p.setFont(QFont('Arial',8)); p.setPen(self._get_ui_color('border'))
         p.drawText(6,14,getattr(model,'name','') or '')
-        y2=H-54
+        y2=H-54-(14 if s_faces else 0)
         for col_c,txt in [(QColor(100,180,100),f"Mesh  F:{len(faces)} V:{len(verts)}"),
                           (QColor(220,180,50), f"Boxes  {len(boxes)}"),
-                          (QColor(80,200,220), f"Spheres  {len(spheres)}")]:
+                          (QColor(80,200,220), f"Spheres  {len(spheres)}")] + \
+                         ([(QColor(230,80,230), f"Shadow  F:{len(s_faces)} V:{len(s_verts)}")] if s_faces else []):
             p.setPen(col_c); p.drawText(6,y2,txt); y2+=14
         p.setPen(QColor(120,125,140)); p.setFont(QFont('Arial',7))
         p.drawText(6,H-4,f"Y:{self._yaw:.0f}° P:{self._pitch:.0f}° Z:{self._zoom:.2f}x")
@@ -1099,7 +1314,7 @@ class COL3DViewport(QWidget): #vers 2
         p.drawText(W-68,H-4,f"grid {step:.3g}")
 
 
-    def _show_face_context_menu(self, global_pos, face_index, face): #vers 3
+    def _show_face_context_menu(self, global_pos, face_index, face): #vers 4
         """Right-click context menu for a picked face — material operations."""
         from PyQt6.QtWidgets import QMenu  # QAction imported at module level
         from PyQt6.QtGui import QColor, QPixmap, QIcon
@@ -1165,6 +1380,21 @@ class COL3DViewport(QWidget): #vers 2
         menu.addSeparator()
         # Open full paint editor
         act_paint = menu.addAction("Paint — open material editor…")
+
+        # Edit tools on the current selection (COLEditMixin)
+        if ws:
+            menu.addSeparator()
+            edit_menu = menu.addMenu(f"Edit {len(self._selected_faces)} selected face(s)")
+            for label, icon, fn in [
+                    ("Detach",               SVGIconFactory.poly_select_icon,    ws._edit_detach),
+                    ("To New Model...",      SVGIconFactory.new_icon,            ws._edit_selection_to_model),
+                    ("Save as COL...",       SVGIconFactory.export_icon,         ws._edit_selection_to_file),
+                    ("Delete",               SVGIconFactory.delete_icon,         ws._edit_delete_faces),
+                    ("Fill Hole",            SVGIconFactory.fill_icon,           ws._edit_fill_hole),
+                    ("To Box",               SVGIconFactory.mesh_icon,           ws._edit_faces_to_box),
+                    ("To Sphere",            SVGIconFactory.shading_sphere_icon, ws._edit_faces_to_sphere),
+                    ("Scale...",             SVGIconFactory.bounds_icon,         ws._edit_scale_dialog)]:
+                edit_menu.addAction(icon(20, ic), label, fn)
 
         #    Execute                                                       
         chosen = menu.exec(global_pos)
