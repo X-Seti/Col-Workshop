@@ -63,6 +63,7 @@ With nothing selected, gizmo and scale work on the whole model.
 | Delete Selected Faces | Remove faces (unused vertices removed) |
 | Vertex Select Mode + Weld | Pick 2+ vertices, join them into one |
 | Fill Hole | Select the faces around a hole; the gap is filled |
+| Optimise Mesh | Clean (lossless weld/duplicates), Merge flat areas, Decimate (lossy, % kept); selected or all models |
 | Box / Sphere to Mesh | Replace a box or sphere with triangles |
 | Faces to Box / Sphere | Replace selected faces with an enclosing box or sphere |
 | Scale... / Centre to Origin | Numeric scale; move model centre to 0,0,0 |

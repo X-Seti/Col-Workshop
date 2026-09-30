@@ -14,7 +14,7 @@ Standalone build of the COL Workshop from [IMG Factory 1.6](https://github.com/X
 - surface.dat editor (Surface Data tab).
 - Import/export single models, IDE-driven import/export, build COL from TXD.
 - Drag and drop .col files; add to the open file or open in a new tab.
-- Edit tools: move/rotate/scale selected faces, detach, weld, fill hole, delete,
+- Edit tools: move/rotate/scale selected faces, detach, weld, fill hole, optimise (reduce faces), delete,
   selection to new model or COL file, box/sphere <-> mesh, centre, merge files.
 - COL3 shadow meshes: view, create, remove.
 - PS5 / game controller support (pygame).

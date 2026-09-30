@@ -1,4 +1,8 @@
-#this belongs in root /ChangeLog.md - Version: 44
+#this belongs in root /ChangeLog.md - Version: 45
+
+## Sep 30 2026 - Mesh optimise, release tidy
+- Optimise Mesh: Clean, Merge flat areas, Decimate; selected or all models.
+- Personal folder paths removed from bundled settings; TODO and Credits rewritten for COL Workshop.
 
 ## Sep 30 2026 - Edit tools, shadow mesh, controller
 - Selection gizmo (move/rotate/scale), detach, extract to model/COL, delete, weld, fill hole, box/sphere/mesh conversion, scale, centre, merge files.
