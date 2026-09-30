@@ -4,7 +4,8 @@
 - Vertex mode: click, Ctrl+click, box select; gizmo move/rotate/scale selected vertices.
 - Unique SVG icons for vertex, face, surface, shadow and conversion tools.
 - Vertex tools: position, create face, delete (Del), weld, mirror, select all/none/invert, split faces.
- Manager and splitter sizes
+
+## Sep 30 2026 - Shared Ribbon Manager and splitter sizes
 - Ribbon Manager moved to methods/ribbon_dialog.py; splitter save/restore to methods/grip_splitter.py (shared with TXD Workshop).
 
 ## Sep 30 2026 - Custom ribbon icons
