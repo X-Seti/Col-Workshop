@@ -10,6 +10,7 @@ Choices save in col_workshop.json and in ribbon presets.
 
 ## Wanted
 Colourful 3ds Max style icons.
+Flat, Stylish, digital, other styles
 
 ## Format
 - PNG with transparency (JPG accepted), 64x64 master, also 32x32 and 20x20 if possible.
