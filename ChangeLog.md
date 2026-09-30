@@ -1,4 +1,7 @@
-#this belongs in root /ChangeLog.md - Version: 45
+#this belongs in root /ChangeLog.md - Version: 46
+
+## Sep 30 2026 - Custom ribbon icons
+- Ribbon Manager Set Icon / Reset Icon from icons/ folder; saved, kept on theme change, in presets. Build copies icons/ beside the exe.
 
 ## Sep 30 2026 - Mesh optimise, release tidy
 - Optimise Mesh: Clean, Merge flat areas, Decimate; selected or all models.

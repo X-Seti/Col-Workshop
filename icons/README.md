@@ -1,10 +1,12 @@
-#this belongs in icons/README.md - Version: 1
+#this belongs in icons/README.md - Version: 2
 # X-Seti - September30 2026 - COL Workshop - Icons
 
 # COL Workshop Icons
 
 The app draws all icons as SVG (apps/methods/imgfactory_svg_icons.py).
-This folder is for community PNG / JPG / SVG replacements. The app does not load them yet.
+This folder is for community PNG / JPG / SVG replacements.
+Apply one: Ribbon Manager, select an action, Set Icon... (Reset Icon restores the SVG).
+Choices save in col_workshop.json and in ribbon presets.
 
 ## Wanted
 Colourful 3ds Max style icons.

@@ -1,4 +1,4 @@
-# this belongs in root /.github/workflows/windows-build.yml - Version: 4
+# this belongs in root /.github/workflows/windows-build.yml - Version: 5
 # X-Seti - Sept 29 2026 - Col Workshop - Windows exe build (PyInstaller)
 name: Windows build
 
@@ -48,6 +48,8 @@ jobs:
 
       - name: Add default settings
         run: if (Test-Path settings) { Copy-Item settings dist/Col_Workshop/settings -Recurse -Force }
+      - name: Add icons folder
+        run: Copy-Item icons dist/Col_Workshop/icons -Recurse -Force
 
       - name: Zip build
         run: Compress-Archive -Path dist/Col_Workshop -DestinationPath Col_Workshop_Windows.zip
