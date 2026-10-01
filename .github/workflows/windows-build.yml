@@ -1,4 +1,4 @@
-# this belongs in root /.github/workflows/windows-build.yml - Version: 5
+# this belongs in root /.github/workflows/windows-build.yml - Version: 6
 # X-Seti - Sept 29 2026 - Col Workshop - Windows exe build (PyInstaller)
 name: Windows build
 
@@ -27,7 +27,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller PyQt6 numpy PyOpenGL pycryptodome mss Pillow pygame
+          pip install PyQt6 numpy PyOpenGL pycryptodome mss Pillow pygame
+
+      # Own bootloader (compiled here, not the stock prebuilt one) - stock
+      # PyInstaller bootloaders are what Defender's ML heuristics flag.
+      - name: PyInstaller with locally compiled bootloader
+        env:
+          PYINSTALLER_COMPILE_BOOTLOADER: "1"
+        run: pip install --no-binary pyinstaller --no-cache-dir pyinstaller
 
       - name: Optional LZO support
         continue-on-error: true

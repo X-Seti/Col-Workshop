@@ -1,4 +1,4 @@
-#this belongs in apps/components/Col_Editor/depends/col_setup_ui_func.py - Version: 11
+#this belongs in apps/components/Col_Editor/depends/col_setup_ui_func.py - Version: 12
 # X-Seti - Sept 29 2026 - IMG Factory 1.6 - COL Workshop UI setup
 
 """
@@ -13,6 +13,7 @@ COL Workshop UI - panes, button connects, toolbar, ribbons, menus, tabs, key sho
 # _apply_panel_font
 # _apply_theme
 # _apply_title_font
+# _build_full_menu
 # _build_menus_into_qmenu
 # _build_toolbars
 # _connect_all_buttons
@@ -247,24 +248,36 @@ class COLSetupUIMixin: #vers 1
         """Short label for imgfactory titlebar button."""
         return "COL"
 
-    def _build_menus_into_qmenu(self, parent_menu): #vers 1
-        """Populate parent_menu with COL Workshop actions."""
-        # File
+    def _build_menus_into_qmenu(self, parent_menu): #vers 2
+        """Populate parent_menu with every COL Workshop command (IMG Factory title bar)."""
+        self._build_full_menu(parent_menu)
+
+    def _build_full_menu(self, parent_menu): #vers 1
+        """File menu, then one sub-menu per ribbon with its buttons, then Ribbon Manager."""
+        from PyQt6.QtWidgets import QToolBar, QWidgetAction
         fm = parent_menu.addMenu("File")
-        fm.addAction("Open COL…",        self._open_file)
-        fm.addAction("Save COL",         self._save_file)
-        fm.addAction("Save COL As…",     self._save_file_as)
+        fm.addAction("Open COL…",          self._open_file)
+        if self.standalone_mode:
+            fm.addAction("Open in New Tab…", self._open_file_new_tab)
+        fm.addAction("Save COL",           self._save_file)
+        fm.addAction("Save COL As…",       self._save_file_as)
         fm.addSeparator()
-        fm.addAction("Import COL…",      self._import_col_data)
-        fm.addAction("Export COL…",      self._export_col_data)
-
-        # Edit
-        em = parent_menu.addMenu("Edit")
-        em.addAction("Undo",             lambda: getattr(self, 'undo_action', lambda: None) and self.undo_action())
-
-        # View
-        vm = parent_menu.addMenu("View")
-        vm.addAction("Sort Models",      self._show_sort_menu if hasattr(self, '_show_sort_menu') else lambda: None)
+        fm.addAction("Import COL…",        self._import_col_data)
+        fm.addAction("Export COL…",        self._export_col_data)
+        mw = getattr(self, '_inner_mw', None)
+        for tb in (mw.findChildren(QToolBar) if mw else []):
+            acts = [a for a in tb.actions() if a.isSeparator() or
+                    (not isinstance(a, QWidgetAction) and a.text())]
+            if not any(not a.isSeparator() for a in acts):
+                continue
+            sub = parent_menu.addMenu(tb.windowTitle() or tb.objectName())
+            for a in acts:
+                if a.isSeparator():
+                    sub.addSeparator()
+                elif a.isVisible():
+                    sub.addAction(a)
+        parent_menu.addSeparator()
+        parent_menu.addAction("Ribbon Manager…", self.open_ribbon_manager)
 
     def setup_ui(self): #vers 12
         """Setup the main UI layout"""
@@ -531,7 +544,7 @@ class COLSetupUIMixin: #vers 1
                 self.is_docked and not self.standalone_mode)
         self._apply_custom_icons()
 
-    def _create_toolbar(self): #vers 13
+    def _create_toolbar(self): #vers 14
         """Create toolbar - FIXED: Hide drag button when docked, ensure buttons visible"""
         # Read sizes from app_settings so they match Global App System Settings
         try:
@@ -570,6 +583,21 @@ class COLSetupUIMixin: #vers 1
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(5)
 
+        # Menu drop-down: every workshop command, grouped like the ribbons
+        from PyQt6.QtWidgets import QToolButton, QMenu
+        self.menu_btn = QToolButton()
+        self.menu_btn.setFont(self.button_font)
+        self.menu_btn.setText("Menu")
+        self.menu_btn.setIcon(self.icon_factory.menu_m_icon(color=icon_color))
+        self.menu_btn.setIconSize(QSize(_ICO_SZ, _ICO_SZ))
+        self.menu_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.menu_btn.setMenu(QMenu(self.menu_btn))
+        self.menu_btn.menu().aboutToShow.connect(
+            lambda: (self.menu_btn.menu().clear(), self._build_full_menu(self.menu_btn.menu())))
+        self.menu_btn.setToolTip("All COL Workshop commands")
+        layout.addWidget(self.menu_btn)
+
         # Settings button
         self.settings_btn = QPushButton()
         self.settings_btn.setFont(self.button_font)
@@ -579,6 +607,17 @@ class COLSetupUIMixin: #vers 1
         self.settings_btn.clicked.connect(self._show_workshop_settings)
         self.settings_btn.setToolTip("Workshop Settings")
         layout.addWidget(self.settings_btn)
+
+        # Standalone file tabs drop-down (docked: IMG Factory tabs are used)
+        from PyQt6.QtWidgets import QToolButton, QMenu
+        self.doc_tabs_btn = QToolButton()
+        self.doc_tabs_btn.setFont(self.button_font)
+        self.doc_tabs_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.doc_tabs_btn.setMenu(QMenu(self.doc_tabs_btn))
+        self.doc_tabs_btn.menu().aboutToShow.connect(self._fill_doc_menu)
+        self.doc_tabs_btn.setToolTip("Open COL files - switch, open in new tab, close")
+        self.doc_tabs_btn.setVisible(False)
+        layout.addWidget(self.doc_tabs_btn)
 
         layout.addStretch()
 
@@ -1124,7 +1163,7 @@ class COLSetupUIMixin: #vers 1
 
         return panel
 
-    def _build_toolbars(self, mw: 'QMainWindow', icon_color: str): #vers 8
+    def _build_toolbars(self, mw: 'QMainWindow', icon_color: str): #vers 9
         """Build all QToolBar instances using QAction (Model Workshop pattern,
         Build 388+). Replaces the old DockableToolbar-based
         _create_transform_icon_panel/_create_preview_controls panels."""
@@ -1216,8 +1255,9 @@ class COLSetupUIMixin: #vers 1
              self._open_paint_editor,       enabled=False, attr='paint_btn')
         _act(tb_xform, "Surface Types", self.icon_factory.checkerboard_icon,
              self._open_surface_type_dialog, attr='surface_type_btn')
-        _act(tb_xform, "Surface Editor",self.icon_factory.surfaceedit_icon,
+        _act(tb_xform, "Edit Model...", self.icon_factory.surfaceedit_icon,
              self._open_surface_edit_dialog, attr='surface_edit_btn')
+        self.surface_edit_btn.setToolTip("Edit Model - mesh editor: vertices, faces, spheres, boxes")
         _act(tb_xform, "Build from TXD",self.icon_factory.build_icon,
              self._build_col_from_txd,       attr='build_from_txd_btn')
 
@@ -1246,8 +1286,10 @@ class COLSetupUIMixin: #vers 1
              lambda v: pw.set_show_boxes(v),   checkable=True, checked=True, attr='_boxes_act')
         self.view_mesh_btn    = _act(tb_rend, "Toggle Mesh",    self.icon_factory.mesh_icon,
              lambda v: pw.set_show_mesh(v),    checkable=True, checked=True, attr='_view_mesh_act')
-        self.backface_btn     = _act(tb_rend, "Toggle Backface",self.icon_factory.backface_icon,
+        self.backface_btn     = _act(tb_rend, "Toggle Backface",self.icon_factory.show_backfaces_icon,
              lambda v: pw.set_backface(v),     checkable=True, checked=False, attr='_backface_act')
+        _act(tb_rend, "Show Vertices", self.icon_factory.show_vertices_icon,
+             self._edit_show_vertices, checkable=True, checked=False, attr='show_verts_btn')
 
         #    Ribbon 4: Name                                                 
         # Replaces the old bottom info_group QFrame (COL name field + format/
@@ -1262,6 +1304,7 @@ class COLSetupUIMixin: #vers 1
         self.info_name.setStyleSheet("padding: 2px; border: 1px solid palette(mid);")
         self.info_name.mousePressEvent = lambda e: self._enable_name_edit(e, False)
         self.info_name.editingFinished.connect(self._apply_name_edit)
+        self.info_name.setToolTip("Model name - click to rename")
         tb_name.addWidget(self.info_name)
 
         #    Ribbon 5: Format                                               
@@ -1270,6 +1313,7 @@ class COLSetupUIMixin: #vers 1
         self.format_combo.addItems(["COL", "COL2", "COL3", "COL4"])
         self.format_combo.currentTextChanged.connect(self._change_format)
         self.format_combo.setMaximumWidth(100)
+        self.format_combo.setToolTip("COL version of the selected model")
         tb_format.addWidget(self.format_combo)
         tb_format.addSeparator()
         _act(tb_format, "Cycle Render Mode", self.icon_factory.render_mode_icon,
@@ -1290,6 +1334,7 @@ class COLSetupUIMixin: #vers 1
         tb_shadow = _tb("Shadow Mesh", Qt.ToolBarArea.RightToolBarArea)
         self.info_format = QLabel("Shadow Mesh:")
         self.info_format.setMinimumWidth(90)
+        self.info_format.setToolTip("Shadow mesh (COL3): view, create, remove")
         tb_shadow.addWidget(self.info_format)
         _act(tb_shadow, "View Shadow Mesh",   self.icon_factory.view_icon,
              self._show_shadow_mesh,    enabled=False, attr='show_shadow_btn')
@@ -1334,6 +1379,53 @@ class COLSetupUIMixin: #vers 1
         _act(tb_edit, "Game Controller (PS5)", IF.controller_icon, self._edit_toggle_gamepad,
              checkable=True, attr='gamepad_btn')
         self.gamepad_btn.setChecked(self._edit_gamepad_saved())
+
+        # CE II tools, one toolbar per function group (Ribbon Manager arranges them)
+        self._tb_ce_groups = []
+        for group, entries in [
+            ("Select", [
+                ("Hide Selected Faces",        IF.hide_faces_icon,         self._edit_hide_selected,      'hide_faces_btn',  False),
+                ("Unhide All Faces",           IF.unhide_faces_icon,       self._edit_unhide_all,         'unhide_btn',      False),
+                ("Selection Lock [Space]",     IF.selection_lock_icon,     self._edit_toggle_lock,        'lock_sel_btn',    True),
+                ("Select by Material",         IF.select_material_icon,    self._edit_select_material,    'sel_mat_btn',     False),
+                ("Circle Region Select",       IF.region_circle_icon,      self._edit_region_circle,      'region_circle_btn', True),
+                ("Window Face Select",         IF.region_window_icon,      self._edit_region_window,      'region_window_btn', True),
+            ]),
+            ("Mesh", [
+                ("Copy as LOD",                IF.copy_lod_icon,           self._edit_copy_as_lod,        'copy_lod_btn',    False),
+                ("Mesh from Shadow",           IF.mesh_from_shadow_icon,   self._edit_mesh_from_shadow,   'mesh_shadow_btn', False),
+                ("Clear Mesh/Spheres/Boxes...", IF.clear_parts_icon,       self._edit_clear_parts,        'clear_parts_btn', False),
+                ("Delete Isolated Vertices",   IF.isolated_verts_icon,     self._edit_delete_isolated,    'isolated_btn',    False),
+                ("Optimum Bounds",             IF.optimum_bounds_icon,     self._edit_optimum_bounds,     'opt_bounds_btn',  False),
+            ]),
+            ("Face Groups", [
+                ("Generate Face Groups...",    IF.face_groups_icon,        self._edit_face_groups,        'face_groups_btn', False),
+                ("Clear Face Groups",          IF.clear_face_groups_icon,  self._edit_clear_face_groups,  'clear_fg_btn',    False),
+                ("Show Face Groups",           IF.show_face_groups_icon,   self._edit_show_face_groups,   'show_fg_btn',     True),
+            ]),
+            ("Lighting", [
+                ("Generate Lighting...",       IF.lighting_icon,           self._edit_lighting,           'lighting_btn',    False),
+                ("Light View",                 IF.light_view_icon,         self._edit_light_view,         'light_view_btn',  True),
+            ]),
+            ("Convert", [
+                ("VC to SA Materials",         IF.vc_to_sa_icon,           self._edit_vc_to_sa,           'vc_sa_btn',       False),
+                ("Duplicate Check",            IF.duplicate_check_icon,    self._edit_duplicate_check,    'dup_check_btn',   False),
+                ("Batch Conversion...",        IF.batch_convert_icon,      self._edit_batch_convert,      'batch_btn',       False),
+            ]),
+            ("Exchange", [
+                ("Import CST/3DS/X/DFF...",    IF.import_exchange_icon,    self._edit_import_exchange,    'import_ex_btn',   False),
+                ("Export CST...",              IF.export_cst_icon,         self._edit_export_cst,         'export_cst_btn',  False),
+                ("Attach to DFF...",           IF.attach_dff_icon,         self._edit_attach_to_dff,      'attach_dff_btn',  False),
+                ("COL from DFF...",            IF.col_from_dff_icon,       self._edit_col_from_dff,       'col_dff_btn',     False),
+                ("Surfaces from DFF Textures...", IF.surfaces_from_dff_icon, self._edit_surfaces_from_dff, 'surf_dff_btn', False),
+            ]),
+        ]:
+            tb_grp = _tb(group, Qt.ToolBarArea.TopToolBarArea)
+            for name, icon, cb, attr, chk in entries:
+                _act(tb_grp, name, icon, cb, checkable=chk, enabled=False, attr=attr)
+            self._tb_ce_groups.append(tb_grp)
+        self.batch_btn.setEnabled(True)        # these work without an open file
+        self.col_dff_btn.setEnabled(True)
 
         # Store toolbar refs
         self._tb_transform = tb_xform
@@ -1693,7 +1785,7 @@ class COLSetupUIMixin: #vers 1
         # Repaint the whole workshop
         self.update()
 
-    def _apply_theme(self): #vers 6
+    def _apply_theme(self): #vers 7
         """Apply global app theme — uses QApplication stylesheet set by app_settings."""
         try:
             app_settings = getattr(self, 'app_settings', None) or \
@@ -1705,6 +1797,9 @@ class COLSetupUIMixin: #vers 1
                     QApplication.instance().setStyleSheet(ss)
             # Clear widget-level override — children inherit from QApplication
             self.setStyleSheet("")
+            if app_settings:                    # panel effects, image and transparency
+                from apps.utils.app_settings_system import apply_panel_effects
+                apply_panel_effects(self, app_settings)
         except Exception as e:
             print(f"Theme application error: {e}")
 
@@ -1720,7 +1815,7 @@ class COLSetupUIMixin: #vers 1
         m.addAction("Sort by Vertices (most)", lambda: self._sort_models_desc('vertices'))
         m.exec(self.cursor().pos())
 
-    def _show_collision_context_menu(self, position): #vers 6
+    def _show_collision_context_menu(self, position): #vers 7
         """Right-click context menu for both collision model lists."""
         # Work out which list sent the signal and find the row
         sender = self.sender()
@@ -1771,6 +1866,13 @@ class COLSetupUIMixin: #vers 1
 
             copy_action = menu.addAction("Copy Info to Clipboard")
             copy_action.triggered.connect(lambda: self._copy_model_info(model, row))
+
+            menu.addSeparator()
+
+            #    Tools (edit model, mesh tools, all commands)
+            tools = menu.addMenu("Tools")
+            self._edit_tools_menu(tools)
+            menu.addAction("Edit Model...", self._open_surface_edit_dialog)
 
             menu.addSeparator()
 
@@ -1936,7 +2038,7 @@ class COLSetupUIMixin: #vers 1
         self.info_name.selectAll()
         self.info_name.setFocus()
 
-    def _set_col_buttons_enabled(self, enabled: bool): #vers 3
+    def _set_col_buttons_enabled(self, enabled: bool): #vers 4
         """Enable/disable all transform buttons in BOTH icon and text panels.
         The text panel overwrites self.X refs, so when the icon panel is visible
         (narrow mode) those refs point to hidden buttons. Walk the icon panel too.
@@ -1950,6 +2052,12 @@ class COLSetupUIMixin: #vers 1
             'vertex_mode_btn', 'scale_gizmo_btn', 'scale_btn', 'centre_btn', 'detach_btn',
             'sel_model_btn', 'sel_file_btn', 'del_faces_btn', 'weld_btn', 'fill_hole_btn',
             'box_mesh_btn', 'sphere_mesh_btn', 'faces_box_btn', 'faces_sphere_btn', 'merge_btn', 'optimise_btn',
+            'vert_pos_btn', 'add_face_btn', 'del_verts_btn', 'split_faces_btn', 'mirror_btn',
+            'hide_faces_btn', 'unhide_btn', 'lock_sel_btn', 'sel_mat_btn', 'copy_lod_btn', 'mesh_shadow_btn',
+            'clear_parts_btn', 'isolated_btn', 'opt_bounds_btn', 'face_groups_btn', 'clear_fg_btn',
+            'show_fg_btn', 'lighting_btn', 'light_view_btn', 'vc_sa_btn', 'region_circle_btn',
+            'region_window_btn', 'dup_check_btn', 'import_ex_btn', 'export_cst_btn', 'attach_dff_btn',
+            'col_dff_btn', 'surf_dff_btn',
         ]
         for attr in col_btn_attrs:
             btn = getattr(self, attr, None)

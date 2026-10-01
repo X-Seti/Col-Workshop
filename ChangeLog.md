@@ -1,4 +1,9 @@
-#this belongs in root /ChangeLog.md - Version: 48
+#this belongs in root /ChangeLog.md - Version: 49
+
+## Oct 01 2026 - CE II features, menus, Windows build
+- Vertex editing, Mesh/Select/Face Groups/Lighting/Convert/Exchange toolbars, COL from DFF, file tabs, Menu drop-down, right-click tools, Edit Model.
+- Settings: colour transparency, panel image, condensed tabs. CE II icons in icons/.
+- Windows build: PyInstaller bootloader compiled in CI (fewer Defender false positives).
 
 ## Sep 30 2026 - Vertex editing
 - Vertex mode: click, Ctrl+click, box select; gizmo move/rotate/scale selected vertices.
