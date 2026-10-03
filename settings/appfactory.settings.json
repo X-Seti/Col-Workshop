@@ -19,6 +19,17 @@
     "BUTTON_ACTIONS",
     "FILE_OPERATIONS"
   ],
+  "working_gta_folder": "C:\\users\\x2\\Desktop\\GTA_VC",
+  "assists_folder": "C:\\users\\x2\\Desktop\\Assists",
+  "textures_folder": "C:\\users\\x2\\Desktop\\Textures",
+  "collisions_folder": "C:\\users\\x2\\Desktop\\Collisions",
+  "generics_folder": "C:\\users\\x2\\Desktop\\Generics",
+  "water_folder": "C:\\users\\x2\\Desktop\\Water",
+  "radar_folder": "C:\\users\\x2\\Desktop\\Radartiles",
+  "gameart_folder": "C:\\users\\x2\\Desktop\\Gameart",
+  "peds_folder": "C:\\users\\x2\\Desktop\\Peds",
+  "vehicles_folder": "C:\\users\\x2\\Desktop\\Vehicles",
+  "weapons_folder": "C:\\users\\x2\\Desktop\\Weapons",
   "show_button_icons": true,
   "remember_img_output_path": true,
   "remember_import_path": true,
@@ -63,6 +74,7 @@
   "panel_bg_image": "",
   "panel_bg_image_mode": 0,
   "panel_bg_image_opacity": 100,
+  "panel_bg_image_all": false,
   "button_style": "gradient_45",
   "progressbar_style": "system",
   "progressbar_fill": "#4a7a9b",
@@ -103,5 +115,11 @@
   "pin_warn_popup": true,
   "pin_warn_log": true,
   "rename_notify_popup": true,
-  "rename_notify_log": true
+  "rename_notify_log": true,
+  "color_alpha": {
+    "bg_primary": 90,
+    "bg_secondary": 90,
+    "bg_tertiary": 90,
+    "panel_bg": 90
+  }
 }
