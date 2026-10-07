@@ -30,6 +30,11 @@ pip install PyQt6 numpy PyOpenGL pygame
 ```
 
 ## Run
+Needs [App-Settings-System](https://github.com/X-Seti/App-Settings-System) beside this repo:
+```
+git clone https://github.com/X-Seti/App-Settings-System ../App-Settings-System
+for d in utils themes images; do ln -s ../../App-Settings-System/apps/$d apps/$d; done
+```
 ```
 python3 launch_col_workshop.py
 ```

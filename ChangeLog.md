@@ -1,4 +1,7 @@
-#this belongs in root /ChangeLog.md - Version: 49
+#this belongs in root /ChangeLog.md - Version: 50
+
+## Oct 05 2026 - App-Settings-System dependency
+- apps/utils, themes, images now come from X-Seti/App-Settings-System; Windows build checks it out; README shows symlink setup.
 
 ## Oct 01 2026 - CE II features, menus, Windows build
 - Vertex editing, Mesh/Select/Face Groups/Lighting/Convert/Exchange toolbars, COL from DFF, file tabs, Menu drop-down, right-click tools, Edit Model.
