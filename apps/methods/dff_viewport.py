@@ -1,5 +1,5 @@
 # X-Seti - Jul07 2026 - IMG Factory 1.6 - DFF OpenGL Viewport
-# this belongs in apps/methods/dff_viewport.py - Version: 23
+# this belongs in apps/methods/dff_viewport.py - Version: 30
 """
 DFFViewport - Shared OpenGL viewport for DFF model rendering.
 Used by Model Viewer, Model Workshop, Vehicle Workshop (docked).
@@ -11,6 +11,19 @@ Standalone tools import from their own methods/dff_viewport.py.
 # DFFViewport._build_gizmo_chips
 # DFFViewport._constraint_axis
 # DFFViewport._cycle_constraint
+# DFFViewport._draw_axis_cone
+# DFFViewport._draw_axis_letter
+# DFFViewport._draw_detached_wires
+# DFFViewport._draw_mesh_hover
+# DFFViewport._draw_wire_hint
+# DFFViewport._mesh_chip_state
+# DFFViewport._mesh_render_menu
+# DFFViewport._mesh_ring
+# DFFViewport._place_mesh_chips
+# DFFViewport._screen_axes
+# DFFViewport._sync_mesh_chips
+# DFFViewport._update_mesh_hover
+# DFFViewport.cycle_render_mode
 # DFFViewport.dragEnterEvent
 # DFFViewport.dragMoveEvent
 # DFFViewport._draw_cone
@@ -52,6 +65,10 @@ Standalone tools import from their own methods/dff_viewport.py.
 # DFFViewport._draw_solid
 # DFFViewport._draw_textured
 # DFFViewport._draw_wireframe
+# DFFViewport._place_edit_banner
+# DFFViewport.set_detached_faces
+# DFFViewport.set_edit_mode_banner
+# DFFViewport._water2_arrays
 # DFFViewport._emit_verts
 # DFFViewport._face_color
 # DFFViewport._flush_pending_textures
@@ -91,6 +108,10 @@ Standalone tools import from their own methods/dff_viewport.py.
 # DFFViewport.set_gizmo_move_callback
 # DFFViewport.set_gizmo_rotate_callback
 # DFFViewport.set_gizmo_target
+# DFFViewport.set_mesh_face_mode
+# DFFViewport.set_mesh_face_mode_callback
+# DFFViewport.set_mesh_gizmo_mode
+# DFFViewport.set_mesh_xform_callback
 # DFFViewport.set_model_drop_callback
 # DFFViewport.set_script_markers
 # DFFViewport.set_selection
@@ -137,6 +158,7 @@ Standalone tools import from their own methods/dff_viewport.py.
 # DFFViewport.set_show_mesh
 # DFFViewport.set_view_lock
 # DFFViewport.set_wheel_heading
+# DFFViewport.set_wire_hint
 # DFFViewport.toggle_door
 # DFFViewport.toggle_snap_axis_constraint
 # DFFViewport.toggle_snap_target
@@ -461,6 +483,10 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         # VC-only gate (Aug 20 2026)
         self._water2_game = ''
         self._water2_offset_vc_only = True
+        self._water2_offset_mode = 'vc'
+        self._water2_fix_override = None   # per-game True/False, None = mode
+        self._water2_nudge = (0.0, 0.0)
+        self._radar_tex_offset = (0.0, 0.0)
 
         # Cull zone boxes (Aug 16 2026)
         self.show_cull_boxes = False
@@ -524,6 +550,12 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         self._selected_verts = set()    # set of vertex indices
         self._selected_edges = set()    # set of (vi, vj) tuples, vi < vj
         self._selected_faces = set()    # set of triangle indices
+        self._hidden_faces = set()      # triangle indices not drawn or picked
+        self._selection_locked = False  # Space: selection can't change
+        self._lock_key_callback = None  # workshop toggles its lock button
+        self._mesh_region = None        # [x0, y0, x1, y1, add] sub-object region drag
+        self._region_circle = False     # region shape: circle, else rectangle
+        self._region_crossing = True    # faces: any corner inside, else all
         self._select_mode    = 'object'  # 'vertex'|'edge'|'face'|'poly'|'object'
 
         # Snap target toggles (Aug 19 2026)
@@ -542,6 +574,21 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             "color: rgba(255,255,255,190); background: transparent; font-size: 10px;")
         self._label_widget.move(4, 2)
         self._label_widget.hide()
+        self._edit_banner = QLabel(self)          # "Edit Mode" at top middle (mesh edit)
+        self._edit_banner.setStyleSheet(
+            "color: white; background: rgba(190, 50, 50, 190); font-size: 12px; "
+            "font-weight: bold; padding: 2px 12px; border-radius: 4px;")
+        self._edit_banner.hide()
+        self._mesh_hover = None                   # hovered vertex / edge / face (mesh edit)
+        self._mesh_gizmo_mode = 'move'            # 'move' | 'rotate' | 'scale'
+        self._mesh_xform_cb = None                # fn(kind, vert_ids, axis, value, pivot)
+        self._mesh_face_mode = 'connected'        # face move: 'connected' | 'detach' | 'extrude'
+        self._detached_faces = set()              # drawn with orange edges
+        self._wire_hint = True                    # wireframe over solid / textured
+        self._mesh_chips = None                   # render / gizmo chip bar (model view)
+        self._mesh_info = QLabel(self)            # face / vertex counts, bottom left
+        self._mesh_info.setStyleSheet("color: rgba(150,230,150,220); background: transparent; font-size: 10px;")
+        self._mesh_info.hide()
 
         # Retro CRT time overlay (Aug 20 2026)
         self._crt_time_overlay = _CRTTimeOverlay(self)
@@ -801,7 +848,7 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
                         return
         super().mouseDoubleClickEvent(event)
 
-    def _ray_triangle_intersect(self, origin, direction, v0, v1, v2): #vers 1
+    def _ray_triangle_intersect(self, origin, direction, v0, v1, v2): #vers 2
         """Möller–Trumbore ray/triangle test. Returns t (distance along the
         ray) on hit, or None. Backface-tolerant (tests both winding orders)."""
         eps = 1e-9
@@ -825,12 +872,12 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         v = (dx*qx + dy*qy + dz*qz) * inv_det
         if v < -1e-6 or u + v > 1 + 1e-6:
             return None
-        t = (e1[0]*qx + e1[1]*qy + e1[2]*qz) * inv_det
+        t = (e2[0]*qx + e2[1]*qy + e2[2]*qz) * inv_det     # distance: e2 . q
         if t < 1e-6:
             return None
         return t
 
-    def _pick_face(self, mx: float, my: float): #vers 1
+    def _pick_face(self, mx: float, my: float): #vers 2
         """Return index of the closest triangle hit by the ray through
         (mx,my), or None. Picks the nearest intersection along the ray
         (i.e. respects depth — front-most triangle wins)."""
@@ -841,6 +888,8 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         verts = self._vertices
         best_i, best_t = None, None
         for i, tri in enumerate(self._triangles):
+            if i in self._hidden_faces:
+                continue
             a, b, c = tri[0], tri[1], tri[2]
             try:
                 v0, v1, v2 = verts[a], verts[b], verts[c]
@@ -851,6 +900,13 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
                 best_i, best_t = i, t
         return best_i
 
+    def _visible_tris(self): #vers 1
+        """Triangles to draw: hidden faces (Model Workshop mesh edit) left out."""
+        hidden = self._hidden_faces
+        if not hidden:
+            return self._triangles
+        return [t for i, t in enumerate(self._triangles) if i not in hidden]
+
     def _selected_set_for_mode(self, mode=None): #vers 1
         """Return the live selection set for the given (or current) mode."""
         mode = mode or getattr(self, '_select_mode', 'object')
@@ -860,9 +916,12 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             return self._selected_edges
         return self._selected_faces   # 'face' and 'poly' share one set
 
-    def _apply_selection_click(self, mode, key, modifiers): #vers 1
+    def _apply_selection_click(self, mode, key, modifiers): #vers 2
         """Apply a single click selection. Ctrl+click toggles the item;
-        Shift+click adds without replacing; plain click replaces selection."""
+        Shift+click adds without replacing; plain click replaces selection.
+        Nothing changes while the selection is locked."""
+        if self._selection_locked:
+            return
         sel = self._selected_set_for_mode(mode)
         if modifiers & Qt.KeyboardModifier.ControlModifier:
             if key in sel:
@@ -970,7 +1029,24 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         _libGL.glEnable(_GL_COLOR_MATERIAL)
         _libGL.glColorMaterial(_GL_FRONT_AND_BACK, _GL_AMBIENT_AND_DIFFUSE)
 
-    def resizeGL(self, w, h): #vers 3
+    def set_edit_mode_banner(self, text): #vers 2
+        """Show text centred at the top of the view ('' hides it); chips follow the mode."""
+        self._edit_banner.setText(text)
+        self._edit_banner.setVisible(bool(text))
+        self._place_edit_banner()
+        self._mesh_hover = None
+        self._sync_mesh_chips()
+
+    def _place_edit_banner(self): #vers 1
+        b = self._edit_banner
+        if b.isVisible():
+            b.adjustSize()
+            b.move(max(0, (self.width() - b.width()) // 2), 6)
+            b.raise_()
+
+    def resizeGL(self, w, h): #vers 5
+        self._place_edit_banner()
+        self._place_mesh_chips()
         if not OPENGL_AVAILABLE: return
         glViewport(0, 0, max(1, w), max(1, h))
         glMatrixMode(GL_PROJECTION); glLoadIdentity()
@@ -986,7 +1062,7 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         glMatrixMode(GL_MODELVIEW)
         self._label_widget.move(4, 2)
 
-    def paintGL(self): #vers 10
+    def paintGL(self): #vers 14
         if not OPENGL_AVAILABLE: return
         bg = self._get_bg_color()
         glClearColor(bg.redF(), bg.greenF(), bg.blueF(), 1.0)
@@ -997,10 +1073,17 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         glRotatef(self._yaw, 0, 0, 1)
         # Sky drawn here - after yaw/pitch rotate the scene, before pan
         # translates it (Aug 20 2026)
-        if self._skybox_path:
-            self._draw_skybox()
-        elif self._timecyc_playing and self._sky_gradient_top and self._sky_gradient_bot:
-            self._draw_sky_gradient()
+        if self._skybox_path or (self._timecyc_playing and self._sky_gradient_top
+                                 and self._sky_gradient_bot):
+            glPushMatrix()                      # camera-centred: rotate only, no zoom/pan
+            glLoadIdentity()
+            glRotatef(-self._pitch, 1, 0, 0)
+            glRotatef(self._yaw, 0, 0, 1)
+            if self._skybox_path:
+                self._draw_skybox()
+            else:
+                self._draw_sky_gradient()
+            glPopMatrix()
         glTranslatef(self._pan_x, self._pan_y, 0)
         if self._backface_cull:
             glEnable(GL_CULL_FACE); glCullFace(GL_BACK)
@@ -1060,6 +1143,8 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
                 self._draw_reticle()
             if self._rubber is not None:
                 self._draw_rubber_band()
+            if self._mesh_region is not None:
+                self._draw_mesh_region()
             if self._show_grid: self._draw_grid()
             # Water drawn after the grid now (Aug 20 2026)
             if self.show_water:
@@ -1070,6 +1155,9 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             if self._show_grid: self._draw_grid()
             self._draw_axes()
             return
+        if self._mesh_chip_state() != getattr(self, '_mesh_chip_shown', None):
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, self._sync_mesh_chips)
         if has_geoms:
             self._draw_assembly()
         elif has_verts:
@@ -1077,7 +1165,10 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             elif self._mode == 'solid':     self._draw_solid()
             elif self._mode == 'semi_solid': self._draw_solid(alpha_multiplier=0.5)
             elif self._mode == 'textured':  self._draw_textured()
+            self._draw_wire_hint()
+            self._draw_detached_wires()
             self._draw_selection_overlay()
+            self._draw_mesh_gizmo()
         if self._show_grid: self._draw_grid()
         self._draw_axes()
 
@@ -1641,7 +1732,7 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             self._skybox_tex_id = False
         return self._skybox_tex_id
 
-    def _draw_skybox(self): #vers 2
+    def _draw_skybox(self): #vers 3
         """Real, world-space "box sky" - same real technique _draw_
         sky_gradient now uses (Aug 20 2026)"""
         if not self._skybox_path:
@@ -1656,7 +1747,7 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         glEnable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, tex_id)
         glColor4f(1, 1, 1, 1)
-        radius = 80000.0
+        radius = 1000.0                     # camera-centred box, depth test off
         top_z = radius
         bottom_z = 0.0   # kept at the real horizon line, not below it - same real fix _draw_sky_gradient's own docstring explains (Aug 20 2026)
         glBegin(GL_QUADS)
@@ -1678,7 +1769,7 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         if was_cull:
             glEnable(GL_CULL_FACE)
 
-    def _draw_sky_gradient(self): #vers 3
+    def _draw_sky_gradient(self): #vers 4
         """Real, world-space "box sky" - 4 large vertical quads (N/S/
         E/W) forming a box around the origin, each with the same real
         3-stop blend (sky_top at the zenith, sky_bot lower, sun_core
@@ -1698,7 +1789,7 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         tr, tg, tb = top_color
         mr, mg, mb = bot_color
         hr, hg, hb = horizon_color
-        radius = 80000.0
+        radius = 1000.0                     # camera-centred box, depth test off
         top_z = radius
         mid_z = radius * 0.35
         horizon_z = 0.0
@@ -1977,21 +2068,21 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             glDepthMask(True); glDisable(GL_BLEND)
         glEnable(GL_LIGHTING)
 
-    def _draw_wireframe(self): #vers 1
+    def _draw_wireframe(self): #vers 2
         if not OPENGL_AVAILABLE: return
         glDisable(GL_LIGHTING)
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
         glColor3f(0.65, 0.75, 1.0); glLineWidth(0.8)
         glBegin(GL_TRIANGLES)
-        for v1,v2,v3,mid in self._triangles:
+        for v1,v2,v3,mid in self._visible_tris():
             self._emit_verts(v1,v2,v3)
         glEnd()
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
         glEnable(GL_LIGHTING)
 
-    def _draw_selection_overlay(self): #vers 1
+    def _draw_selection_overlay(self): #vers 3
         """Highlight the active sub-object selection (vertex/edge/face/poly)
-        on top of the already-rendered mesh. No-op in 'object' mode."""
+        and the hovered element on top of the mesh. No-op in 'object' mode."""
         if not OPENGL_AVAILABLE: return
         mode = getattr(self, '_select_mode', 'object')
         if mode == 'object':
@@ -2001,6 +2092,14 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             return
         glDisable(GL_LIGHTING)
         glDisable(GL_DEPTH_TEST)
+        if getattr(self, '_show_verts', False):              # all vertex dots (Show Vertices)
+            glColor3f(0.95, 0.25, 0.25)
+            glPointSize(4.0)
+            glBegin(GL_POINTS)
+            for v in verts:
+                glVertex3f(*v)
+            glEnd()
+        self._draw_mesh_hover(mode)
 
         if mode == 'vertex' and self._selected_verts:
             glColor3f(1.0, 0.8, 0.1)
@@ -2045,7 +2144,7 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_LIGHTING)
 
-    def _draw_solid(self, alpha_multiplier=1.0): #vers 4
+    def _draw_solid(self, alpha_multiplier=1.0): #vers 5
         if not OPENGL_AVAILABLE: return
         flags = self._geom_flags()
         use_lighting = bool(flags & self.rpGEOMETRYLIGHT) and bool(self._normals)
@@ -2059,7 +2158,7 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         opaque = []; transparent = []
         # alpha_multiplier < 1.0 (Aug 1 2026)
         force_transparent = alpha_multiplier < 0.999
-        for tri in self._triangles:
+        for tri in self._visible_tris():
             fc = self._face_color(tri[3])
             is_transparent = force_transparent or (len(fc) > 3 and fc[3] < 0.99)
             (transparent if is_transparent else opaque).append((tri, fc))
@@ -2088,13 +2187,13 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         glColor4f(0,0,0,0.18); glLineWidth(0.5)
         glEnable(GL_POLYGON_OFFSET_LINE); glPolygonOffset(-1,-1)
         glBegin(GL_TRIANGLES)
-        for v1,v2,v3,mid in self._triangles:
+        for v1,v2,v3,mid in self._visible_tris():
             self._emit_verts(v1,v2,v3)
         glEnd()
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
         glDisable(GL_POLYGON_OFFSET_LINE)
 
-    def _draw_textured(self): #vers 4
+    def _draw_textured(self): #vers 5
         if not OPENGL_AVAILABLE: return
         flags = self._geom_flags()
         use_lighting = bool(flags & self.rpGEOMETRYLIGHT) and bool(self._normals)
@@ -2114,7 +2213,7 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         mats  = self._materials
         batches: Dict[tuple,list] = {}
         no_tex = []
-        for tri in self._triangles:
+        for tri in self._visible_tris():
             v1,v2,v3,mid = tri
             tname = ''
             if mats and 0 <= mid < len(mats):
@@ -2189,7 +2288,7 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         if rw == 3: return GL_MIRRORED_REPEAT
         return GL_REPEAT
 
-    def _upload_textures(self, textures: list, additive: bool = False): #vers 4
+    def _upload_textures(self, textures: list, additive: bool = False): #vers 7
         if not OPENGL_AVAILABLE: return
         # Guard: don't attempt upload if GL context not initialized
         try:
@@ -2205,13 +2304,16 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             self.clear_textures()
         for tex in textures:
             name = tex.get('name','').lower()
+            # Skip re-uploading an already-loaded texture before reading pixels
+            if not name or name in self._tex_ids:
+                continue
+            if dict.get(tex, 'dxt_levels'):
+                self._upload_dxt_texture(name, tex)     # compressed, GPU decodes
+                continue
             rgba = tex.get('rgba_data', b'')
             w    = tex.get('width', 0); h = tex.get('height', 0)
-            if not (name and rgba and w > 0 and h > 0): continue
-            # Skip re-uploading an already-loaded texture (Aug 1 2026)
-            if name in self._tex_ids:
-                continue
-            if getattr(self, '_texture_downscale_enabled', False):
+            if not (rgba and w > 0 and h > 0): continue
+            if getattr(self, '_texture_downscale_enabled', False) and '_group' not in tex:   # cache limits own
                 threshold = getattr(self, '_texture_downscale_threshold', 512)
                 if w > threshold or h > threshold:
                     target = getattr(self, '_texture_downscale_target', 256)
@@ -2235,6 +2337,30 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
                 print(f"[DFFViewport] Tex upload fail '{name}': {e}")
                 glDeleteTextures(1,[gl_id])
         glBindTexture(GL_TEXTURE_2D, 0); self.doneCurrent()
+
+    def _upload_dxt_texture(self, name, tex): #vers 1
+        """Upload DXT1/3/5 levels as-is (S3TC); no CPU decode."""
+        fmt = {'DXT1': 0x83F1, 'DXT3': 0x83F2, 'DXT5': 0x83F3}.get(tex.get('format'))
+        levels = dict.get(tex, 'dxt_levels')
+        if fmt is None or not levels:
+            return
+        wrap_u, wrap_v = tex.get('wrap_u', 1), tex.get('wrap_v', 1)
+        gl_id = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, gl_id)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                        GL_LINEAR_MIPMAP_LINEAR if len(levels) > 1 else GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, self._rw_wrap_to_gl(wrap_u))
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, self._rw_wrap_to_gl(wrap_v))
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, len(levels) - 1)
+        try:
+            for i, (w, h, data) in enumerate(levels):
+                glCompressedTexImage2D(GL_TEXTURE_2D, i, fmt, w, h, 0, data)
+            self._tex_ids[name] = gl_id
+            self._tex_wrap[name] = (wrap_u, wrap_v)
+        except Exception as e:
+            print(f"[DFFViewport] DXT upload fail '{name}': {e}")
+            glDeleteTextures(1, [gl_id])
 
     def _flush_pending_textures(self): #vers 2
         """Upload any textures that were queued before GL context was ready."""
@@ -2279,7 +2405,9 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         self._tex_ids.clear()
         self._tex_wrap.clear()
 
-    def load_geometry(self, geometry, materials: list): #vers 3
+    def load_geometry(self, geometry, materials: list, fit: bool = True): #vers 5
+        if len(geometry.triangles) != len(getattr(self, '_triangles', None) or []):
+            self._hidden_faces = set()          # face ids no longer match
         self._all_geoms  = []  # clear multi-geom data
         self._current_geom_flags = getattr(geometry, 'flags', 0)
         self._vertices  = [(v.x,v.y,v.z) for v in geometry.vertices]
@@ -2288,7 +2416,9 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         self._triangles = [(t.v1,t.v2,t.v3,t.material_id) for t in geometry.triangles]
         self._materials = materials
         self._prelit    = [(c.r,c.g,c.b,c.a) for c in getattr(geometry,'colors',[])] if geometry.colors else []
-        self._auto_fit(); self.update()
+        if fit:                                 # mesh edits keep the camera
+            self._auto_fit()
+        self.update()
         if self._on_geometry_loaded:
             try: self._on_geometry_loaded()
             except Exception: pass
@@ -2302,8 +2432,10 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         self._pan_y = -(max(ys)+min(ys))/2
         self.update()
 
-    def set_render_mode(self, mode: str): #vers 1
-        self._mode = mode; self.update()
+    def set_render_mode(self, mode: str): #vers 2
+        self._mode = mode
+        self._sync_mesh_chips()
+        self.update()
 
     def set_backface_cull(self, v: bool): #vers 1
         self._backface_cull = v; self.update()
@@ -2400,7 +2532,7 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             tile['tex_id'] = False
         return tile['tex_id']
 
-    def _draw_radar_tex_layer(self): #vers 2
+    def _draw_radar_tex_layer(self): #vers 3
         """V-coordinates: row 0 of the saved PNG is north (capture_
         radar_tile uses grabFramebuffer's own display-ready, already-
         correctly-oriented output), which uploads as V=0 - so V=0
@@ -2416,6 +2548,8 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         glDepthMask(GL_FALSE)
         glEnable(GL_TEXTURE_2D)
         glColor4f(1, 1, 1, 1)
+        glPushMatrix()
+        glTranslatef(self._radar_tex_offset[0], self._radar_tex_offset[1], 0.0)
         for tile in self._radar_tex_tiles:
             tex_id = self._ensure_radar_tex_tile(tile)
             if not tex_id:
@@ -2427,6 +2561,7 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             glTexCoord2f(1, 0); glVertex3f(tile['max_x'], tile['max_y'], 0)
             glTexCoord2f(0, 0); glVertex3f(tile['min_x'], tile['max_y'], 0)
             glEnd()
+        glPopMatrix()
         glBindTexture(GL_TEXTURE_2D, 0)
         glDisable(GL_TEXTURE_2D)
         glDepthMask(GL_TRUE)
@@ -3091,9 +3226,10 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             self._water_texture_tex_id = False
         return self._water_texture_tex_id
 
-    def set_water2_data(self, cells, texture_path=''): #vers 1
+    def set_water2_data(self, cells, texture_path=''): #vers 2
         """New, simple water data setter (Aug 20 2026)"""
         self._water2_cells = cells or []
+        self._water2_zrange = None
         if texture_path:
             self._water2_texture_path = texture_path
         self.update()
@@ -3135,13 +3271,35 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         self._water2_game = (game_key or '').lower()
         self.update()
 
-    def set_water2_offset_vc_only(self, enabled): #vers 1
+    def set_water2_offset_vc_only(self, enabled): #vers 2
         """ toggle (Aug 20 2026, same real request as
         set_water2_game above) - on (default) restricts the X/Y
         offset to VC only; off applies it regardless of which game
         is loaded, for a future game that might turn out to need the
         same kind of correction."""
         self._water2_offset_vc_only = bool(enabled)
+        self._water2_offset_mode = 'vc' if enabled else 'all'
+        self.update()
+
+    def set_water2_fix_override(self, value): #vers 1
+        """Per-game water fix: True/False forces, None uses mode."""
+        self._water2_fix_override = None if value is None else bool(value)
+        self.update()
+
+    def set_water2_nudge(self, x, y): #vers 1
+        """Per-game water nudge, always applied."""
+        self._water2_nudge = (float(x), float(y))
+        self.update()
+
+    def set_radar_tex_offset(self, x, y): #vers 1
+        """Per-game radar tile layer offset in world units."""
+        self._radar_tex_offset = (float(x), float(y))
+        self.update()
+
+    def set_water2_offset_mode(self, mode): #vers 1
+        """Radar/water fix: 'vc' VC only, 'all' every game, 'off'."""
+        self._water2_offset_mode = mode if mode in ('vc', 'all', 'off') else 'vc'
+        self._water2_offset_vc_only = self._water2_offset_mode == 'vc'
         self.update()
 
     def _ensure_water2_texture(self): #vers 2
@@ -3204,8 +3362,39 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         self._water2_rgba_wh = (width, height)
         self.update()
 
-    def _draw_water2(self): #vers 2
-        """New, simple water draw """
+    def _water2_arrays(self, x_offset, y_offset, z_offset): #vers 2
+        """Water quad vertices (N*4, 3) wrapped into the map, plus depth colours; cached."""
+        cells = self._water2_cells
+        half = self._water_map_half_extent
+        key = (id(cells), len(cells), x_offset, y_offset, z_offset, half)
+        cached = getattr(self, '_water2_va', None)
+        if cached is not None and cached[0] == key + (self._water2_alpha,):
+            return cached[1]
+        c = np.asarray(cells, dtype=np.float64).reshape(-1, 5)
+        w, h = c[:, 2] - c[:, 0], c[:, 3] - c[:, 1]
+        cx = (c[:, 0] + c[:, 2]) / 2.0 + x_offset
+        cy = (c[:, 1] + c[:, 3]) / 2.0 + y_offset
+        span = half * 2.0
+        if span > 0:
+            cx = np.mod(cx + half, span) - half
+            cy = np.mod(cy + half, span) - half
+        x0, x1, y0, y1 = cx - w / 2.0, cx + w / 2.0, cy - h / 2.0, cy + h / 2.0
+        z = c[:, 4] + z_offset
+        v = np.empty((len(c), 4, 3), dtype=np.float32)
+        v[:, 0] = np.stack([x0, y0, z], 1); v[:, 1] = np.stack([x1, y0, z], 1)
+        v[:, 2] = np.stack([x1, y1, z], 1); v[:, 3] = np.stack([x0, y1, z], 1)
+        v = np.ascontiguousarray(v.reshape(-1, 3))
+        from apps.methods.ui_color import depth_range
+        lo, hi = self._water2_zrange = depth_range(c[:, 4].tolist())
+        t = np.clip((c[:, 4] - lo) / max(1e-6, hi - lo), 0.0, 1.0)    # depth gang shades
+        col = np.stack([8 + 112 * t, 30 + 170 * t, 80 + 175 * t], 1) / 255.0
+        self._water2_col = np.ascontiguousarray(
+            np.repeat(np.hstack([col, np.full((len(c), 1), self._water2_alpha)]), 4, 0).astype(np.float32))
+        self._water2_va = (key + (self._water2_alpha,), v)
+        return v
+
+    def _draw_water2(self): #vers 6
+        """Water cells as one vertex-array draw (SOL has 140k cells)."""
         if not OPENGL_AVAILABLE or not self._water2_cells:
             return
         glDisable(GL_LIGHTING)
@@ -3217,50 +3406,38 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         tex_id = None
         if self._water2_use_texture and self._water2_texture_path:
             tex_id = self._ensure_water2_texture()
-        z_offset = self._water2_height_offset
-        gate_ok = (not self._water2_offset_vc_only) or self._water2_game == 'vc'
-        x_offset = self._water2_x_offset if gate_ok else 0.0
-        y_offset = self._water2_y_offset if gate_ok else 0.0
+        mode = self._water2_offset_mode
+        gate_ok = mode == 'all' or (mode == 'vc' and self._water2_game == 'vc')
+        if self._water2_fix_override is not None:
+            gate_ok = self._water2_fix_override
+        nx, ny = self._water2_nudge
+        x_offset = (self._water2_x_offset if gate_ok else 0.0) + nx
+        y_offset = (self._water2_y_offset if gate_ok else 0.0) + ny
+        verts = self._water2_arrays(x_offset, y_offset, self._water2_height_offset)
+        n = len(verts)
         alpha = self._water2_alpha
-        half = self._water_map_half_extent
-        span = half * 2.0
-
-        def _wrapped_bounds(min_x, min_y, max_x, max_y):
-            w = max_x - min_x
-            h = max_y - min_y
-            cx = (min_x + max_x) / 2.0 + x_offset
-            cy = (min_y + max_y) / 2.0 + y_offset
-            if span > 0:
-                cx = ((cx + half) % span) - half
-                cy = ((cy + half) % span) - half
-            return cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0
-
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glVertexPointer(3, GL_FLOAT, 0, verts)
         if tex_id:
+            uv = getattr(self, '_water2_uv', None)
+            if uv is None or len(uv) != n:
+                uv = self._water2_uv = np.ascontiguousarray(
+                    np.tile(np.array([[0, 0], [1, 0], [1, 1], [0, 1]], np.float32), (n // 4, 1)))
             glEnable(GL_TEXTURE_2D)
             glBindTexture(GL_TEXTURE_2D, tex_id)
+            glEnableClientState(GL_TEXTURE_COORD_ARRAY)
+            glTexCoordPointer(2, GL_FLOAT, 0, uv)
             glColor4f(1.0, 1.0, 1.0, alpha)
-            for min_x, min_y, max_x, max_y, height in self._water2_cells:
-                x0, y0, x1, y1 = _wrapped_bounds(min_x, min_y, max_x, max_y)
-                z = height + z_offset
-                glBegin(GL_TRIANGLE_FAN)
-                glTexCoord2f(0, 0); glVertex3f(x0, y0, z)
-                glTexCoord2f(1, 0); glVertex3f(x1, y0, z)
-                glTexCoord2f(1, 1); glVertex3f(x1, y1, z)
-                glTexCoord2f(0, 1); glVertex3f(x0, y1, z)
-                glEnd()
+            glDrawArrays(GL_QUADS, 0, n)
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY)
             glBindTexture(GL_TEXTURE_2D, 0)
             glDisable(GL_TEXTURE_2D)
-        else:
-            glColor4f(0.1, 0.3, 0.7, alpha)
-            for min_x, min_y, max_x, max_y, height in self._water2_cells:
-                x0, y0, x1, y1 = _wrapped_bounds(min_x, min_y, max_x, max_y)
-                z = height + z_offset
-                glBegin(GL_TRIANGLE_FAN)
-                glVertex3f(x0, y0, z)
-                glVertex3f(x1, y0, z)
-                glVertex3f(x1, y1, z)
-                glVertex3f(x0, y1, z)
-                glEnd()
+        else:                                            # shaded by Z, same scale as the gauge
+            glEnableClientState(GL_COLOR_ARRAY)
+            glColorPointer(4, GL_FLOAT, 0, self._water2_col)
+            glDrawArrays(GL_QUADS, 0, n)
+            glDisableClientState(GL_COLOR_ARRAY)
+        glDisableClientState(GL_VERTEX_ARRAY)
         glDepthMask(GL_TRUE)
         glDisable(GL_BLEND)
         glEnable(GL_LIGHTING)
@@ -3589,7 +3766,7 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
     def set_show_lod(self, enabled: bool): #vers 1
         self._show_lod = enabled; self.update()
 
-    def _draw_assembly(self): #vers 2
+    def _draw_assembly(self): #vers 3
         if not OPENGL_AVAILABLE: return
         for entry in getattr(self,'_all_geoms',[]):
             verts,norms,uvs,tris,mats,prelit = entry[:6]
@@ -3605,6 +3782,7 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             elif self._mode=='solid':     self._draw_solid()
             elif self._mode=='semi_solid': self._draw_solid(alpha_multiplier=0.5)
             elif self._mode=='textured':  self._draw_textured()
+            self._draw_wire_hint()
             (self._vertices,self._normals,self._uvs,
              self._triangles,self._materials,self._prelit,
              self._current_geom_flags) = (old_v,old_n,old_u,old_t,old_m,old_p,old_f)
@@ -3958,7 +4136,7 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             pass
         self.update()
 
-    def mousePressEvent(self, event): #vers 6
+    def mousePressEvent(self, event): #vers 8
         self._last_pos = event.pos()
         if event.button() == Qt.MouseButton.RightButton:
             # Tracks where a right-click started (Aug 19 2026)
@@ -4073,6 +4251,8 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             if mode == 'object':
                 return
             mx, my = event.pos().x(), event.pos().y()
+            if self._mesh_gizmo_begin(mx, my):          # mesh gizmo arrow grabbed
+                return
             if mode == 'vertex':
                 key = self._pick_vertex(mx, my)
             elif mode == 'edge':
@@ -4082,14 +4262,21 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             if key is not None:
                 self._apply_selection_click(mode, key, event.modifiers())
                 self.update()
-            elif not (event.modifiers() & (Qt.KeyboardModifier.ControlModifier |
-                                           Qt.KeyboardModifier.ShiftModifier)):
-                # Clicked empty space with no modifier — clear selection
-                self._selected_set_for_mode(mode).clear()
-                self._notify_selection_changed()
-                self.update()
+            elif not self._selection_locked:
+                add = bool(event.modifiers() & (Qt.KeyboardModifier.ControlModifier
+                                                | Qt.KeyboardModifier.ShiftModifier))
+                self._mesh_region = [mx, my, mx, my, add]   # empty space: region drag
 
-    def mouseMoveEvent(self, event): #vers 5
+    def mouseMoveEvent(self, event): #vers 8
+        if getattr(self, '_mesh_drag', None) is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self._mesh_gizmo_update(event.pos().x(), event.pos().y())
+            self._last_pos = event.pos()
+            return
+        if self._mesh_region is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self._mesh_region[2:4] = [event.pos().x(), event.pos().y()]
+            self._last_pos = event.pos()
+            self.update()
+            return
         dx = event.pos().x() - self._last_pos.x()
         dy = event.pos().y() - self._last_pos.y()
         sens = getattr(self, '_mouse_sensitivity', 1.0)
@@ -4196,6 +4383,8 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             self._hovered_instance_idx = idx
         if event.buttons() == Qt.MouseButton.NoButton and self._gizmo_inst is not None:
             self._gizmo_hover_axis = self._gizmo_pick_axis(event.pos().x(), event.pos().y())
+        if event.buttons() == Qt.MouseButton.NoButton and getattr(self, '_select_mode', 'object') != 'object':
+            self._update_mesh_hover(event.pos().x(), event.pos().y())
         self._last_pos = event.pos(); self.update()
 
         callback = getattr(self, '_lod_test_callback', None)
@@ -4341,6 +4530,398 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
             if t > 0.15 and d < best_d:
                 best, best_d = axis, d
         return best
+
+    # -- mesh gizmo (Oct 12 2026): drag selected vertices / faces along X, Y or Z
+    def set_mesh_gizmo_callback(self, callback): #vers 1
+        """fn(vertex_ids, dx, dy, dz) after a mesh gizmo drag; None hides it."""
+        self._mesh_gizmo_cb = callback
+        self._mesh_drag = None
+        self.update()
+
+    def _mesh_gizmo_ids(self): #vers 1
+        """Vertex ids the mesh gizmo moves (selection in the current sub-object mode)."""
+        mode = getattr(self, '_select_mode', 'object')
+        if getattr(self, '_mesh_gizmo_cb', None) is None or mode == 'object' or not self._vertices:
+            return set()
+        if mode == 'vertex':
+            ids = set(self._selected_verts)
+        elif mode == 'edge':
+            ids = {i for e in self._selected_edges for i in e}
+        else:
+            ids = {i for f in self._selected_faces if f < len(self._triangles) for i in self._triangles[f][:3]}
+        return {i for i in ids if 0 <= i < len(self._vertices)}
+
+    def _mesh_gizmo_pivot(self, ids): #vers 1
+        pts = [self._vertices[i] for i in ids]
+        return tuple(sum(p[k] for p in pts) / len(pts) for k in range(3))
+
+    def _mesh_gizmo_pick(self, mx, my): #vers 3
+        """Handle under the mouse: 'x'/'y'/'z' (arrow, ring or scale bar), 'u' (uniform scale), else None."""
+        ids = self._mesh_gizmo_ids()
+        if not ids:
+            return None
+        c = self._mesh_gizmo_pivot(ids)
+        L = self._gizmo_size(c)
+        mode = self._mesh_gizmo_mode
+        if mode == 'rotate':
+            best, best_d = None, 49.0
+            for axis in 'xyz':
+                pts = self._gizmo_project(self._mesh_ring(c, L * 0.8, axis))
+                if not pts:
+                    return None
+                for p0, p1 in zip(pts, pts[1:] + pts[:1]):
+                    d = self._seg2d_dist2(mx, my, p0, p1)
+                    if d < best_d:
+                        best, best_d = axis, d
+            return best
+        pts = self._gizmo_project([c, (c[0] + L, c[1], c[2]), (c[0], c[1] + L, c[2]), (c[0], c[1], c[2] + L)])
+        if not pts:
+            return None
+        if mode == 'scale' and (mx - pts[0][0]) ** 2 + (my - pts[0][1]) ** 2 < 81:
+            return 'u'
+        best, best_d = None, 100.0                     # 10 px round the shaft
+        for axis, tip in zip('xyz', pts[1:]):
+            d = min(self._seg2d_dist2(mx, my, pts[0], tip),
+                    ((mx - tip[0]) ** 2 + (my - tip[1]) ** 2) * 0.5)   # arrow head: ~14 px
+            if d < best_d:
+                best, best_d = axis, d
+        return best
+
+    @staticmethod
+    def _mesh_ring(c, r, axis, n=40): #vers 1
+        """Circle points round c in the plane normal to axis."""
+        out = []
+        for i in range(n):
+            a = 2 * math.pi * i / n
+            u, v = r * math.cos(a), r * math.sin(a)
+            out.append({'x': (c[0], c[1] + u, c[2] + v), 'y': (c[0] + u, c[1], c[2] + v),
+                        'z': (c[0] + u, c[1] + v, c[2])}[axis])
+        return out
+
+    def _mesh_gizmo_begin(self, mx, my): #vers 2
+        """Start a move / rotate / scale drag of the selected vertices; True if a handle was hit."""
+        axis = self._mesh_gizmo_pick(mx, my)
+        if axis is None:
+            return False
+        ids = self._mesh_gizmo_ids()
+        pivot = self._mesh_gizmo_pivot(ids)
+        ref = None
+        if self._mesh_gizmo_mode == 'move':
+            ray = self._pick_ray(mx, my)
+            ref = self._gizmo_axis_param(ray, pivot, axis) if ray else None
+            if ref is None:
+                return False
+        self._mesh_drag = {'axis': axis, 'pivot': pivot, 'ref': ref, 'delta': 0.0, 'mx': mx,
+                           'mode': self._mesh_gizmo_mode, 'orig': {i: self._vertices[i] for i in ids}}
+        return True
+
+    def _mesh_gizmo_update(self, mx, my): #vers 2
+        """Live preview: move along the axis, rotate 0.5 deg per pixel, scale 1% per pixel."""
+        d = self._mesh_drag
+        axis, c = d['axis'], d['pivot']
+        if d['mode'] == 'move':
+            ray = self._pick_ray(mx, my)
+            t = self._gizmo_axis_param(ray, c, axis) if ray else None
+            if t is None:
+                return
+            d['delta'] = t - d['ref']
+            k = 'xyz'.index(axis)
+            for i, p in d['orig'].items():
+                q = list(p); q[k] += d['delta']
+                self._vertices[i] = tuple(q)
+        elif d['mode'] == 'rotate':
+            d['delta'] = round((mx - d['mx']) * 0.5, 1)
+            q = self._quat_axis(axis, d['delta'])
+            for i, p in d['orig'].items():
+                r = self._quat_rotate(q, (p[0] - c[0], p[1] - c[1], p[2] - c[2]))
+                self._vertices[i] = (r[0] + c[0], r[1] + c[1], r[2] + c[2])
+        else:
+            f = max(0.05, 1.0 + (mx - d['mx']) * 0.01)
+            d['delta'] = round(f, 3)
+            ks = (0, 1, 2) if axis == 'u' else ('xyz'.index(axis),)
+            for i, p in d['orig'].items():
+                self._vertices[i] = tuple(c[k] + (p[k] - c[k]) * (f if k in ks else 1.0) for k in range(3))
+        self.update()
+
+    def _mesh_gizmo_end(self): #vers 2
+        """Restore preview positions and hand the edit to the workshop (undo, save)."""
+        d, self._mesh_drag = self._mesh_drag, None
+        for i, p in d['orig'].items():
+            self._vertices[i] = p
+        changed = d['delta'] != (1.0 if d['mode'] == 'scale' else 0.0)
+        if changed and d['mode'] == 'move':
+            v = [0.0, 0.0, 0.0]; v['xyz'.index(d['axis'])] = d['delta']
+            self._mesh_gizmo_cb(set(d['orig']), *v)
+        elif changed and self._mesh_xform_cb is not None:
+            self._mesh_xform_cb(d['mode'], set(d['orig']), d['axis'], d['delta'], d['pivot'])
+        self.update()
+
+    def _draw_mesh_gizmo(self): #vers 3
+        """Move arrows, rotate rings or scale bars at the centre of the mesh selection."""
+        ids = self._mesh_gizmo_ids()
+        if not ids:
+            return
+        c = self._mesh_gizmo_pivot(ids)
+        L = self._gizmo_size(c)
+        mode = self._mesh_gizmo_mode
+        glPushAttrib(GL_ENABLE_BIT | GL_LINE_BIT | GL_CURRENT_BIT | GL_POINT_BIT)
+        glDisable(GL_LIGHTING); glDisable(GL_TEXTURE_2D); glDisable(GL_DEPTH_TEST)
+        glLineWidth(3.0)
+        active = (self._mesh_drag or {}).get('axis')
+        cols = (('x', (1.0, 0.25, 0.25)), ('y', (0.3, 1.0, 0.3)), ('z', (0.3, 0.5, 1.0)))
+        if mode == 'rotate':
+            for axis, col in cols:
+                glColor3f(*((1.0, 1.0, 0.2) if axis == active else col))
+                glBegin(GL_LINE_LOOP)
+                for pt in self._mesh_ring(c, L * 0.8, axis):
+                    glVertex3f(*pt)
+                glEnd()
+        else:
+            right, up = self._screen_axes()
+            for k, (axis, col) in enumerate(cols):
+                colour = (1.0, 1.0, 0.2) if axis == active else col
+                glColor3f(*colour)
+                tip = list(c); tip[k] += L
+                glBegin(GL_LINES); glVertex3f(*c); glVertex3f(*tip); glEnd()
+                if mode == 'move':
+                    self._draw_axis_cone(c, k, L)
+                self._draw_axis_letter(tip, k, axis, L * 0.09, right, up)
+            glPointSize(10.0)
+            glBegin(GL_POINTS); glColor3f(0.85, 0.85, 0.85); glVertex3f(*c); glEnd()
+            glPointSize(7.0)
+            glBegin(GL_POINTS); glColor3f(0.05, 0.05, 0.05); glVertex3f(*c); glEnd()
+            if mode == 'scale':
+                glPointSize(9.0)
+                glBegin(GL_POINTS)
+                for k, (axis, col) in enumerate(cols):
+                    glColor3f(*((1.0, 1.0, 0.2) if axis == active else col))
+                    tip = list(c); tip[k] += L
+                    glVertex3f(*tip)
+                glColor3f(*((1.0, 1.0, 0.2) if active == 'u' else (0.9, 0.9, 0.9)))
+                glVertex3f(*c)
+                glEnd()
+        glPopAttrib()
+
+    def _screen_axes(self): #vers 1
+        """Camera right and up vectors in world space (from the modelview matrix)."""
+        m = glGetFloatv(GL_MODELVIEW_MATRIX)
+        m = [float(x) for x in np.asarray(m).flatten()]
+        return (m[0], m[4], m[8]), (m[1], m[5], m[9])
+
+    def _draw_axis_cone(self, c, k, L): #vers 1
+        """Solid arrow head at the tip of axis k (COL Workshop style)."""
+        h, r = L * 0.16, L * 0.055
+        tip = list(c); tip[k] += L
+        base = list(c); base[k] += L - h
+        u, v = [(1, 2), (0, 2), (0, 1)][k]
+        glBegin(GL_TRIANGLE_FAN)
+        glVertex3f(*tip)
+        for i in range(13):
+            a = 2 * math.pi * i / 12
+            p = list(base); p[u] += r * math.cos(a); p[v] += r * math.sin(a)
+            glVertex3f(*p)
+        glEnd()
+
+    def _draw_axis_letter(self, tip, k, axis, s, right, up): #vers 1
+        """X / Y / Z drawn as strokes facing the camera, just past the arrow tip."""
+        o = list(tip); o[k] += s * 2.2
+        strokes = {'x': [((-1, -1), (1, 1)), ((-1, 1), (1, -1))],
+                   'y': [((-1, 1), (0, 0)), ((1, 1), (0, 0)), ((0, 0), (0, -1))],
+                   'z': [((-1, 1), (1, 1)), ((1, 1), (-1, -1)), ((-1, -1), (1, -1))]}[axis]
+        glLineWidth(2.0)
+        glBegin(GL_LINES)
+        for p0, p1 in strokes:
+            for px, py in (p0, p1):
+                glVertex3f(*(o[i] + (right[i] * px + up[i] * py) * s for i in range(3)))
+        glEnd()
+        glLineWidth(3.0)
+
+    def set_mesh_face_mode(self, mode, notify=True): #vers 2
+        """How a face move drag applies: 'connected', 'detach' or 'extrude'."""
+        self._mesh_face_mode = mode if mode in ('connected', 'detach', 'extrude') else 'connected'
+        self._sync_mesh_chips()
+        cb = getattr(self, '_mesh_face_mode_cb', None)
+        if notify and cb:
+            cb(self._mesh_face_mode)                # workshop syncs ribbon + other panes
+
+    def set_mesh_face_mode_callback(self, callback): #vers 1
+        """fn(mode) when the Faces chip changes the face move mode."""
+        self._mesh_face_mode_cb = callback
+
+    def set_detached_faces(self, faces): #vers 1
+        """Face ids drawn with orange edges (detached parts)."""
+        self._detached_faces = set(faces or ())
+        self.update()
+
+    def _draw_detached_wires(self): #vers 1
+        """Orange edges on detached faces, over any render mode."""
+        if not self._detached_faces or self._world_instances:
+            return
+        glPushAttrib(GL_ENABLE_BIT | GL_LINE_BIT | GL_CURRENT_BIT | GL_POLYGON_BIT | GL_DEPTH_BUFFER_BIT)
+        glDisable(GL_LIGHTING); glDisable(GL_TEXTURE_2D)
+        glDepthFunc(GL_LEQUAL)
+        glEnable(GL_POLYGON_OFFSET_LINE); glPolygonOffset(-2.0, -2.0)
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+        glLineWidth(1.6)
+        glColor3f(1.0, 0.55, 0.15)
+        glBegin(GL_TRIANGLES)
+        for fi in self._detached_faces:
+            if fi < len(self._triangles) and fi not in self._hidden_faces:
+                v1, v2, v3, _m = self._triangles[fi]
+                self._emit_verts(v1, v2, v3)
+        glEnd()
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+        glPopAttrib()
+
+    def set_mesh_xform_callback(self, callback): #vers 1
+        """fn(kind, vert_ids, axis, value, pivot) after a rotate (deg) or scale (factor) drag."""
+        self._mesh_xform_cb = callback
+
+    def set_mesh_gizmo_mode(self, mode): #vers 1
+        """'move' | 'rotate' | 'scale' for the mesh edit gizmo."""
+        self._mesh_gizmo_mode = mode if mode in ('move', 'rotate', 'scale') else 'move'
+        self._mesh_drag = None
+        self._sync_mesh_chips()
+        self.update()
+
+    def cycle_render_mode(self): #vers 1
+        """V: wireframe -> solid -> semi -> textured."""
+        modes = ['wireframe', 'solid', 'semi_solid', 'textured']
+        self.set_render_mode(modes[(modes.index(self._mode) + 1) % 4] if self._mode in modes else 'solid')
+
+    def set_wire_hint(self, on): #vers 1
+        """Thin wireframe drawn over solid / semi / textured models."""
+        self._wire_hint = bool(on)
+        self._sync_mesh_chips()
+        self.update()
+
+    def _draw_wire_hint(self): #vers 1
+        """Faint edges over the shaded model (not in wireframe mode)."""
+        if not OPENGL_AVAILABLE or not self._wire_hint or self._mode == 'wireframe' or self._world_instances:
+            return
+        glPushAttrib(GL_ENABLE_BIT | GL_LINE_BIT | GL_CURRENT_BIT | GL_POLYGON_BIT | GL_DEPTH_BUFFER_BIT)
+        glDisable(GL_LIGHTING); glDisable(GL_TEXTURE_2D)
+        glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glDepthFunc(GL_LEQUAL); glDepthMask(GL_FALSE)
+        glEnable(GL_POLYGON_OFFSET_LINE); glPolygonOffset(-1.0, -1.0)
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+        glLineWidth(1.0)
+        glColor4f(0.05, 0.05, 0.08, 0.45) if self._mode == 'textured' else glColor4f(0.75, 0.85, 1.0, 0.35)
+        glBegin(GL_TRIANGLES)
+        for v1, v2, v3, _m in self._visible_tris():
+            self._emit_verts(v1, v2, v3)
+        glEnd()
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+        glPopAttrib()
+
+    def _update_mesh_hover(self, mx, my): #vers 1
+        """Hovered vertex / edge / face for the current select mode (mesh edit)."""
+        mode = getattr(self, '_select_mode', 'object')
+        hit = None
+        if mode != 'object' and self._vertices and not self._world_instances:
+            if mode == 'vertex':
+                hit = self._pick_vertex(mx, my)
+            elif mode == 'edge':
+                hit = self._pick_edge(mx, my)
+            else:
+                hit = self._pick_face(mx, my)
+        if hit != self._mesh_hover:
+            self._mesh_hover = hit
+            self.update()
+
+    def _draw_mesh_hover(self, mode): #vers 1
+        """Cyan highlight of the hovered element."""
+        h, verts = self._mesh_hover, self._vertices
+        if h is None or self._mesh_drag is not None:
+            return
+        glColor4f(0.3, 0.95, 1.0, 0.9)
+        if mode == 'vertex' and isinstance(h, int) and h < len(verts):
+            glPointSize(max(6.0, min(12.0, self._dist * 0.04)))
+            glBegin(GL_POINTS); glVertex3f(*verts[h]); glEnd()
+        elif mode == 'edge' and isinstance(h, tuple) and max(h) < len(verts):
+            glLineWidth(3.0)
+            glBegin(GL_LINES); glVertex3f(*verts[h[0]]); glVertex3f(*verts[h[1]]); glEnd()
+        elif mode in ('face', 'poly') and isinstance(h, int) and h < len(self._triangles):
+            v1, v2, v3, _m = self._triangles[h]
+            glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            glColor4f(0.3, 0.95, 1.0, 0.30)
+            glBegin(GL_TRIANGLES); self._emit_verts(v1, v2, v3); glEnd()
+            glColor4f(0.3, 0.95, 1.0, 0.9); glLineWidth(2.0)
+            glBegin(GL_LINE_LOOP); self._emit_verts(v1, v2, v3); glEnd()
+
+    def _mesh_chip_state(self): #vers 2
+        """(render chip shown, gizmo chip shown, mode, gizmo mode, wire hint, counts)."""
+        model = bool(self._vertices or getattr(self, '_all_geoms', None)) and not self._world_instances
+        edit = model and getattr(self, '_select_mode', 'object') != 'object'
+        tris = len(self._triangles) if self._vertices else sum(len(e[3]) for e in getattr(self, '_all_geoms', []) or [])
+        verts = len(self._vertices) if self._vertices else sum(len(e[0]) for e in getattr(self, '_all_geoms', []) or [])
+        return (model, edit and getattr(self, '_mesh_gizmo_cb', None) is not None, self._mode,
+                self._mesh_gizmo_mode, self._wire_hint, tris, verts,
+                self._mesh_face_mode, getattr(self, '_select_mode', 'object'))
+
+    def _sync_mesh_chips(self): #vers 2
+        """Build / refresh the render and gizmo chips and the count label."""
+        state = self._mesh_chip_state()
+        self._mesh_chip_shown = state
+        model, gizmo, mode, gmode, wire, tris, verts = state[:7]
+        if self._mesh_chips is None and model:
+            bar = QFrame(self)
+            bar.setStyleSheet(
+                "QFrame{background:rgba(20,30,40,200);border:1px solid rgba(90,200,220,160);border-radius:4px;}"
+                "QToolButton{color:#e8f4f8;background:transparent;border:1px solid transparent;"
+                "border-radius:3px;padding:1px 6px;font-weight:bold;}"
+                "QToolButton:hover{border-color:#9fe8f5;}")
+            lay = QHBoxLayout(bar)
+            lay.setContentsMargins(3, 2, 3, 2); lay.setSpacing(2)
+            self._chip_render = QToolButton(bar)
+            self._chip_render.setToolTip("Render mode (V to cycle, right-click for wire hint)")
+            self._chip_render.clicked.connect(self.cycle_render_mode)
+            self._chip_render.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            self._chip_render.customContextMenuRequested.connect(self._mesh_render_menu)
+            self._chip_gizmo = QToolButton(bar)
+            self._chip_gizmo.setToolTip("Gizmo: Move G, Rotate R, Scale S (click to cycle)")
+            self._chip_gizmo.clicked.connect(lambda: self.set_mesh_gizmo_mode(
+                {'move': 'rotate', 'rotate': 'scale', 'scale': 'move'}[self._mesh_gizmo_mode]))
+            self._chip_faces = QToolButton(bar)
+            self._chip_faces.setToolTip("Face move: keep connected, detach, or extrude (click to cycle)")
+            self._chip_faces.clicked.connect(lambda: self.set_mesh_face_mode(
+                {'connected': 'detach', 'detach': 'extrude', 'extrude': 'connected'}[self._mesh_face_mode]))
+            lay.addWidget(self._chip_render); lay.addWidget(self._chip_gizmo); lay.addWidget(self._chip_faces)
+            self._mesh_chips = bar
+        if self._mesh_chips is not None:
+            names = {'wireframe': "Wire", 'solid': "Solid", 'semi_solid': "Semi", 'textured': "Textured"}
+            self._chip_render.setText(f"[V] {names.get(mode, mode)}" + (" +Wire" if wire and mode != 'wireframe' else ""))
+            self._chip_gizmo.setText({'move': "Move [G]", 'rotate': "Rotate [R]", 'scale': "Scale [S]"}[gmode])
+            self._chip_gizmo.setVisible(gizmo)
+            self._chip_faces.setText({'connected': "Faces: Connected", 'detach': "Faces: Detach",
+                                      'extrude': "Faces: Extrude"}[self._mesh_face_mode])
+            self._chip_faces.setVisible(gizmo and getattr(self, '_select_mode', 'object') in ('face', 'poly'))
+            self._mesh_chips.setVisible(model)
+            self._mesh_chips.adjustSize()
+        self._mesh_info.setText(f"Faces {tris}   Verts {verts}" if model else "")
+        self._mesh_info.setVisible(model)
+        self._mesh_info.adjustSize()
+        self._place_mesh_chips()
+
+    def _place_mesh_chips(self): #vers 1
+        if self._mesh_chips is not None and self._mesh_chips.isVisible():
+            self._mesh_chips.move(max(0, self.width() - self._mesh_chips.width() - 8), 8)
+            self._mesh_chips.raise_()
+        if self._mesh_info.isVisible():
+            self._mesh_info.move(6, max(0, self.height() - self._mesh_info.height() - 4))
+
+    def _mesh_render_menu(self, pos): #vers 1
+        """Chip right-click: pick a render mode, toggle the wire hint."""
+        from PyQt6.QtWidgets import QMenu
+        menu = QMenu(self)
+        for mode, label in (('wireframe', "Wireframe"), ('solid', "Solid"),
+                            ('semi_solid', "Semi-transparent"), ('textured', "Textured")):
+            act = menu.addAction(label, lambda m=mode: self.set_render_mode(m))
+            act.setCheckable(True); act.setChecked(self._mode == mode)
+        menu.addSeparator()
+        act = menu.addAction("Wire Hint (Shift+V)", lambda: self.set_wire_hint(not self._wire_hint))
+        act.setCheckable(True); act.setChecked(self._wire_hint)
+        menu.exec(self._chip_render.mapToGlobal(pos))
 
     @staticmethod
     def _seg2d_dist2(mx, my, a, b): #vers 1
@@ -4688,6 +5269,68 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         for x, y, z, c in self._script_markers:
             glColor3f(*c); glVertex3f(x, y, z + h)
         glEnd()
+        glPopAttrib()
+
+    def _mesh_region_select(self): #vers 1
+        """Select vertices, edges or faces inside the region drag (rect or circle)."""
+        import math
+        x0, y0, x1, y1, add = self._mesh_region
+        self._mesh_region = None
+        mode = self._select_mode
+        sel = self._selected_set_for_mode(mode)
+        if abs(x1 - x0) <= 3 and abs(y1 - y0) <= 3:      # plain click on empty space
+            if not add:
+                sel.clear()
+                self._notify_selection_changed()
+            self.update()
+            return
+        pts = self._gizmo_project(self._vertices) or []
+        if self._region_circle:
+            rad = math.hypot(x1 - x0, y1 - y0)
+            vin = [p[2] <= 1.0 and math.hypot(p[0] - x0, p[1] - y0) <= rad for p in pts]
+        else:
+            xa, xb = sorted((x0, x1)); ya, yb = sorted((y0, y1))
+            vin = [p[2] <= 1.0 and xa <= p[0] <= xb and ya <= p[1] <= yb for p in pts]
+        n = len(vin)
+        test = any if self._region_crossing else all
+        if mode == 'vertex':
+            hit = {i for i, ok in enumerate(vin) if ok}
+        elif mode == 'edge':
+            hit = set()
+            for t in self._visible_tris():
+                for i, j in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
+                    if i < n and j < n and test((vin[i], vin[j])):
+                        hit.add((i, j) if i < j else (j, i))
+        else:
+            hit = {f for f, t in enumerate(self._triangles) if f not in self._hidden_faces
+                   and all(k < n for k in t[:3]) and test(vin[k] for k in t[:3])}
+        if not add:
+            sel.clear()
+        sel |= hit
+        self._notify_selection_changed()
+        self.update()
+
+    def _draw_mesh_region(self): #vers 1
+        """Region select outline (rectangle or circle) in screen space."""
+        import math
+        x0, y0, x1, y1, _add = self._mesh_region
+        w = max(1, self.width()); h = max(1, self.height())
+        glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT | GL_LINE_BIT)
+        glDisable(GL_LIGHTING); glDisable(GL_TEXTURE_2D); glDisable(GL_DEPTH_TEST)
+        glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity()
+        glOrtho(0, w, h, 0, -1, 1)
+        glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity()
+        glColor3f(1.0, 0.82, 0.24); glLineWidth(1.0)
+        glBegin(GL_LINE_LOOP)
+        if self._region_circle:
+            r = math.hypot(x1 - x0, y1 - y0)
+            for k in range(48):
+                a = k * math.tau / 48
+                glVertex2f(x0 + r * math.cos(a), y0 + r * math.sin(a))
+        else:
+            glVertex2f(x0, y0); glVertex2f(x1, y0); glVertex2f(x1, y1); glVertex2f(x0, y1)
+        glEnd()
+        glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW)
         glPopAttrib()
 
     def _draw_rubber_band(self): #vers 1
@@ -5221,8 +5864,14 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         glPopMatrix()
         glLineWidth(1.0)
 
-    def mouseReleaseEvent(self, event): #vers 6
+    def mouseReleaseEvent(self, event): #vers 9
         self._last_pos = event.pos()
+        if getattr(self, '_mesh_drag', None) is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._mesh_gizmo_end()
+            return
+        if self._mesh_region is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._mesh_region_select()
+            return
         if event.button() == Qt.MouseButton.RightButton:
             # Right-click for options on a hovered instance (Aug 19 2026)
             press_pos = getattr(self, '_right_press_pos', None)
@@ -5236,6 +5885,10 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
                     inst = entry.get('instance')
                     if inst is not None:
                         callback(inst)
+                elif moved <= 4 and getattr(self, '_select_mode', 'object') != 'object':
+                    mesh_cb = getattr(self, '_mesh_context_callback', None)   # Model Workshop mesh menu
+                    if mesh_cb is not None:
+                        mesh_cb()
         if event.button() == Qt.MouseButton.MiddleButton:
             # Middle-click to cycle (Aug 21 2026)
             press_pos = getattr(self, '_middle_press_pos', None)
@@ -5332,10 +5985,23 @@ class DFFViewport(QOpenGLWidget if OPENGL_AVAILABLE else QWidget):
         """Toggle zoom-toward-mouse-cursor (Aug 18 2026)"""
         self._zoom_to_cursor = enabled
 
-    def keyPressEvent(self, event): #vers 5
+    def keyPressEvent(self, event): #vers 7
         """Configurable camera controls, held keys giving continuous motion.
-        Esc cancels a gizmo drag, or drops the gizmo."""
+        Esc cancels a gizmo drag, or drops the gizmo; Space toggles selection lock."""
         key = event.key()
+        if key == Qt.Key.Key_Space and self._lock_key_callback and self._select_mode != 'object':
+            self._lock_key_callback(); return
+        model_view = bool(self._vertices or getattr(self, '_all_geoms', None)) and not self._world_instances
+        if model_view and not event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier):
+            if key == Qt.Key.Key_V:
+                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    self.set_wire_hint(not self._wire_hint)
+                else:
+                    self.cycle_render_mode()
+                return
+            gm = {Qt.Key.Key_G: 'move', Qt.Key.Key_R: 'rotate', Qt.Key.Key_S: 'scale'}.get(key)
+            if gm and self._select_mode != 'object':
+                self.set_mesh_gizmo_mode(gm); return
         if self._gizmo_inst is not None and not event.modifiers() & (Qt.KeyboardModifier.ControlModifier
                                                                     | Qt.KeyboardModifier.AltModifier):
             if key == Qt.Key.Key_W:

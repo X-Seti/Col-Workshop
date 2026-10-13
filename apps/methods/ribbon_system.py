@@ -1,4 +1,4 @@
-#this belongs in apps/methods/ribbon_system.py - Version: 2
+#this belongs in apps/methods/ribbon_system.py - Version: 5
 # X-Seti - September 20 2026 - IMG Factory 1.6 - Shared ribbon (toolbar) system
 
 """ribbon_system.py - Ribbon toolbars for QWidget-based workshops (same
@@ -12,11 +12,14 @@ an older ribbon structure is rejected via _RIBBON_LAYOUT_VERSION."""
 ##Methods list -
 # RibbonMixin.ribbon_wrap
 # RibbonMixin.ribbon_toolbar
+# RibbonMixin.ribbon_side_toolbar
+# RibbonMixin.ribbon_fit_side
 # RibbonMixin.ribbon_button
 # RibbonMixin.ribbon_label
 # RibbonMixin.ribbon_context_menu
 # RibbonMixin.ribbon_save_state
 # RibbonMixin.ribbon_restore_state
+# RibbonMixin._ribbon_schedule_save
 
 import json
 from pathlib import Path
@@ -42,7 +45,7 @@ class RibbonMixin:
         self._ribbon_mw = mw
         return mw
 
-    def ribbon_toolbar(self, name: str) -> QToolBar: #vers 1
+    def ribbon_toolbar(self, name: str) -> QToolBar: #vers 2
         mw = self._ribbon_mw
         tb = QToolBar(name, mw)
         tb.setObjectName(name)
@@ -52,8 +55,50 @@ class RibbonMixin:
         tb.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         tb.customContextMenuRequested.connect(
             lambda pos, t=tb: self.ribbon_context_menu(t, pos))
+        tb.topLevelChanged.connect(lambda *_: self._ribbon_schedule_save())    # float / dock
+        tb.orientationChanged.connect(lambda *_: self._ribbon_schedule_save())  # moved to a side
         mw.addToolBar(Qt.ToolBarArea.TopToolBarArea, tb)
         return tb
+
+    def _ribbon_schedule_save(self): #vers 1
+        """Save the ribbon layout shortly after a ribbon moves."""
+        from PyQt6.QtCore import QTimer
+        t = getattr(self, '_ribbon_save_timer', None)
+        if t is None:
+            t = self._ribbon_save_timer = QTimer(self)
+            t.setSingleShot(True)
+            t.timeout.connect(self.ribbon_save_state)
+        t.start(500)
+
+    def ribbon_side_toolbar(self, name: str, widget, width: int = 26,
+                            length: int = 0) -> QToolBar: #vers 2
+        """Narrow ribbon holding one long widget (gauge, palette); turns with the ribbon.
+        length fixes the long side (0 = stretch). Widget may define set_horizontal(bool)."""
+        tb = self.ribbon_toolbar(name)
+        self._ribbon_mw.addToolBar(Qt.ToolBarArea.RightToolBarArea, tb)
+        tb.setStyleSheet("QToolBar { padding: 0px; spacing: 0px; }")
+        tb.addWidget(widget)
+        tb._side = (widget, width, length)
+        tb.orientationChanged.connect(lambda _o, t=tb: self.ribbon_fit_side(t))
+        self.ribbon_fit_side(tb)
+        return tb
+
+    @staticmethod
+    def ribbon_fit_side(tb): #vers 1
+        """Size a side ribbon's widget (tb._side = widget, width, length) for its orientation."""
+        from PyQt6.QtWidgets import QSizePolicy
+        widget, width, length = tb._side
+        horiz = tb.orientation() == Qt.Orientation.Horizontal
+        thin, fix, grow = width - 4, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding
+        long_min, long_max = (length, length) if length else (60, 16777215)
+        if horiz:
+            widget.setMinimumSize(long_min, thin); widget.setMaximumSize(long_max, thin)
+            widget.setSizePolicy(fix if length else grow, fix)
+        else:
+            widget.setMinimumSize(thin, long_min); widget.setMaximumSize(thin, long_max)
+            widget.setSizePolicy(fix, fix if length else grow)
+        if hasattr(widget, 'set_horizontal'):
+            widget.set_horizontal(horiz)
 
     def ribbon_button(self, tb, icon_fn, tip, slot, checkable=False, enabled=True,
                       text=None) -> QToolButton: #vers 1
@@ -115,7 +160,7 @@ class RibbonMixin:
         except Exception as e:
             print(f"[{self._ribbon_name}] ribbon_save_state error: {e}")
 
-    def ribbon_restore_state(self): #vers 1
+    def ribbon_restore_state(self): #vers 2
         """Restore the saved layout; rejects an older ribbon structure and
         always forces every ribbon visible afterwards so a bad state can
         never leave one hidden with no way back."""
@@ -135,3 +180,5 @@ class RibbonMixin:
         finally:
             for tb in mw.findChildren(QToolBar):
                 tb.setVisible(True)
+                if hasattr(tb, '_side'):
+                    self.ribbon_fit_side(tb)

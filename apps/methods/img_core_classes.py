@@ -1,4 +1,4 @@
-#this belongs in apps/methods/img_core_classes.py - Version: 13
+#this belongs in apps/methods/img_core_classes.py - Version: 20
 # X-Seti - November29 2025 - IMG Factory 1.5 - IMG Core Classes with Fixed RW Version Detection
 
 """
@@ -55,6 +55,8 @@ def _find_companion(base_path: str, new_ext: str) -> str:
 # detect_img_version
 # format_file_size
 # integrate_filtering
+# _embedded_v1_dir_ok
+# _is_v3_encrypted
 # populate_table_with_sample_data
 # rebuild_img_file
 
@@ -73,25 +75,15 @@ def _find_companion(base_path: str, new_ext: str) -> str:
 # TabFilterWidget
 # ValidationResult
 
-def _is_v3_encrypted(first16: bytes) -> bool:
-    """Return True if first 16 bytes decrypt (AES-256 ECB, 16 rounds) to a valid V3 header start."""
+def _is_v3_encrypted(first16: bytes): #vers 2
+    """True if bytes decrypt to a GTA IV V3 header; None without pycryptodome."""
     try:
-        from Crypto.Cipher import AES
-        import struct as _struct
-        GTAIV_KEY = bytes([
-            0x1a,0xb5,0x6f,0xed,0x7e,0xc3,0xff,0x01,
-            0x22,0x7b,0x69,0x15,0x33,0x97,0x5d,0xce,
-            0x47,0xd7,0x69,0x65,0x3f,0xf7,0x75,0x42,
-            0x6a,0x96,0xcd,0x6d,0x53,0x07,0x56,0x5d,
-        ])
-        data = first16
-        for _ in range(16):
-            data = AES.new(GTAIV_KEY, AES.MODE_ECB).decrypt(data)
-        # After decryption, bytes 4-7 should be Version = 3
-        ver = _struct.unpack('<I', data[4:8])[0]
-        return ver == 3
-    except Exception:
-        return False
+        import Crypto.Cipher  # noqa: F401  pycryptodome
+    except ImportError:
+        return None
+    import struct as _struct
+    from apps.core.img_encryption import _aes_decrypt_block
+    return _struct.unpack('<I', _aes_decrypt_block(first16)[4:8])[0] == 3
 
 
 def _detect_v1_or_v1_5(dir_path: str, img_path: str) -> str:
@@ -668,9 +660,17 @@ class IMGEntry:
             return None
 
 
-    def get_version_text(self) -> str: #vers 3
-        """Get human-readable version text"""
+    def get_version_text(self) -> str: #vers 4
+        """Get human-readable version text (RW, Rage or Gamebryo)"""
         try:
+            if hasattr(self, 'v3_type'):
+                from apps.methods.rw_versions import rage_version_text
+                return (f"Rage {rage_version_text(self.v3_type)}" if self.v3_resource
+                        else f"{self.extension} File")
+            if self.extension in ('NFT', 'NIF'):
+                from apps.methods.rw_versions import gamebryo_version_text
+                ver = gamebryo_version_text(self._read_header_data(64) or b'')
+                return f"Gamebryo {ver}" if ver else "Unknown"
             if self.extension in ['DFF', 'TXD']:
                 if self.size == 0:
                     return "Empty"
@@ -912,6 +912,29 @@ def get_platform_specific_specs(platform: IMGPlatform) -> Dict[str, Any]: #vers 
     return specs.get(platform, specs[IMGPlatform.PC])
 
 
+def _embedded_v1_dir_ok(path: str) -> bool: #vers 2
+    """True if most embedded directory records are in-file, named entries."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, 'rb') as f:
+            first_off = struct.unpack('<I', f.read(4) or b'\0' * 4)[0]
+            if not (0 < first_off and first_off * 2048 < size):
+                return False
+            f.seek(0)
+            data = f.read(min(first_off * 2048, 4 << 20))
+    except (OSError, struct.error):
+        return False
+    named = valid = 0
+    for i in range(len(data) // 32):
+        off, cnt = struct.unpack_from('<II', data, i * 32)
+        name = _parse_entry_name(data[i * 32 + 8:i * 32 + 32])
+        if not name:
+            continue
+        named += 1
+        valid += cnt > 0 and '.' in name and (off + cnt) * 2048 <= size
+    return named > 0 and valid * 2 >= named
+
+
 def _parse_entry_name(raw_name_bytes: bytes) -> str:
     """Parse a 24-byte IMG directory name field robustly.
 
@@ -1048,13 +1071,15 @@ class IMGFile:
             self.last_error = f"Save As failed: {e}"
             return False
 
-    def rebuild_img_file(self) -> bool: #vers 1
+    def rebuild_img_file(self) -> bool: #vers 2
         """Rebuild IMG file based on version"""
         try:
             if self.version == IMGVersion.VERSION_1:
                 return self._rebuild_version1()
             elif self.version == IMGVersion.VERSION_2:
                 return self._rebuild_version2()
+            elif self.version in (IMGVersion.VERSION_3, IMGVersion.VERSION_3_ENC):
+                return self._rebuild_version3()
             else:
                 return False
 
@@ -1082,6 +1107,57 @@ class IMGFile:
         except Exception:
             return f"file_{len(self.entries):04d}.dat"
 
+
+    def _rebuild_version3(self) -> bool: #vers 1
+        """Rebuild GTA IV IMG (V3); table re-encrypted when it was."""
+        import struct
+        _out = getattr(self, '_rebuild_target', None) or self.file_path
+        _tmp_img = _out + '.rebuild.tmp'
+        try:
+            datas = [self.read_entry_data(e) for e in self.entries]
+            plain_types = [getattr(e, 'v3_type', 0) for e, d in zip(self.entries, datas)
+                           if d[:4] != b'RSC\x05']
+            plain_type = max(set(plain_types), key=plain_types.count) if plain_types else 0
+            names = b''.join(e.name.encode('ascii', 'replace') + b'\0' for e in self.entries)
+            table_size = len(self.entries) * 16 + len(names)
+            pos = (20 + table_size + 2047) // 2048
+            table = bytearray()
+            for e, d in zip(self.entries, datas):
+                blocks = (len(d) + 2047) // 2048
+                pad = blocks * 2048 - len(d)
+                if d[:4] == b'RSC\x05':
+                    flags, rtype = struct.unpack_from('<I', d, 8)[0], struct.unpack_from('<I', d, 4)[0]
+                    pad |= 0x2000
+                else:
+                    flags, rtype = len(d), getattr(e, 'v3_type', plain_type) or plain_type
+                table += struct.pack('<IIIHH', flags, rtype, pos, blocks, pad)
+                e.offset, e.size = pos * 2048, len(d)
+                pos += blocks
+            table += names
+            header = struct.pack('<IIIIHH', 0xA94E2A52, 3, len(self.entries), table_size,
+                                 16, getattr(self, '_v3_unknown', 0))
+            if self.version == IMGVersion.VERSION_3_ENC:
+                from apps.core.img_encryption import _aes_encrypt_block, _process_buffer
+                header = _aes_encrypt_block(header[:16]) + header[16:]
+                table = _process_buffer(bytes(table), encrypt=True)
+            with open(_tmp_img, 'wb') as f:
+                f.write(header)
+                f.write(table)
+                for e, d in zip(self.entries, datas):
+                    f.seek(e.offset)
+                    f.write(d)
+                end = f.tell()
+                f.write(b'\0' * (((end + 2047) // 2048) * 2048 - end))
+            os.replace(_tmp_img, _out)
+            for e, d in zip(self.entries, datas):
+                e.__dict__.pop('data', None)
+                e._cached_data = None
+            return True
+        except Exception as e:
+            self.last_error = f"Rebuild failed: {e}"
+            if os.path.exists(_tmp_img):
+                os.unlink(_tmp_img)
+            return False
 
     def _rebuild_version2(self) -> bool: #vers 1
         """Rebuild Version 2 IMG file (SA format)"""
@@ -1437,7 +1513,7 @@ class IMGFile:
             return 0
 
 
-    def detect_version(self) -> IMGVersion: #vers 4
+    def detect_version(self) -> IMGVersion: #vers 6
         """Detect IMG version and platform from file"""
         try:
             if not os.path.exists(self.file_path):
@@ -1553,7 +1629,9 @@ class IMGFile:
                         # Check if V3 encrypted: read next 16 bytes, try AES decrypt, check Version==3
                         f.seek(0)
                         first16 = f.read(16)
-                        if _is_v3_encrypted(first16):
+                        _enc = _is_v3_encrypted(first16)
+                        self._crypto_missing = _enc is None
+                        if _enc:
                             self.version = IMGVersion.VERSION_3_ENC
                             return IMGVersion.VERSION_3_ENC
                         dir_path = _find_companion(self.file_path, '.dir')
@@ -1627,6 +1705,16 @@ class IMGFile:
                                 )
                                 self.version = IMGVersion.VERSION_STREAMING_SEG
                                 return IMGVersion.VERSION_STREAMING_SEG
+                            # No .dir, no .lvz: an embedded directory must look real,
+                            # else LCS/VCS world stream data (commer/indust/suburb)
+                            if not _embedded_v1_dir_ok(self.file_path):
+                                self._streaming_segment_error = (
+                                    f"{os.path.basename(self.file_path)} has no .dir and no directory inside.\n\n"
+                                    "PS2 split part (opens via GTA3.DIR) or LCS/VCS stream\n"
+                                    f"data (opens with {os.path.splitext(os.path.basename(self.file_path))[0]}.lvz "
+                                    "in the same folder).")
+                                self.version = IMGVersion.VERSION_STREAMING_SEG
+                                return IMGVersion.VERSION_STREAMING_SEG
                             # No .dir and no .lvz - standalone V1/V1.5, check size
                             sz = os.path.getsize(self.file_path)
                             ver = IMGVersion.VERSION_1_5 if sz > 2 * 1024 * 1024 * 1024 else IMGVersion.VERSION_1
@@ -1641,7 +1729,7 @@ class IMGFile:
         self.version = IMGVersion.UNKNOWN
         return IMGVersion.UNKNOWN
 
-    def open(self) -> bool: #vers 5
+    def open(self) -> bool: #vers 6
         """Open and parse IMG file - FIXED WITH PROPER ENTRY PARSING"""
         try:
             if self.is_open:
@@ -1722,7 +1810,15 @@ class IMGFile:
                 self.is_open = True
                 # FIXED: Parse file types and versions for all entries
                 self._parse_all_entries()
-            
+
+            if getattr(self, '_crypto_missing', False) and not self.entries and \
+                    not _find_companion(self.file_path, '.dir'):
+                self._streaming_segment_error = (
+                    f"{os.path.basename(self.file_path)} may be an encrypted GTA IV IMG.\n\n"
+                    "Install pycryptodome to open it:\n  pip install pycryptodome")
+                self.is_open = False
+                return False
+
             return success
 
         except Exception as e:
@@ -1850,16 +1946,9 @@ class IMGFile:
         except Exception as e:
             return False
 
-    def _open_version_3(self) -> bool: #vers 1
-        """Open IMG version 3 - GTA IV format (unencrypted or AES-256 ECB encrypted header)."""
+    def _open_version_3(self) -> bool: #vers 4
+        """Open IMG version 3 - GTA IV (plain or AES-encrypted table)."""
         import struct as _struct
-        GTAIV_MAGIC  = 0xA94E2A52
-        GTAIV_KEY = bytes([
-            0x1a,0xb5,0x6f,0xed,0x7e,0xc3,0xff,0x01,
-            0x22,0x7b,0x69,0x15,0x33,0x97,0x5d,0xce,
-            0x47,0xd7,0x69,0x65,0x3f,0xf7,0x75,0x42,
-            0x6a,0x96,0xcd,0x6d,0x53,0x07,0x56,0x5d,
-        ])
         try:
             with open(self.file_path, 'rb') as f:
                 raw_header = f.read(20)
@@ -1867,51 +1956,28 @@ class IMGFile:
             if len(raw_header) < 20:
                 return False
 
-            # Decrypt header if encrypted (16 rounds AES-256 ECB on first 16 bytes)
-            if self.version == IMGVersion.VERSION_3_ENC:
-                try:
-                    from Crypto.Cipher import AES
-                    block = raw_header[:16]
-                    for _ in range(16):
-                        block = AES.new(GTAIV_KEY, AES.MODE_ECB).decrypt(block)
-                    header_data = block + raw_header[16:]
-                except ImportError:
-                    return False
+            encrypted = self.version == IMGVersion.VERSION_3_ENC
+            if encrypted:
+                from apps.core.img_encryption import _aes_decrypt_block, _process_buffer
+                header_data = _aes_decrypt_block(raw_header[:16]) + raw_header[16:]
             else:
                 header_data = raw_header
 
-            magic, version, num_items, table_size, item_size, unknown =                 _struct.unpack('<IIIIHH', header_data[:20])
+            magic, version, num_items, table_size, item_size, unknown = \
+                _struct.unpack('<IIIIHH', header_data[:20])
 
             if version != 3 or item_size != 16:
                 return False
+            self._v3_unknown = unknown
 
-            # Read table (num_items * 16 bytes) + filenames block
-            names_size = table_size - (num_items * 16)
+            # Table and names are one stream; last partial block is plain
             with open(self.file_path, 'rb') as f:
                 f.seek(20)
-                table_data  = f.read(num_items * 16)
-                names_data  = f.read(names_size)
-
-            # Decrypt table + names if encrypted
-            if self.version == IMGVersion.VERSION_3_ENC:
-                try:
-                    from Crypto.Cipher import AES
-                    # Decrypt in 16-byte blocks, 16 rounds each
-                    def _decrypt_block(b):
-                        for _ in range(16):
-                            b = AES.new(GTAIV_KEY, AES.MODE_ECB).decrypt(b)
-                        return b
-                    # Pad to 16-byte boundary, decrypt, trim
-                    def _decrypt_buf(buf):
-                        pad = (16 - len(buf) % 16) % 16
-                        padded = buf + b'\x00' * pad
-                        result = b''.join(_decrypt_block(padded[i:i+16])
-                                          for i in range(0, len(padded), 16))
-                        return result[:len(buf)]
-                    table_data = _decrypt_buf(table_data)
-                    names_data = _decrypt_buf(names_data)
-                except ImportError:
-                    return False
+                table_all = f.read(table_size)
+            if encrypted:
+                table_all = _process_buffer(table_all, encrypt=False)
+            table_data = table_all[:num_items * 16]
+            names_data = table_all[num_items * 16:]
 
             # Parse names (null-separated)
             names = []
@@ -1930,11 +1996,15 @@ class IMGFile:
                 item = table_data[i*16:(i+1)*16]
                 if len(item) < 16:
                     break
-                size_bytes, resource_type, position, size_blocks, _unk =                     _struct.unpack('<IIIHH', item)
+                size_bytes, resource_type, position, size_blocks, pad = \
+                    _struct.unpack('<IIIHH', item)
                 entry = IMGEntry()
                 entry.name        = names[i] if i < len(names) else f'entry_{i}'
                 entry.offset      = position * 2048
-                entry.size        = size_bytes
+                entry.size        = size_blocks * 2048 - (pad & 0x7FF)
+                entry.v3_flags    = size_bytes      # resource flags or plain size
+                entry.v3_type     = resource_type
+                entry.v3_resource = bool(pad & 0x2000)
                 entry.set_img_file(self)
                 self.entries.append(entry)
 
@@ -2033,13 +2103,27 @@ class IMGFile:
         except Exception:
             return False
 
-    def _open_ps2(self) -> bool: #vers 5
+    def _stories_dir(self) -> Optional[dict]: #vers 1
+        """Entries from GAME.DTZ when this is its main LCS/VCS IMG, else None."""
+        from apps.methods.stories_dtz import StoriesDTZ, dtz_paths, find_stories_root
+        lay = dtz_paths(find_stories_root(self.file_path) or os.path.dirname(self.file_path))
+        if not lay or not os.path.samefile(lay[3], self.file_path):
+            return None
+        game, plat, dtz, _img = lay
+        ents = StoriesDTZ(dtz, game, plat).img_entries()
+        self.platform = IMGPlatform.PS2 if plat == 'ps2' else IMGPlatform.PSP
+        return {'entries': [{'name': n, 'offset': o * 2048, 'size': z * 2048,
+                             '_source_ref': f"{os.path.basename(dtz)} @ sector {o}"}
+                            for n, o, z in ents]}
+
+    def _open_ps2(self) -> bool: #vers 6
         """Open PS2/PSP/iOS/Android/Bully/HXD archive - read-only."""
         try:
             from apps.core.img_ps2_vcs import (open_ps2_vcs, open_ps2_v1, open_lvz,
                                                 open_anpk, open_bully, open_hxd)
             if self.version == IMGVersion.VERSION_PS2_VCS:
-                result = open_ps2_vcs(self.file_path)
+                # Main LCS/VCS IMG: directory lives in GAME.DTZ streaming info
+                result = self._stories_dir() or open_ps2_vcs(self.file_path)
             elif self.version in (IMGVersion.VERSION_PS2_V1,
                                   IMGVersion.VERSION_1_IOS):
                 result = open_ps2_v1(self.file_path)
@@ -2125,8 +2209,11 @@ class IMGFile:
         except Exception:
             return False
 
-    def read_entry_data(self, entry: IMGEntry) -> bytes: #vers 3
-        """Read data for a specific entry, transparently decompressing Xbox LZO if needed."""
+    def read_entry_data(self, entry: IMGEntry) -> bytes: #vers 4
+        """Entry bytes: pending replacement data first, else read from file."""
+        pending = entry.__dict__.get('data')
+        if pending:
+            return bytes(pending)
         try:
             # DIR+IMG pair formats: V1, V1_5, SOL, Xbox all use .dir + .img
             if self.version in (IMGVersion.VERSION_1,

@@ -1,4 +1,4 @@
-#this belongs in apps/components/Col_Editor/depends/col_edit_func.py - Version: 9
+#this belongs in apps/components/Col_Editor/depends/col_edit_func.py - Version: 12
 # X-Seti - Sept 30 2026 - IMG Factory 1.6 - COL Workshop edit tools
 
 """
@@ -27,6 +27,7 @@ Geometry maths lives in apps/methods/col_mesh_ops.py.
 # _edit_delete_isolated
 # _edit_delete_vertices
 # _edit_detach
+# _edit_detached_parts
 # _edit_duplicate_check
 # _edit_export_cst
 # _edit_face_groups
@@ -83,7 +84,7 @@ from apps.methods import col_mesh_ops as ops
 class COLEditMixin: #vers 1
     """Viewport edit tools for COLWorkshop; each edit is undoable."""
 
-    def _mesh_edited(self, model, msg, reselect=True): #vers 1
+    def _mesh_edited(self, model, msg, reselect=True): #vers 2
         """Refresh lists and viewport after an edit; mark file unsaved."""
         idx = self.current_col_file.models.index(model)
         self._populate_collision_list()
@@ -101,6 +102,9 @@ class COLEditMixin: #vers 1
         if hasattr(self, 'save_btn'):
             self.save_btn.setEnabled(True)
         self._set_status(f"{msg} - not saved yet")
+        dock = getattr(self, '_detached_dock', None)
+        if dock is not None and dock.isVisible():
+            dock._refresh()
 
     def _edit_selection(self, need_faces=True): #vers 2
         """(model, index, face ids) or None; vertex mode uses faces inside selection."""
@@ -152,6 +156,34 @@ class COLEditMixin: #vers 1
         self._push_undo(idx, "Detach faces")
         n = ops.detach_faces(model, faces)
         self._mesh_edited(model, f"Detached {len(faces)} face(s), {n} vertex(es) split", reselect=False)
+
+    def _edit_detached_parts(self): #vers 2
+        """List the model's detached parts: click selects them, Reattach joins them back."""
+        from apps.gui.col_workshop_dialogs import show_detached_parts_dock
+
+        def parts():
+            model = self._get_selected_model()
+            return [(f"Part {i + 1}", sorted(p)) for i, p in enumerate(ops.detached_parts(model))] \
+                if model is not None else []
+
+        def select(faces):
+            pw = self.preview_widget
+            if pw._select_mode == 'vertex':
+                self.vertex_mode_btn.setChecked(False)          # back to face select
+                self._edit_toggle_vertex_mode(False)
+            pw._selected_faces = set(faces)
+            pw.update()
+
+        def reattach(faces):
+            model = self._get_selected_model()
+            if model is None:
+                return
+            idx = self.current_col_file.models.index(model)
+            self._push_undo(idx, "Reattach part")
+            n = ops.reattach_faces(model, set(faces))
+            self._mesh_edited(model, f"Reattached part: {n} vertex(es) joined", reselect=False)
+        show_detached_parts_dock(self, self._inner_mw, parts, select, reattach,
+                                 self._get_icon_color())
 
     def _edit_selection_to_model(self): #vers 1
         """Selected faces to a new model in this file (copy or move)."""
@@ -954,47 +986,15 @@ class COLEditMixin: #vers 1
         all_menu = menu.addMenu("All Tools")
         self._build_full_menu(all_menu)
 
-    def _edit_gamepad_saved(self): #vers 1
+    def _edit_gamepad_saved(self): #vers 2
         """Saved controller on/off from col_workshop.json."""
-        import json
-        from apps.methods.img_factory_settings import get_user_config_dir
-        try:
-            return bool(json.loads((get_user_config_dir() / 'col_workshop.json').read_text()).get('gamepad_enabled'))
-        except (OSError, ValueError):
-            return False
+        from apps.methods.gamepad_input import gamepad_saved
+        return gamepad_saved('col_workshop.json')
 
-    def _edit_toggle_gamepad(self, on): #vers 1
+    def _edit_toggle_gamepad(self, on): #vers 2
         """Start or stop the PS5 / game controller; remembered in col_workshop.json."""
-        import json
-        from apps.methods.img_factory_settings import get_user_config_dir
-        vp = self.preview_widget
-        pad = getattr(self, '_gamepad', None)
-        if on and pad is None:
-            from apps.methods.gamepad_input import GamepadPoller
-            pad = GamepadPoller(self)
-            pad.connected.connect(lambda n: self._set_status(
-                f"Controller connected: {n}" if n else "Controller disconnected"))
-            try:
-                pad.start()
-            except ImportError:
-                QMessageBox.warning(self, "Game Controller",
-                                    "Controller support needs pygame 2:\n\npip install pygame")
-                self.gamepad_btn.setChecked(False)
-                return
-            self._gamepad = pad
-            vp.set_gamepad(pad)
-            self._set_status("Controller on: Cross select/grab, right stick orbit, L2/R2 zoom")
-        elif not on and pad is not None:
-            pad.stop()
-            vp.set_gamepad(None)
-            self._gamepad = None
-        path = get_user_config_dir() / 'col_workshop.json'
-        try:
-            data = json.loads(path.read_text())
-        except (OSError, ValueError):
-            data = {}
-        data['gamepad_enabled'] = bool(on and self._gamepad is not None)
-        path.write_text(json.dumps(data, indent=2))
+        from apps.methods.gamepad_input import toggle_workshop_gamepad
+        toggle_workshop_gamepad(self, on, 'col_workshop.json', getattr(self, 'gamepad_btn', None))
 
     def _edit_optimise(self): #vers 1
         """Reduce face count: clean (lossless), merge flat areas, decimate (lossy)."""
