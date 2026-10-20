@@ -2,7 +2,7 @@
   "debug_mode": false,
   "debug_level": "INFO",
   "current_theme": "App_Factory",
-  "theme": "manjaro2_dark",
+  "theme": "manjaro_dark",
   "button_display_mode": "both",
   "use_custom_gadgets": false,
   "enable_corner_resize": true,
@@ -74,6 +74,10 @@
   "panel_bg_image": "",
   "panel_bg_image_mode": 0,
   "panel_bg_image_opacity": 100,
+  "panel_bg_image_all": false,
+  "see_through": false,
+  "viewport_solid": true,
+  "image_titlebar": 0,
   "button_style": "flat",
   "progressbar_style": "system",
   "progressbar_fill": "#4a7a9b",
@@ -114,5 +118,6 @@
   "pin_warn_popup": true,
   "pin_warn_log": true,
   "rename_notify_popup": true,
-  "rename_notify_log": true
+  "rename_notify_log": true,
+  "color_alpha": {}
 }
