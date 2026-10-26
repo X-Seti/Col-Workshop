@@ -9,3 +9,7 @@ dist/
 apps/images
 apps/utils
 apps/themes
+
+# Build output (made by buildscript.py / GitHub Actions; releases hold the downloads)
+/_internal/
+/*.exe
