@@ -1,4 +1,7 @@
-#this belongs in root /ChangeLog.md - Version: 50
+#this belongs in root /ChangeLog.md - Version: 51
+
+## Nov 02 2026 - Licence
+- LICENSE changed from GPL v3 to MIT, same as the other IMG Factory tools.
 
 ## Oct 05 2026 - App-Settings-System dependency
 - apps/utils, themes, images now come from X-Seti/App-Settings-System; Windows build checks it out; README shows symlink setup.

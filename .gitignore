@@ -14,3 +14,6 @@ apps/themes
 /_internal/
 /*.exe
 .venv/
+/*_dist/
+/Col_Workshop
+/Col_Workshop.app/
